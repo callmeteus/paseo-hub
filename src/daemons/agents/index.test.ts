@@ -200,3 +200,60 @@ test.each(["create", "restore", "send"] as const)(
     }
   },
 );
+
+test.each([true, false])(
+  "passes background %s at the create request boundary",
+  async (background) => {
+    const requests: Record<string, unknown>[] = [];
+    const agents = connect(requests);
+    agents.receive({
+      type: "session",
+      message: {
+        type: "server_info",
+        payload: {
+          features: {
+            hubAgentRpc: true,
+            agentRequestReceipts: true,
+            backgroundWorkspaces: true,
+          },
+        },
+      },
+    });
+    await agents.create("background-key", { ...options, background });
+    expect(requests[0]).toMatchObject({ type: "create_agent_request", background });
+    expect(requests[0]).not.toHaveProperty("config.background");
+  },
+);
+
+test.each([undefined, false])(
+  "creates and sends the prompt when backgroundWorkspaces is %s",
+  async (backgroundWorkspaces) => {
+    const requests: Record<string, unknown>[] = [];
+    const agents = connect(requests);
+    agents.receive({
+      type: "session",
+      message: {
+        type: "server_info",
+        payload: {
+          features: {
+            hubAgentRpc: true,
+            agentRequestReceipts: true,
+            backgroundWorkspaces,
+          },
+        },
+      },
+    });
+    const created = await agents.create("key", { ...options, background: true });
+    await agents.send(created.id, "message-key", "Run the trigger");
+    expect(requests).toHaveLength(2);
+    expect(requests[0]).toMatchObject({
+      type: "create_agent_request",
+      background: true,
+    });
+    expect(requests[1]).toMatchObject({
+      type: "send_agent_message_request",
+      agentId: created.id,
+      text: "Run the trigger",
+    });
+  },
+);
