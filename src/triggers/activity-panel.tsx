@@ -10,7 +10,7 @@ import { useRouteTenant } from "../projects/context.js";
 import { triggerSnapshot } from "./functions.js";
 
 const ACTIVITY_COLUMNS = [
-  { header: "Trigger" },
+  { header: "Trigger", fill: true },
   { header: "Provider" },
   { header: "Source" },
   { header: "Status" },

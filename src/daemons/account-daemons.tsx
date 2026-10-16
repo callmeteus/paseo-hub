@@ -35,10 +35,10 @@ import { daemonLoginCommand, GRANT_EXECUTE_COMMAND } from "./handoff.js";
 import { daemonsQueryKey, refreshDaemons } from "./status.js";
 
 const DAEMON_COLUMNS: readonly DataColumn[] = [
-  { header: "Slug" },
+  { header: "Slug", fill: true },
   { header: "ID" },
   { header: "Status" },
-  { header: "Access" },
+  { header: "Access", fill: true },
   { header: "Last seen" },
   { header: "Registered" },
   { header: "", align: "end" },
@@ -209,7 +209,7 @@ function DaemonRow({
 
   return (
     <DataRow>
-      <DataCell className="min-w-0">
+      <DataCell>
         <TwoLine primary={daemon.slug} />
       </DataCell>
       <DataCell muted>
@@ -231,7 +231,7 @@ function DaemonRow({
       <DataCell muted>
         <RelativeTime value={daemon.registeredAt} />
       </DataCell>
-      <DataCell align="end">
+      <DataCell>
         {canManage ? (
           <>
             <RowActions label={`Actions for ${daemon.slug}`}>

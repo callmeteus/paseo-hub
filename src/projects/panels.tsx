@@ -389,12 +389,12 @@ export function ProjectActivityRunPanel({ runId }: { runId: string }) {
         <DataTable
           label="Run steps"
           columns={[
-            { header: "Step" },
+            { header: "Step", fill: true },
             { header: "Status" },
             { header: "Deadline" },
             { header: "Agent" },
             { header: "Structured output" },
-            { header: "Failure reason" },
+            { header: "Failure reason", fill: true },
           ]}
           isEmpty={activity.steps.length === 0}
           empty={{ title: "No steps" }}
@@ -608,11 +608,11 @@ function ActivityTable({
     <DataTable
       label={label}
       columns={[
-        { header: "Run" },
+        { header: "Run", fill: true },
         { header: "Provider" },
         { header: "Source" },
         { header: "Status" },
-        ...(showReason ? [{ header: "Reason" }] : []),
+        ...(showReason ? [{ header: "Reason", fill: true }] : []),
         { header: "Received" },
       ]}
       isEmpty={activity.length === 0}

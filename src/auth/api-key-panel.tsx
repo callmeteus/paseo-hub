@@ -93,9 +93,9 @@ const SCOPE_OPTIONS = [
 ] as const;
 
 const TABLE_COLUMNS = [
-  { header: "Name" },
+  { header: "Name", fill: true },
   { header: "Prefix" },
-  { header: "Scopes" },
+  { header: "Scopes", fill: true },
   { header: "Created" },
   { header: "Last used" },
   { header: "Status" },
@@ -112,7 +112,7 @@ const EMPTY_CLI_TABLE = {
   description: "Run paseo hub login to create one.",
 };
 const CLI_COLUMNS = [
-  { header: "Prefix" },
+  { header: "Prefix", fill: true },
   { header: "Created" },
   { header: "Last used" },
   { header: "Status" },
@@ -340,7 +340,7 @@ function CliCredentialRow({
           {record.revokedAt === null ? "Active" : "Revoked"}
         </StatusPill>
       </DataCell>
-      <DataCell align="end">
+      <DataCell>
         {record.revokedAt === null ? (
           <RowActions label={`Actions for ${record.prefix}`}>
             <ConfirmMenuItem
@@ -390,7 +390,7 @@ function ApiKeyRow({
           {record.revokedAt === null ? "Active" : "Revoked"}
         </StatusPill>
       </DataCell>
-      <DataCell align="end">
+      <DataCell>
         {record.revokedAt === null && canManage ? (
           <RowActions label={`Actions for ${record.name}`}>
             <ConfirmMenuItem
