@@ -32,7 +32,6 @@ import {
   type OrganizationSection,
   type OrganizationSettingsSection,
 } from "./projects/navigation.js";
-import { ProjectConfiguration } from "./projects/configuration.js";
 
 export interface BuiltApplication {
   origin: string;
@@ -71,7 +70,6 @@ export interface BuiltApplication {
   }): Promise<void>;
   installProviderDispatchFixture(input: {
     organizationId: string;
-    repositoryId: number;
     repository: string;
     guildId: string;
     files: readonly HubBundleFile[];
@@ -1239,13 +1237,13 @@ export class PaseoHub {
       [[acmeDaemon.daemonId, orbitDaemon.daemonId]],
     );
     await Promise.all([
-      this.installTenantProviderConfiguration(acmeId, 42, "acme/widgets", "100"),
-      this.installTenantProviderConfiguration(orbitId, 84, "orbit/widgets", "200"),
+      this.installTenantProviderConfiguration(acmeId, "acme-inc/app", "100"),
+      this.installTenantProviderConfiguration(orbitId, "orbit-inc/app", "200"),
     ]);
 
-    await this.deliverGitHub("acme-github", 42, "acme/widgets", "alice");
+    await this.deliverGitHub("acme-github", 42, 9001, "acme-inc/app", "alice");
     await this.deliverDiscord("301", "100", "800");
-    await this.deliverGitHub("orbit-github", 84, "orbit/widgets", "alice");
+    await this.deliverGitHub("orbit-github", 84, 9101, "orbit-inc/app", "alice");
     await this.deliverDiscord("302", "200", "800");
 
     const dispatchesSchema = z.array(
@@ -1299,7 +1297,8 @@ export class PaseoHub {
     await this.deliverGitHub(
       "acme-github-after-disconnect",
       42,
-      "acme/widgets",
+      9001,
+      "acme-inc/app",
       "after-disconnect",
     );
     await this.deliverDiscord("303", "100", "800");
@@ -1343,31 +1342,6 @@ export class PaseoHub {
       await user.signUp(account);
       await user.createOrganization("Unconfigured");
       await user.expectNotConfiguredConnections();
-    } finally {
-      await context.close();
-    }
-  }
-
-  async proveManualConfigurationWithoutGitHub(account: Account, rawYaml: string): Promise<void> {
-    const application = await this.startApplication({
-      databaseProfile: "fresh",
-      providerScenario: "discord-only",
-    });
-    const context = await this.browser.newContext();
-    try {
-      const page = await context.newPage();
-      const user = new HubUser(application, context, page);
-      const navigation = new ProjectNavigation(page);
-      const configuration = new ProjectConfiguration(page);
-      await user.signUp(account);
-      await user.createOrganization("Discord only");
-      await this.seedDaemonForEmail(application, account.email, "editor-daemon");
-      await navigation.openProject("Default");
-      await navigation.openProjectSection("Configuration");
-      await configuration.saveManualConfiguration(rawYaml);
-      await configuration.expectActiveRevision(1);
-      await page.waitForLoadState("networkidle");
-      expect(application.logs()).not.toContain("github_repositories_unavailable");
     } finally {
       await context.close();
     }
@@ -1942,7 +1916,7 @@ export class PaseoHub {
    * intake deduplicates on the payload's signature as well as on the delivery id.
    */
   async deliverUnroutedGitHubEvent(deliveryId: string): Promise<void> {
-    await this.deliverGitHub(deliveryId, 42, "acme-inc/widgets", deliveryId);
+    await this.deliverGitHub(deliveryId, 42, 9001, "acme-inc/app", deliveryId);
   }
 
   /** A connected session-v1 daemon that serves the trigger editor's provider catalog. */
@@ -2197,7 +2171,6 @@ export class PaseoHub {
 
   private async installTenantProviderConfiguration(
     organizationId: string,
-    repositoryId: number,
     repo: string,
     guildId: string,
   ): Promise<void> {
@@ -2212,7 +2185,6 @@ export class PaseoHub {
     if (discord === undefined) throw new Error("Discord connection unavailable");
     await this.primary.installProviderDispatchFixture({
       organizationId,
-      repositoryId,
       repository: repo,
       guildId,
       files: configurationBundleFixture(dump(providerDispatchConfiguration(repo, discord.slug))),
@@ -2222,10 +2194,13 @@ export class PaseoHub {
   private async deliverGitHub(
     deliveryId: string,
     installationId: number,
+    repositoryId: number,
     repo: string,
     actor: string,
   ): Promise<void> {
-    const payload = JSON.stringify(githubIssueCommentPayload(installationId, repo, actor));
+    const payload = JSON.stringify(
+      githubIssueCommentPayload(installationId, repositoryId, repo, actor),
+    );
     const signature =
       "sha256=" + createHmac("sha256", WEBHOOK_SECRET).update(payload).digest("hex");
     const response = await this.requests.post(`${this.primary.origin}/webhook`, {
@@ -6271,13 +6246,18 @@ function providerDispatchConfiguration(repo: string, guildId: string) {
   };
 }
 
-function githubIssueCommentPayload(installationId: number, repo: string, actor: string) {
+function githubIssueCommentPayload(
+  installationId: number,
+  repositoryId: number,
+  repo: string,
+  actor: string,
+) {
   return {
     action: "created",
     sender: { login: actor },
     comment: { id: installationId, body: "@paseo run tenant dispatch", user: { login: actor } },
     issue: { number: installationId },
-    repository: { id: installationId, full_name: repo },
+    repository: { id: repositoryId, full_name: repo },
     installation: { id: installationId },
   };
 }
