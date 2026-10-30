@@ -104,6 +104,8 @@ export function DaemonHandoffEntry({
       // The address the operator reached this Hub at is the address their daemon has to be told.
       // Only a click in app setup reaches this step, so there is no server render to guard.
       command={daemonLoginCommand(window.location.origin)}
+      // The desktop app enrolls its own daemon. The terminal command is for a browser.
+      embedded={isPaseoDesktop()}
       onRetry={retry}
       onContinue={leave}
     />
@@ -113,22 +115,23 @@ export function DaemonHandoffEntry({
 export function DaemonHandoffView({
   link,
   command,
+  embedded = false,
   onRetry,
   onContinue,
 }: {
   link: DaemonLink;
   command: string;
+  embedded?: boolean;
   onRetry: () => void;
   onContinue: () => void;
 }) {
   if (link.state === "linked") {
+    const description = embedded
+      ? `${link.slug} is connected to this Hub.`
+      : `${link.slug} is connected to this Hub. Finish the starter workflow in your terminal whenever you're ready.`;
     return (
       <AuthLayout width="md">
-        <AuthCard
-          title="Daemon connected"
-          description={`${link.slug} is connected to this Hub. Finish the starter workflow in your terminal whenever you're ready.`}
-          descriptionRole="status"
-        >
+        <AuthCard title="Daemon connected" description={description} descriptionRole="status">
           <Button onClick={onContinue}>Continue</Button>
         </AuthCard>
       </AuthLayout>
@@ -138,12 +141,25 @@ export function DaemonHandoffView({
     <AuthLayout width="md">
       <AuthCard
         title="Connect a daemon"
-        description="Hub runs your workflows on daemons you own. Run this on the machine where your code lives:"
+        description={
+          embedded
+            ? "Hub runs your workflows on this computer."
+            : "Hub runs your workflows on daemons you own. Run this on the machine where your code lives:"
+        }
       >
-        <CopyField label="Command" value={command} />
-        <p className="text-sm text-muted-foreground">
-          Your terminal signs you in, connects this daemon, and offers to set up a starter workflow.
-        </p>
+        {embedded ? (
+          <p className="text-sm text-muted-foreground" data-paseo-daemon-handoff="waiting">
+            Paseo is connecting this computer.
+          </p>
+        ) : (
+          <>
+            <CopyField label="Command" value={command} />
+            <p className="text-sm text-muted-foreground">
+              Your terminal signs you in, connects this daemon, and offers to set up a starter
+              workflow.
+            </p>
+          </>
+        )}
         <LinkProgress link={link} onRetry={onRetry} />
         <Button variant="ghost" onClick={onContinue}>
           Do this later
@@ -151,6 +167,10 @@ export function DaemonHandoffView({
       </AuthCard>
     </AuthLayout>
   );
+}
+
+function isPaseoDesktop(): boolean {
+  return typeof navigator !== "undefined" && navigator.userAgent.includes("Electron");
 }
 
 /**

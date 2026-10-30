@@ -43,6 +43,8 @@ import {
   handleManualTriggerRequest,
 } from "./triggers/manual/source.js";
 import { createManualRunProvider } from "./triggers/manual/provider.js";
+import { createWebhookProvider } from "./triggers/webhook/provider.js";
+import { receiveAutomationWebhook } from "./triggers/webhook/receive.js";
 import { OrganizationTriggerStore } from "./triggers/store.js";
 import { DaemonRegistration } from "./daemons/registration.js";
 import { CliAuthorizations } from "./cli-authorizations/index.js";
@@ -107,6 +109,16 @@ export interface HubOperations {
     attachmentId: string,
   ): Promise<Response>;
   handleManualTrigger(request: Request, entrypoint: "trigger" | "smoke"): Promise<Response>;
+  handleAutomationWebhook(input: {
+    secret: string;
+    body: unknown;
+  }): Promise<
+    | { status: "accepted" }
+    | { status: "not_found" }
+    | { status: "ambiguous" }
+    | { status: "unavailable" }
+    | { status: "rejected" }
+  >;
 }
 
 export interface HubApplication {
@@ -152,6 +164,7 @@ export function createHubApplication(options: HubRuntimeOptions): HubApplication
   const providers = [
     createScheduleProvider(),
     manualProvider,
+    createWebhookProvider(storeForProject),
     ...configuredProviders,
     ...(options.providers ?? []),
   ].filter((provider): provider is TriggerProvider => provider !== undefined);
@@ -319,6 +332,15 @@ export function createHubApplication(options: HubRuntimeOptions): HubApplication
       manualSource === undefined
         ? databaseUnavailable()
         : handleManualTriggerRequest(request, manualSource, entrypoint),
+    handleAutomationWebhook: (input) =>
+      options.database === null || manualSource === undefined
+        ? Promise.resolve({ status: "unavailable" as const })
+        : receiveAutomationWebhook({
+            database: options.database,
+            dispatch: (trigger) => dispatchManualTrigger(manualSource, trigger),
+            secret: input.secret,
+            body: input.body,
+          }),
   };
   return { hub, operations, publicApi, configurationForProject: storeForProject };
 }

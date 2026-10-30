@@ -18,8 +18,9 @@ export function matchSlackTriggers(
   connectionId?: string | null,
 ): MatchedSlackTrigger[] {
   if (event.author.id === botUserId) return [];
+  const expectedOn = event.type === "message" ? "slack.message" : "slack.mention";
   return config.triggers.flatMap((trigger) => {
-    return trigger.on === "slack.mention" &&
+    return trigger.on === expectedOn &&
       matchesFilters(event, trigger.filters, botUserId, connectionId)
       ? [{ event, trigger }]
       : [];
@@ -32,7 +33,8 @@ function matchesFilters(
   botUserId: string,
   connectionId?: string | null,
 ): boolean {
-  if (filters === undefined || !event.content.includes(`<@${botUserId}>`)) return false;
+  if (filters === undefined) return false;
+  if (event.type === "mention" && !event.content.includes(`<@${botUserId}>`)) return false;
   if (
     filters.from_users === undefined ||
     (!filters.from_users.includes("*") &&

@@ -24,6 +24,7 @@ import { SegmentedControl, type SegmentedOption } from "../components/app/segmen
 import { StatusPill, statusLabel } from "../components/app/status-pill.js";
 import { TwoLine } from "../components/app/two-line.js";
 import { Button } from "../components/ui/button.js";
+import { Input } from "../components/ui/input.js";
 import { Textarea } from "../components/ui/textarea.js";
 import { SiteHeaderActions } from "../shell/site-header-actions.js";
 import { ProviderGlyph } from "../connections/provider-glyph.js";
@@ -32,6 +33,7 @@ import { useRouteTenant } from "../projects/context.js";
 import type { Result } from "../contract/respond.js";
 import {
   describeTriggerEvent,
+  applyAutomationTemplate,
   changeTriggerEvent,
   mergeTriggerForm,
   projectTriggerForm,
@@ -43,6 +45,7 @@ import { saveTrigger, triggerSnapshot, type TriggerSnapshot } from "./functions.
 import { daemonProviderSnapshot } from "../daemons/functions.js";
 import type { HubProviderSnapshotEntry } from "../hub/protocol.js";
 import { EventFields } from "./event-fields.js";
+import { AutomationTemplates, automationTemplateFromLocation } from "./templates.js";
 import { EDITOR_EVENTS, eventDefinition, parseEditorEvent } from "./configuration/events.js";
 import { selectedProviderModel } from "./provider-catalog.js";
 import { supportsUnattendedRuns } from "./configuration/unattended.js";
@@ -59,7 +62,7 @@ type TriggerTextField = Exclude<
 >;
 
 const TRIGGER_COLUMNS = [
-  { header: "Trigger", fill: true },
+  { header: "Automation", fill: true },
   { header: "Event", fill: true, className: "hidden md:table-cell" },
   { header: "Target", fill: true, className: "hidden xl:table-cell" },
   { header: "Last triggered", className: "hidden xl:table-cell" },
@@ -77,19 +80,20 @@ const EVENT_OPTIONS: readonly ComboboxOption[] = EDITOR_EVENTS.map((value) => {
   };
 });
 
-const TRIGGERS_DESCRIPTION = "Launch agents on your compute when organization events arrive.";
-const TRIGGER_EDITOR_DESCRIPTION = "One event launches one agent on your compute.";
+const TRIGGERS_DESCRIPTION = "Run an agent when something happens.";
+const TRIGGER_EDITOR_DESCRIPTION = "Choose what starts the agent and what it should do.";
 
 export function TriggersPanel() {
   const tenant = useRouteTenant();
   const scope = { organizationSlug: tenant.organization.slug };
   const snapshot = useTriggerSnapshot(scope.organizationSlug);
   const navigate = useNavigate();
+  const [search, setSearch] = useState("");
   if (snapshot.status === "pending") {
     return (
       <>
-        <PageHeader title="Triggers" description={TRIGGERS_DESCRIPTION} />
-        <DataTableSkeleton label="Triggers" columns={TRIGGER_COLUMNS} />
+        <PageHeader title="Automations" description={TRIGGERS_DESCRIPTION} />
+        <DataTableSkeleton label="Automations" columns={TRIGGER_COLUMNS} />
       </>
     );
   }
@@ -97,19 +101,30 @@ export function TriggersPanel() {
     return <TriggerLoadError error={snapshot.error} />;
   }
   const data = snapshot.data;
+  const query = search.trim().toLowerCase();
+  const visibleTriggers = data.triggers.filter((trigger) =>
+    query.length === 0 ? true : trigger.name.toLowerCase().includes(query),
+  );
   const triggerPath = (triggerId: string) =>
     `/o/${scope.organizationSlug}/triggers/${triggerId}` as never;
   return (
     <>
-      <PageHeader title="Triggers" description={TRIGGERS_DESCRIPTION}>
+      <PageHeader title="Automations" description={TRIGGERS_DESCRIPTION}>
         {data.canManage ? (
           <Button asChild>
             <Link to={triggerPath("new")}>
-              <Plus aria-hidden="true" /> New trigger
+              <Plus aria-hidden="true" /> New automation
             </Link>
           </Button>
         ) : null}
       </PageHeader>
+      {data.canManage ? <AutomationTemplates to={triggerPath("new")} /> : null}
+      <Input
+        value={search}
+        onChange={(event) => setSearch(event.target.value)}
+        placeholder="Search automations"
+        aria-label="Search automations"
+      />
       <div className="grid gap-6">
         {data.daemons.length === 0 ? (
           <WarningAlert
@@ -120,19 +135,22 @@ export function TriggersPanel() {
               </Button>
             }
           >
-            <p>Triggers need a daemon that can run agents.</p>
+            <p>Automations need a daemon that can run agents.</p>
           </WarningAlert>
         ) : null}
         <DataTable
-          label="Triggers"
+          label="Automations"
           columns={TRIGGER_COLUMNS}
-          isEmpty={data.triggers.length === 0}
+          isEmpty={visibleTriggers.length === 0}
           empty={{
-            title: "No triggers",
-            description: "Connect a provider and daemon, then create your first trigger.",
+            title: search.trim().length === 0 ? "No automations" : "No matching automations",
+            description:
+              search.trim().length === 0
+                ? "Create one, or start from a template."
+                : "Try a different name.",
           }}
         >
-          {data.triggers.map((trigger) => (
+          {visibleTriggers.map((trigger) => (
             <DataRow
               key={trigger.id}
               onSelect={() => {
@@ -189,7 +207,7 @@ export function TriggersPanel() {
               </DataCell>
               <DataCell>
                 <StatusPill tone={trigger.enabled ? "success" : "neutral"}>
-                  {trigger.enabled ? "Enabled" : "Disabled"}
+                  {trigger.enabled ? "Active" : "Inactive"}
                 </StatusPill>
               </DataCell>
             </DataRow>
@@ -272,7 +290,7 @@ function useTriggerSnapshot(organizationSlug: string) {
 function TriggerLoadError({ error }: { error: string | null }) {
   return (
     <FailureAlert
-      title="Triggers unavailable"
+      title="Automations unavailable"
       error={error}
       fallback="Hub couldn't load this organization's triggers."
     />
@@ -296,7 +314,7 @@ function TriggerEditor({
 }) {
   const legacy = trigger?.format === "legacy_multistep";
   const editor = useTriggerEditorState(trigger, snapshot, legacy, onSave);
-  const title = trigger === null ? "New trigger" : trigger.name;
+  const title = trigger === null ? "New automation" : trigger.name;
   const submitLabel = triggerSubmitLabel(editor.mode, trigger === null);
   // Saving is refused only for what the reader cannot act on here: a request in flight, a
   // read-only role, a legacy document. A half-filled form is something they can act on, so the
@@ -338,16 +356,20 @@ function TriggerEditor({
         </Button>
       </SiteHeaderActions>
       <Button variant="ghost" size="sm" className="mb-4 -ml-2.5" onClick={onCancel}>
-        <ArrowLeft aria-hidden="true" /> Triggers
+        <ArrowLeft aria-hidden="true" /> Automations
       </Button>
       <PageHeader
         title={title}
         status={{
-          label: editor.form.enabled ? "Enabled" : "Disabled",
+          label: editor.form.enabled ? "Active" : "Inactive",
           tone: editor.form.enabled ? "success" : "neutral",
         }}
         description={TRIGGER_EDITOR_DESCRIPTION}
-      />
+      >
+        <Button asChild variant="outline" size="sm">
+          <Link to={`/o/${snapshot.organization.slug}/activity` as never}>Run history</Link>
+        </Button>
+      </PageHeader>
       <div className="grid gap-6">
         <TriggerCompatibilityAlert
           legacy={legacy}
@@ -410,7 +432,7 @@ function TriggerEditor({
 
 function triggerSubmitLabel(mode: EditorMode, creating: boolean) {
   if (mode === "yaml") return "Save YAML";
-  return creating ? "Create trigger" : "Save changes";
+  return creating ? "Create automation" : "Save changes";
 }
 
 /**
@@ -432,9 +454,12 @@ function useTriggerEditorState(
     trigger === null || (initialProjection.status === "editable" && !legacy) ? "form" : "yaml",
   );
   const [yaml, setYaml] = useState(initialYaml);
-  const [form, setForm] = useState<TriggerFormValue>(
-    initialProjection.status === "editable" ? initialProjection.value : initialForm,
-  );
+  const [form, setForm] = useState<TriggerFormValue>(() => {
+    if (initialProjection.status === "editable") return initialProjection.value;
+    if (trigger !== null) return initialForm;
+    const template = automationTemplateFromLocation();
+    return template === null ? initialForm : applyAutomationTemplate(initialForm, template);
+  });
   // What the mode the reader is *not* in would receive. In form mode that is the YAML the form
   // serialises to; in YAML mode it is the form the document projects onto.
   const other = useMemo(
@@ -616,7 +641,7 @@ function TriggerForm({
         <div className="grid gap-4 sm:grid-cols-2">
           <FormField
             id="trigger-name"
-            label="Trigger name"
+            label="Name"
             description="Lowercase identifier with hyphens, for example slack-triage."
             kind="text"
             name="name"
@@ -637,8 +662,8 @@ function TriggerForm({
         </div>
         <CheckboxField
           id="trigger-enabled"
-          label="Enabled"
-          description="A disabled trigger keeps its configuration and stops responding to events."
+          label="Active"
+          description="An inactive automation keeps its configuration and stops responding to events."
           checked={form.enabled}
           onChange={(checked) => update("enabled", checked)}
         />
@@ -901,7 +926,7 @@ function TriggerForm({
               </Disclosure>
               <Disclosure
                 id="trigger-github"
-                open={githubExpanded}
+                open={eventDefinition(form.event).provider === "github" || githubExpanded}
                 onOpenChange={setGithubExpanded}
                 title="GitHub access"
                 description="Give the run a short-lived token scoped to the repositories you name."
@@ -990,7 +1015,7 @@ function TriggerEditorSkeleton() {
   return (
     <div aria-busy="true">
       <Button variant="ghost" size="sm" className="mb-4 -ml-2.5" disabled>
-        <ArrowLeft aria-hidden="true" /> Triggers
+        <ArrowLeft aria-hidden="true" /> Automations
       </Button>
       <PageHeaderSkeleton description={TRIGGER_EDITOR_DESCRIPTION} />
       <div className="grid gap-6">
@@ -1280,6 +1305,8 @@ function defaultForm(snapshot: TriggerSnapshot): TriggerFormValue {
     githubRepositories: "",
     githubPermissions: "",
     githubDuration: "1h",
+    channels: "",
+    webhookSecret: "",
     prompt:
       "Handle this request in the originating conversation.\n\nWhen hub.reply is available, use it for useful progress updates and your final user-facing response. Call hub.finish_execution once the request is complete.\n\nRequest:\n${{ paseo.prompt }}",
   };

@@ -174,6 +174,8 @@ describe("trigger form YAML bridge", () => {
       githubPermissions: "",
       githubDuration: "1h",
       prompt: "Handle it.",
+      channels: "",
+      webhookSecret: "",
     });
     expect(parseDocument(yaml).toJS()).toEqual({
       name: "answer",
@@ -213,6 +215,8 @@ describe("trigger form YAML bridge", () => {
       githubPermissions: "",
       githubDuration: "1h",
       prompt: "${{ paseo.prompt }}",
+      channels: "",
+      webhookSecret: "",
     });
     const projection = projectTriggerForm(initial);
     if (projection.status !== "editable") throw new Error(projection.reason);

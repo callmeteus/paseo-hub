@@ -36,7 +36,7 @@ interface SlackThreadContextLocator {
 
 export interface SlackMergeData {
   slack: {
-    event_type: "app_mention";
+    event_type: "app_mention" | "message";
     event_id: string;
     event_ts: string;
     event_time: number;
@@ -107,7 +107,7 @@ export function createSlackTriggerProvider(options: {
 }): TriggerProvider<"slack", SlackTriggerContext, SlackOutputContext, SlackMaterializedContext> {
   return {
     name: "slack",
-    eventNames: ["slack.mention"],
+    eventNames: ["slack.mention", "slack.message"],
     async match(trigger) {
       const rawEvent = NormalizedSlackMentionEventSchema.parse(trigger.payload);
       const botUserId = await options.botUserIdForWorkspace(
@@ -329,7 +329,7 @@ function needsSlackUsername(
 ): boolean {
   return triggers.some(
     (candidate) =>
-      candidate.on === "slack.mention" &&
+      (candidate.on === "slack.mention" || candidate.on === "slack.message") &&
       candidate.filters?.from_users !== undefined &&
       !candidate.filters.from_users.includes("*") &&
       !candidate.filters.from_users.includes(authorId),
@@ -372,7 +372,7 @@ function buildSlackMergeData(
 ): SlackMergeData {
   return {
     slack: {
-      event_type: "app_mention",
+      event_type: event.type === "message" ? "message" : "app_mention",
       event_id: event.id,
       event_ts: event.eventTs,
       event_time: event.eventTime,

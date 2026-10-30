@@ -104,6 +104,7 @@ const AuthoredTriggerFilterSchema = z
     assignees: z.array(z.string().min(1)).min(1).optional(),
     channels: z.array(z.string().min(1)).optional(),
     from_users: z.array(z.string().min(1)).optional(),
+    webhook_secret: z.string().min(32).optional(),
     inputs: z.record(z.string(), InputValueSchema).optional(),
     connection: z
       .string()

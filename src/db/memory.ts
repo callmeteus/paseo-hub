@@ -70,6 +70,7 @@ import type {
   UnroutedProviderEventCount,
   ProjectTriggerRoute,
   MigrateProjectTriggersInput,
+  EnabledTriggerDocument,
   OrganizationTriggerRecord,
   OrganizationTriggerRevisionRecord,
   PendingProjectTriggerMigration,
@@ -2622,6 +2623,25 @@ class MemoryDatabase implements Database {
           revision.triggerId === triggerId && revision.sourceKind === "project_migration",
       )
       .sort((left, right) => left.version - right.version)[0];
+  }
+
+  async listEnabledTriggerDocuments(): Promise<EnabledTriggerDocument[]> {
+    const documents: EnabledTriggerDocument[] = [];
+    for (const trigger of this.organizationTriggers.values()) {
+      if (!trigger.enabled || trigger.activeRevisionId === "" || trigger.runtimeProjectId === "") {
+        continue;
+      }
+      const revision = this.organizationTriggerRevisions.get(trigger.activeRevisionId);
+      if (revision === undefined) continue;
+      documents.push({
+        organizationId: trigger.organizationId,
+        projectId: trigger.runtimeProjectId,
+        triggerName: trigger.name,
+        configurationRevisionId: revision.id,
+        yaml: revision.yaml,
+      });
+    }
+    return documents;
   }
 
   async saveOrganizationTrigger(

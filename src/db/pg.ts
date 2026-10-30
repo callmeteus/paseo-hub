@@ -88,6 +88,7 @@ import type {
   GitHubConfigurationTarget,
   ProjectTriggerRoute,
   MigrateProjectTriggersInput,
+  EnabledTriggerDocument,
   OrganizationTriggerRecord,
   OrganizationTriggerRevisionRecord,
   PendingProjectTriggerMigration,
@@ -3296,6 +3297,29 @@ class PgDatabase implements Database {
     return rows.rows[0] === undefined ? undefined : toProjectRecord(rows.rows[0]);
   }
 
+  async listEnabledTriggerDocuments(): Promise<EnabledTriggerDocument[]> {
+    const rows = await query<EnabledTriggerDocumentRow>(
+      this.pool,
+      `select triggers.organization_id,
+              triggers.name,
+              triggers.runtime_project_id,
+              revisions.id as revision_id,
+              revisions.yaml
+         from organization_triggers triggers
+         join organization_trigger_revisions revisions
+           on revisions.id = triggers.active_revision_id
+        where triggers.enabled = true
+          and triggers.runtime_project_id is not null`,
+    );
+    return rows.rows.map((row) => ({
+      organizationId: row.organization_id,
+      projectId: row.runtime_project_id,
+      triggerName: row.name,
+      configurationRevisionId: row.revision_id,
+      yaml: row.yaml,
+    }));
+  }
+
   async findProjectBySlugForOrganization(organizationId: string, slug: string) {
     const rows = await query<ProjectRow>(
       this.pool,
@@ -5076,6 +5100,14 @@ export interface ProjectConfigurationRevisionRow extends QueryRow {
   received_at: Date | null;
   created_at: Date;
   validated_at: Date | null;
+}
+
+interface EnabledTriggerDocumentRow extends QueryRow {
+  organization_id: string;
+  name: string;
+  runtime_project_id: string;
+  revision_id: string;
+  yaml: string;
 }
 
 interface OrganizationTriggerRow extends QueryRow {

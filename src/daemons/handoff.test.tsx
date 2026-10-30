@@ -30,9 +30,19 @@ function listing(daemons: readonly BrowserDaemon[]): BrowserDaemonList {
   return { daemons: [...daemons], canManage: true };
 }
 
-function markup(link: DaemonLink, command = "paseo hub login http://localhost:4173"): string {
+function markup(
+  link: DaemonLink,
+  command = "paseo hub login http://localhost:4173",
+  embedded = false,
+): string {
   return renderToStaticMarkup(
-    <DaemonHandoffView link={link} command={command} onRetry={NOOP} onContinue={NOOP} />,
+    <DaemonHandoffView
+      link={link}
+      command={command}
+      embedded={embedded}
+      onRetry={NOOP}
+      onContinue={NOOP}
+    />,
   );
 }
 
@@ -149,5 +159,17 @@ describe("the daemon handoff screen", () => {
     assert.match(screen, /Continue/u);
     // Nothing left to run: the command would only invite a second login.
     assert.ok(!screen.includes("paseo hub login"));
+  });
+
+  it("lets the desktop app connect this computer without a terminal command", () => {
+    const waiting = markup({ state: "waiting" }, "paseo hub login http://localhost:4173", true);
+    const linked = markup({ state: "linked", slug: "workshop" }, "paseo hub login", true);
+
+    assert.match(waiting, /Paseo is connecting this computer/u);
+    assert.match(waiting, /data-paseo-daemon-handoff="waiting"/u);
+    assert.ok(!waiting.includes("paseo hub login"));
+    assert.match(linked, /workshop is connected to this Hub/u);
+    assert.ok(!linked.includes("terminal"));
+    assert.ok(!linked.includes("paseo hub login"));
   });
 });

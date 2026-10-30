@@ -343,6 +343,14 @@ export interface ProjectConfigurationRevisionRecord {
   validatedAt: Date | null;
 }
 
+export interface EnabledTriggerDocument {
+  organizationId: string;
+  projectId: string;
+  triggerName: string;
+  configurationRevisionId: string;
+  yaml: string;
+}
+
 export interface OrganizationTriggerRecord {
   id: string;
   organizationId: string;
@@ -1526,6 +1534,7 @@ export interface Database {
   listPendingProjectTriggerMigrations(): Promise<PendingProjectTriggerMigration[]>;
   migrateProjectTriggers(input: MigrateProjectTriggersInput): Promise<OrganizationTriggerRecord[]>;
   listOrganizationTriggers(organizationId: string): Promise<OrganizationTriggerRecord[]>;
+  listEnabledTriggerDocuments(): Promise<EnabledTriggerDocument[]>;
   findOrganizationTriggerRevision(
     triggerId: string,
     revisionId: string,

@@ -36,19 +36,20 @@ export async function intakeSlackEvent(
   const normalizedEvent = normalizeSlackEvent(callback.data);
   if (normalizedEvent === undefined) return;
 
+  const source = normalizedEvent.type === "message" ? "slack.message" : "slack.mention";
   const deliveryId = `slack-${normalizedEvent.id}`;
   const acceptance = await options.accept({
     teamId: normalizedEvent.teamId,
     deliveryId,
     signatureHash,
-    source: "slack.mention",
+    source,
     payload: normalizedEvent,
     receivedAt: new Date(normalizedEvent.eventTime * 1_000),
     ...(handlers.size === 0 ? { dropReason: "configuration_unavailable" } : {}),
   });
   logProviderEventIntake({
     provider: "slack",
-    source: "slack.mention",
+    source,
     deliveryId,
     resourceId: normalizedEvent.teamId,
     acceptance,

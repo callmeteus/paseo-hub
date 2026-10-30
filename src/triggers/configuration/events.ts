@@ -13,7 +13,7 @@ export interface QualifierDefinition {
 }
 
 interface EventDefinition {
-  provider: "github" | "slack" | "discord" | "linear" | "manual" | "schedule";
+  provider: "github" | "slack" | "discord" | "linear" | "manual" | "schedule" | "webhook";
   label: string;
   origin: "hub" | "provider";
   qualifiers: readonly QualifierDefinition[];
@@ -37,12 +37,16 @@ function event(
     provider,
     label,
     qualifiers,
-    origin: provider === "manual" || provider === "schedule" ? "hub" : "provider",
+    origin:
+      provider === "manual" || provider === "schedule" || provider === "webhook"
+        ? "hub"
+        : "provider",
   };
 }
 
 const EVENTS = {
   "slack.mention": event("slack", "Slack mention"),
+  "slack.message": event("slack", "New message in channel"),
   "discord.mention": event("discord", "Discord mention"),
   "github.issue_created": event("github", "GitHub issue created"),
   "github.pull_request_created": event("github", "GitHub pull request created"),
@@ -68,6 +72,7 @@ const EVENTS = {
   "linear.comment_created": event("linear", "Linear comment created"),
   "schedule.tick": event("schedule", "Schedule"),
   "manual.run": event("manual", "Manual run"),
+  "webhook.received": event("webhook", "Webhook"),
 };
 
 export type EditorEvent = keyof typeof EVENTS;

@@ -49,6 +49,7 @@ export const TriggerFilterSchema = z
     assignees: z.array(z.string().min(1)).min(1).optional(),
     channels: z.array(z.string().min(1)).optional(),
     from_users: z.array(z.string().min(1)).optional(),
+    webhook_secret: z.string().min(32).optional(),
     inputs: z.record(z.string(), InputValueSchema).optional(),
   })
   .strict();
@@ -132,45 +133,7 @@ export const TriggerDocumentSchema = z
   .strict()
   .superRefine((trigger, context) => {
     for (const [event, definition] of Object.entries(trigger.on)) {
-      if (event === "schedule.tick") {
-        if (
-          definition.recurrence === undefined ||
-          definition.connection !== undefined ||
-          definition.filters !== undefined
-        ) {
-          context.addIssue({
-            code: "custom",
-            path: ["on", event],
-            message: "Schedule requires recurrence and does not accept connection or filters.",
-          });
-        }
-        // A tick supplies no inputs; it runs with the declared defaults.
-        for (const [name, input] of Object.entries(trigger.inputs ?? {})) {
-          if (input.required !== true) continue;
-          context.addIssue({
-            code: "custom",
-            path: ["inputs", name],
-            message: "A trigger with a schedule cannot require an input; give it a default.",
-          });
-        }
-      } else if (definition.recurrence !== undefined) {
-        context.addIssue({
-          code: "custom",
-          path: ["on", event, "recurrence"],
-          message: "Recurrence is only supported for schedule.tick.",
-        });
-      }
-      if (!isEditorEvent(event)) continue;
-      for (const qualifier of eventDefinition(event).qualifiers) {
-        const value = definition.filters?.[qualifier.key];
-        if (qualifier.required && (value === undefined || value.trim().length === 0)) {
-          context.addIssue({
-            code: z.ZodIssueCode.custom,
-            path: ["on", event, "filters", qualifier.key],
-            message: `${qualifier.label} is required.`,
-          });
-        }
-      }
+      refineTriggerEvent(event, definition, trigger.inputs, context);
     }
     if (Object.keys(trigger.on).length === 0) {
       context.addIssue({
@@ -189,3 +152,78 @@ export const TriggerDocumentSchema = z
   });
 
 export type TriggerDocument = z.infer<typeof TriggerDocumentSchema>;
+
+function refineTriggerEvent(
+  event: string,
+  definition: z.infer<typeof TriggerEventSchema>,
+  inputs: TriggerDocument["inputs"],
+  context: z.RefinementCtx,
+): void {
+  if (event === "schedule.tick") {
+    refineScheduleEvent(event, definition, inputs, context);
+    return;
+  }
+  if (event === "webhook.received") {
+    refineWebhookEvent(event, definition, context);
+  } else if (definition.recurrence !== undefined) {
+    context.addIssue({
+      code: "custom",
+      path: ["on", event, "recurrence"],
+      message: "Recurrence is only supported for schedule.tick.",
+    });
+  }
+  if (!isEditorEvent(event)) return;
+  for (const qualifier of eventDefinition(event).qualifiers) {
+    const value = definition.filters?.[qualifier.key];
+    if (qualifier.required && (value === undefined || value.trim().length === 0)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["on", event, "filters", qualifier.key],
+        message: `${qualifier.label} is required.`,
+      });
+    }
+  }
+}
+
+function refineScheduleEvent(
+  event: string,
+  definition: z.infer<typeof TriggerEventSchema>,
+  inputs: TriggerDocument["inputs"],
+  context: z.RefinementCtx,
+): void {
+  if (
+    definition.recurrence === undefined ||
+    definition.connection !== undefined ||
+    definition.filters !== undefined
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["on", event],
+      message: "Schedule requires recurrence and does not accept connection or filters.",
+    });
+  }
+  // A tick supplies no inputs; it runs with the declared defaults.
+  for (const [name, input] of Object.entries(inputs ?? {})) {
+    if (input.required !== true) continue;
+    context.addIssue({
+      code: "custom",
+      path: ["inputs", name],
+      message: "A trigger with a schedule cannot require an input; give it a default.",
+    });
+  }
+}
+
+function refineWebhookEvent(
+  event: string,
+  definition: z.infer<typeof TriggerEventSchema>,
+  context: z.RefinementCtx,
+): void {
+  const secret = definition.filters?.webhook_secret;
+  if (definition.connection !== undefined || secret === undefined) {
+    context.addIssue({
+      code: "custom",
+      path: ["on", event],
+      message: "Webhook requires filters.webhook_secret and does not accept a connection.",
+    });
+  }
+}

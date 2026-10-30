@@ -40,6 +40,8 @@ export interface TriggerFormValue {
   githubPermissions: string;
   githubDuration: string;
   prompt: string;
+  channels: string;
+  webhookSecret: string;
 }
 
 export type TriggerFormProjection =
@@ -81,10 +83,50 @@ function toFormValue(
     name: trigger.name,
     enabled: trigger.enabled,
     event,
+    ...eventFormFields(event, definition),
+    ...runFormFields(trigger, agent),
+  };
+}
+
+function eventFormFields(
+  event: EditorEvent,
+  definition: TriggerDocument["on"][string],
+): Pick<
+  TriggerFormValue,
+  "connection" | "allowedUsers" | "qualifiers" | "recurrence" | "channels" | "webhookSecret"
+> {
+  return {
     connection: definition.connection ?? "",
     allowedUsers: definition.filters?.from_users?.join(", ") ?? "*",
     qualifiers: readQualifiers(event, definition.filters),
     recurrence: definition.recurrence ?? DEFAULT_RECURRENCE,
+    channels: definition.filters?.channels?.join(", ") ?? "",
+    webhookSecret: definition.filters?.webhook_secret ?? "",
+  };
+}
+
+function runFormFields(
+  trigger: TriggerDocument,
+  agent: Extract<TriggerDocument["run"]["agent"], { provider: string }>,
+): Pick<
+  TriggerFormValue,
+  | "daemon"
+  | "cwd"
+  | "agent"
+  | "mode"
+  | "thinkingOptionId"
+  | "providerOptions"
+  | "continuationMode"
+  | "continuationKey"
+  | "maxRuntime"
+  | "idleTimeout"
+  | "githubConnection"
+  | "githubRepositories"
+  | "githubPermissions"
+  | "githubDuration"
+  | "prompt"
+> {
+  return {
     daemon: trigger.run.target.daemon,
     cwd: trigger.run.target.cwd,
     agent: joinAgentId(agent.provider, agent.model),
@@ -138,6 +180,19 @@ export function patchTriggerYaml(yaml: string, value: TriggerFormValue): string 
     value.event === "schedule.tick" ? (value.recurrence ?? DEFAULT_RECURRENCE) : undefined,
   );
   if (value.event === "schedule.tick") deleteIfPresent(document, ["on", value.event, "filters"]);
+  if (value.event === "slack.message") {
+    const channels = commaSeparated(value.channels);
+    setOptional(
+      document,
+      ["on", value.event, "filters", "channels"],
+      channels.length === 0 ? undefined : channels,
+    );
+  }
+  setOptional(
+    document,
+    ["on", value.event, "filters", "webhook_secret"],
+    value.event === "webhook.received" ? value.webhookSecret.trim() : undefined,
+  );
   const qualifiers = authoredQualifiers(value);
   const ownedKeys = new Set(
     [...eventDefinition(previousEvent).qualifiers, ...eventDefinition(value.event).qualifiers].map(
@@ -237,10 +292,18 @@ export function createTriggerYaml(value: TriggerFormValue): string {
 function formEventDefinition(value: TriggerFormValue): TriggerDocument["on"][string] {
   if (value.event === "schedule.tick")
     return { recurrence: value.recurrence ?? DEFAULT_RECURRENCE };
+  if (value.event === "webhook.received") {
+    return { filters: { webhook_secret: value.webhookSecret.trim() } };
+  }
   if (eventDefinition(value.event).origin === "hub") return {};
+  const channels = value.event === "slack.message" ? commaSeparated(value.channels) : [];
   return {
     connection: value.connection,
-    filters: { from_users: users(value.allowedUsers), ...authoredQualifiers(value) },
+    filters: {
+      from_users: users(value.allowedUsers),
+      ...authoredQualifiers(value),
+      ...(channels.length === 0 ? {} : { channels }),
+    },
   };
 }
 
@@ -248,6 +311,11 @@ function workingDirectoryErrors(value: TriggerFormValue): TriggerFieldErrors {
   const cwd = value.cwd.trim();
   if (cwd.length === 0) return { cwd: "Working directory is required." };
   return cwd.startsWith("/") ? {} : { cwd: "Working directory must be an absolute path." };
+}
+
+function webhookErrors(value: TriggerFormValue): TriggerFieldErrors {
+  if (value.event !== "webhook.received" || value.webhookSecret.trim().length >= 32) return {};
+  return { webhookSecret: "Webhook secret is missing." };
 }
 
 function recurrenceErrors(value: TriggerFormValue): TriggerFieldErrors {
@@ -317,7 +385,7 @@ export function triggerFormErrors(value: TriggerFormValue): TriggerFieldErrors {
       errors[`qualifiers.${qualifier.key}`] = `${qualifier.label} is required.`;
     }
   }
-  Object.assign(errors, recurrenceErrors(value));
+  Object.assign(errors, webhookErrors(value), recurrenceErrors(value));
   if (value.daemon.trim().length === 0) errors.daemon = "Daemon is required.";
   Object.assign(errors, workingDirectoryErrors(value));
   if (value.maxRuntime.trim().length === 0) errors.maxRuntime = "Maximum runtime is required.";
@@ -453,8 +521,77 @@ export function changeTriggerEvent(value: TriggerFormValue, event: EditorEvent):
       }
     }
   }
-  return { ...value, event, qualifiers, connection: sameProvider ? value.connection : "" };
+  const webhookSecret =
+    event === "webhook.received" && value.webhookSecret.trim().length === 0
+      ? createWebhookSecret()
+      : value.webhookSecret;
+  return {
+    ...value,
+    event,
+    qualifiers,
+    connection: sameProvider ? value.connection : "",
+    webhookSecret,
+  };
 }
+
+export function createWebhookSecret(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+export const AUTOMATION_TEMPLATE_IDS = [
+  "slack-mention",
+  "slack-message",
+  "github-pull-request",
+  "schedule",
+  "webhook",
+] as const;
+
+export type AutomationTemplateId = (typeof AUTOMATION_TEMPLATE_IDS)[number];
+
+export function isAutomationTemplateId(value: string | null): value is AutomationTemplateId {
+  return AUTOMATION_TEMPLATE_IDS.some((id) => id === value);
+}
+
+export function applyAutomationTemplate(
+  form: TriggerFormValue,
+  template: AutomationTemplateId,
+): TriggerFormValue {
+  const next = changeTriggerEvent(form, AUTOMATION_TEMPLATE_EVENTS[template]);
+  return {
+    ...next,
+    name: AUTOMATION_TEMPLATE_NAMES[template],
+    prompt: AUTOMATION_TEMPLATE_PROMPTS[template],
+  };
+}
+
+const AUTOMATION_TEMPLATE_EVENTS = {
+  "slack-mention": "slack.mention",
+  "slack-message": "slack.message",
+  "github-pull-request": "github.pull_request_created",
+  schedule: "schedule.tick",
+  webhook: "webhook.received",
+} as const satisfies Record<AutomationTemplateId, EditorEvent>;
+
+const AUTOMATION_TEMPLATE_NAMES = {
+  "slack-mention": "slack-mention",
+  "slack-message": "slack-message",
+  "github-pull-request": "github-pull-request",
+  schedule: "schedule",
+  webhook: "webhook",
+} as const satisfies Record<AutomationTemplateId, string>;
+
+const AUTOMATION_TEMPLATE_PROMPTS = {
+  "slack-mention":
+    "Read the Slack mention and reply in the thread with a useful answer.\n\n${{ paseo.prompt }}",
+  "slack-message":
+    "Read the new channel message and reply in the thread when you can help.\n\n${{ paseo.prompt }}",
+  "github-pull-request":
+    "Read the pull request and leave a short review comment.\n\n${{ paseo.prompt }}",
+  schedule: "Run the scheduled task.\n\n${{ paseo.prompt }}",
+  webhook: "Read the webhook body and do what it asks.\n\n${{ paseo.prompt }}",
+} as const satisfies Record<AutomationTemplateId, string>;
 
 function readQualifiers(
   event: EditorEvent,

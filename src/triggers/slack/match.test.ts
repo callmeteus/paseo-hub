@@ -62,6 +62,37 @@ describe("Slack trigger matching", () => {
     );
     assert.equal(matchSlackTriggers(config, { ...event, content: "run tests" }, "UBOT").length, 0);
   });
+
+  it("matches a channel message without a mention and leaves mentions on slack.mention", () => {
+    const message = compileHubConfig({
+      environments: [{ name: "runner", kind: "daemon", daemon: "runner", cwd: "/repo" }],
+      triggers: [
+        {
+          name: "channel",
+          on: "slack.message",
+          max_runtime: "2h",
+          filters: { from_users: ["*"] },
+          steps: [
+            {
+              id: "run",
+              environment: "runner",
+              max_runtime: "1h",
+              idle_timeout: "5m",
+              agent: { provider: "opencode", mode: "default" },
+              prompt: [{ text: "Read the channel" }],
+            },
+          ],
+        },
+      ],
+    });
+    const posted = mention({ authorId: "U9" });
+    posted.type = "message";
+    posted.content = "hello channel";
+
+    assert.equal(matchSlackTriggers(message, posted, "UBOT").length, 1);
+    assert.equal(matchSlackTriggers(configForUsers(["*"]), posted, "UBOT").length, 0);
+    assert.equal(matchSlackTriggers(message, mention(), "UBOT").length, 0);
+  });
 });
 
 function configForUsers(fromUsers: string[]) {
