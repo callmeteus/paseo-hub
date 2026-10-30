@@ -4,15 +4,18 @@ import { CopyButton } from "../components/app/copy-field.js";
 import { eventDefinition, type QualifierKey } from "./configuration/events.js";
 import type { TriggerFieldErrors, TriggerFormValue } from "./configuration/editor.js";
 import { ScheduleFields } from "./schedule/fields.js";
+import { SlackChannelPicker } from "./slack/channel-picker.js";
 
 /** Source-specific controls live behind the event form boundary. */
 export function EventFields({
   value,
   errors,
+  organizationSlug,
   onChange,
 }: {
   value: TriggerFormValue;
   errors: TriggerFieldErrors;
+  organizationSlug: string;
   onChange: (value: TriggerFormValue) => void;
 }) {
   const updateQualifier = (key: QualifierKey, next: string) =>
@@ -28,13 +31,19 @@ export function EventFields({
       {value.event === "slack.message" ? (
         <FormField
           id="trigger-channels"
-          name="channels"
           label="Channels"
-          description="Comma-separated channel IDs. Leave empty for every channel the bot is in."
-          kind="text"
-          value={value.channels}
-          onChange={(channels) => onChange({ ...value, channels })}
-        />
+          description="Leave empty to include every channel."
+        >
+          {(control) => (
+            <SlackChannelPicker
+              control={control}
+              organizationSlug={organizationSlug}
+              connection={value.connection}
+              value={value.channels}
+              onChange={(channels) => onChange({ ...value, channels })}
+            />
+          )}
+        </FormField>
       ) : null}
       {value.event === "webhook.received" ? <WebhookFields value={value} errors={errors} /> : null}
       {eventDefinition(value.event).provider === "slack" ? (

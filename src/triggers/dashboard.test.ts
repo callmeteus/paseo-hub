@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "vitest";
 import type { AuthServer } from "../auth/server.js";
 import { createMemoryDatabase } from "../db/memory.js";
+import { ProjectCommandError } from "../projects/command-error.js";
 import { acceptingAgentValidator } from "../test-utils/agent-validator.js";
 import { enrollTestDaemon, TEST_DAEMON_SLUG } from "../test-utils/project-configuration.js";
 import { TriggerDashboard } from "./dashboard.js";
@@ -10,16 +11,7 @@ import { OrganizationTriggerStore } from "./store.js";
 describe("trigger dashboard read model", () => {
   it("describes the provider and latest run on the organization trigger list", async () => {
     const database = createMemoryDatabase({
-      memberships: [
-        {
-          userId: "user-1",
-          organizationId: "org-1",
-          organizationName: "Acme",
-          organizationSlug: "acme",
-          membershipId: "membership-1",
-          role: "owner",
-        },
-      ],
+      memberships: [acmeMembership],
     });
     await enrollTestDaemon(database, "org-1");
     const trigger = await new OrganizationTriggerStore(
@@ -71,7 +63,73 @@ describe("trigger dashboard read model", () => {
       receivedAt: receivedAt.toISOString(),
     });
   });
+
+  it("lists channel names for the selected Slack connection", async () => {
+    const database = createMemoryDatabase({
+      memberships: [acmeMembership],
+      slackConnections: [
+        {
+          id: "slack-1",
+          organizationId: "org-1",
+          slug: "acme-slack",
+          teamId: "T1",
+          teamName: "Acme",
+          botUserId: "UBOT",
+          botAccessToken: "xoxb-test",
+          scopes: ["channels:read", "groups:read"],
+          providerApplicationId: null,
+        },
+      ],
+    });
+    const dashboard = new TriggerDashboard(database, accountAuth(), acceptingAgentValidator());
+    const previousFetch = globalThis.fetch;
+    let authorization: string | null = null;
+    globalThis.fetch = async (_input, init) => {
+      authorization = new Headers(init?.headers).get("authorization");
+      return Response.json({
+        ok: true,
+        channels: [{ id: "C1", name: "general", is_private: false }],
+        response_metadata: { next_cursor: "" },
+      });
+    };
+
+    try {
+      const channels = await dashboard.slackChannels(
+        new Request("https://hub.test/o/acme/triggers"),
+        "acme",
+        "acme-slack",
+      );
+      assert.equal(authorization, "Bearer xoxb-test");
+      assert.deepEqual(channels, [{ id: "C1", name: "general", isPrivate: false }]);
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  it("rejects a Slack connection that is not in the organization", async () => {
+    const database = createMemoryDatabase({ memberships: [acmeMembership] });
+    const dashboard = new TriggerDashboard(database, accountAuth(), acceptingAgentValidator());
+
+    await assert.rejects(
+      () =>
+        dashboard.slackChannels(new Request("https://hub.test/o/acme/triggers"), "acme", "missing"),
+      (error: unknown) => {
+        assert.ok(error instanceof ProjectCommandError);
+        assert.equal(error.code, "not_found");
+        return true;
+      },
+    );
+  });
 });
+
+const acmeMembership = {
+  userId: "user-1",
+  organizationId: "org-1",
+  organizationName: "Acme",
+  organizationSlug: "acme",
+  membershipId: "membership-1",
+  role: "owner" as const,
+};
 
 const triggerYaml = `name: manual-task
 enabled: true

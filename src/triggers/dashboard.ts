@@ -5,6 +5,7 @@ import { resolveRouteTenant } from "../projects/access.js";
 import { ProjectCommandError } from "../projects/command-error.js";
 import { parseCompiledHubConfig } from "../config/compiler.js";
 import type { DaemonAgentConfigurationValidator } from "../configuration/store.js";
+import { listSlackMemberChannels } from "../providers/slack/channels.js";
 import { projectTriggerForm } from "./configuration/editor.js";
 import { OrganizationTriggerStore } from "./store.js";
 
@@ -138,6 +139,30 @@ export class TriggerDashboard {
       yaml: input.yaml,
       userId: account.account.id,
     });
+  }
+
+  /**
+   * Channel names for the selected Slack connection.
+   *
+   * The bot token stays on the server. The editor receives ids and names only.
+   *
+   * @param request - The signed-in request
+   * @param organizationSlug - Organization that owns the connection
+   * @param connectionSlug - Slack connection chosen on the trigger
+   * @returns Channels the bot is a member of
+   */
+  async slackChannels(request: Request, organizationSlug: string, connectionSlug: string) {
+    const { tenant } = await resolveRouteTenant(this.auth, this.database, request, {
+      organizationSlug,
+    });
+    const connections = await this.database.organizationConnectionUsage(tenant.organization.id);
+    const connection = connections.slack.find((candidate) => candidate.slug === connectionSlug);
+
+    if (connection === undefined) {
+      throw new ProjectCommandError("not_found");
+    }
+
+    return listSlackMemberChannels(connection.botAccessToken);
   }
 }
 

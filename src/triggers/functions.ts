@@ -1,12 +1,16 @@
 import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import { z } from "zod";
-import { respondOk, type Result } from "../contract/respond.js";
+import { respondError, respondOk, type Result } from "../contract/respond.js";
 import { respondWithFailure } from "../failures/index.js";
+import { SlackChannelListError, type SlackChannelChoice } from "../providers/slack/channels.js";
 import { getApplication } from "../server/runtime.js";
 import type { TriggerDashboard } from "./dashboard.js";
 
 const scopeSchema = z.object({ organizationSlug: z.string().trim().min(1).max(100) });
+const slackChannelsSchema = scopeSchema.extend({
+  connectionSlug: z.string().trim().min(1).max(100),
+});
 const saveSchema = scopeSchema.extend({
   triggerId: z.string().uuid().optional(),
   yaml: z.string().min(1),
@@ -44,6 +48,33 @@ export const saveTrigger = createServerFn({ method: "POST" })
         validation: error instanceof Error ? error.message : "This trigger is invalid.",
         conflict: "A trigger with this name already exists.",
       });
+    }
+  });
+
+export const slackChannels = createServerFn({ method: "GET" })
+  .validator(slackChannelsSchema)
+  .handler(async ({ data }): Promise<Result<SlackChannelChoice[]>> => {
+    try {
+      const dashboard = (await getApplication()).triggerDashboard;
+      if (dashboard == null) throw new Error("trigger dashboard unavailable");
+      return respondOk(
+        await dashboard.slackChannels(getRequest(), data.organizationSlug, data.connectionSlug),
+      );
+    } catch (error) {
+      // The bot token predates the channel-list scopes. Say so, instead of Slack's error code.
+      if (SlackChannelListError.read(error) === "missing_scope") {
+        return respondError({ message: "Reconnect Slack to choose channels." });
+      }
+
+      return respondWithFailure(
+        error,
+        triggerContext("trigger.slack-channels", data.organizationSlug),
+        {
+          fallback: "Hub couldn't load Slack channels.",
+          notFound: "That Slack connection is not in this organization.",
+          forbidden: "You don't have permission to view these channels.",
+        },
+      );
     }
   });
 

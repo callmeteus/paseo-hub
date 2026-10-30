@@ -1,11 +1,19 @@
 import { z } from "zod";
 
+/**
+ * Bot scopes a Slack connection must grant.
+ *
+ * `channels:read` and `groups:read` list the channels the bot is in, so the trigger editor can
+ * offer those names. Message delivery still uses the history scopes.
+ */
 export const SLACK_REQUIRED_BOT_SCOPES = [
   "app_mentions:read",
   "channels:history",
+  "channels:read",
   "chat:write",
   "files:read",
   "groups:history",
+  "groups:read",
   "reactions:write",
   "users:read",
 ] as const;

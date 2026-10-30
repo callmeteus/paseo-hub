@@ -707,13 +707,26 @@ function TriggerForm({
                     options={connectionOptions}
                     placeholder="Select a connection"
                     empty="No connections found."
-                    onChange={(option) => update("connection", option.value)}
+                    onChange={(option) => {
+                      // Channel ids belong to one Slack workspace
+                      if (form.event === "slack.message" && option.value !== form.connection) {
+                        onChange({ ...form, connection: option.value, channels: "" });
+                        return;
+                      }
+
+                      update("connection", option.value);
+                    }}
                   />
                 )}
               </FormField>
             )}
           </div>
-          <EventFields value={form} errors={errors} onChange={onChange} />
+          <EventFields
+            value={form}
+            errors={errors}
+            organizationSlug={snapshot.organization.slug}
+            onChange={onChange}
+          />
         </Card>
 
         {eventDefinition(form.event).origin === "hub" ? null : (
