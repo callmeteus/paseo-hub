@@ -76,6 +76,10 @@ export function createDatabasePublicOperationRepository(
       );
     },
     async issueEnrollmentToken(authorization, input) {
+      // A daemon credential can manage triggers. It cannot mint another enrollment token.
+      if (authorization.kind === "daemon") {
+        return "credential_revoked";
+      }
       const issued = await database.issueEnrollmentToken({
         id: randomUUID(),
         verifier: createHash("sha256").update(input.token).digest("base64url"),

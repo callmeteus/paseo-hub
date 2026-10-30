@@ -402,7 +402,7 @@ function createAppPublicOperations(
               yaml: input.yaml,
               userId: null,
               sourceEvidence: {
-                kind: input.credentialKind === "apiKey" ? "api-key" : "cli-credential",
+                kind: credentialEvidenceKind(input.credentialKind),
                 credentialId: input.credentialId,
                 authoredFormat: "self_contained_trigger_v1",
               },
@@ -526,4 +526,20 @@ function createAppDaemonModule(
 
 function appScheduleSource(database: Database | null): TriggerSource | undefined {
   return database === null ? undefined : createScheduleSource(database.schedules);
+}
+
+/**
+ * Names who saved a trigger, for the revision evidence.
+ *
+ * @param kind - Credential that called the public install operation
+ * @returns Evidence kind stored on the revision
+ */
+function credentialEvidenceKind(kind: "apiKey" | "cliCredential" | "daemon"): string {
+  if (kind === "apiKey") {
+    return "api-key";
+  }
+  if (kind === "daemon") {
+    return "daemon";
+  }
+  return "cli-credential";
 }

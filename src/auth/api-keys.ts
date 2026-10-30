@@ -31,7 +31,7 @@ export interface CreatedApiKey {
 }
 
 export interface OperationAuthorization {
-  kind: "apiKey" | "cliCredential";
+  kind: "apiKey" | "cliCredential" | "daemon";
   credentialId: string;
   organizationId: string;
   scopes: readonly ApiKeyScope[];

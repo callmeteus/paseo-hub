@@ -236,12 +236,28 @@ function triggerCapability(capabilities: PublicOperationCapabilities, organizati
   return capabilities.triggerForOrganization(organizationId);
 }
 
+/**
+ * Names the credential that dispatched a manual run.
+ *
+ * @param kind - Public credential kind
+ * @returns Actor kind stored on the delivery payload
+ */
+function publicActorKind(kind: "apiKey" | "cliCredential" | "daemon"): string {
+  if (kind === "apiKey") {
+    return "api-key";
+  }
+  if (kind === "daemon") {
+    return "daemon";
+  }
+  return "cli-credential";
+}
+
 async function dispatchManualRun(
   repository: PublicOperationRepository,
   capabilities: PublicOperationCapabilities,
   authorization: {
     organizationId: string;
-    kind: "apiKey" | "cliCredential";
+    kind: "apiKey" | "cliCredential" | "daemon";
     credentialId: string;
   },
   projectId: string,
@@ -263,7 +279,7 @@ async function dispatchManualRun(
       input: input.input,
       publicDeliveryKey: input.deliveryKey,
       authenticatedBy: {
-        kind: authorization.kind === "apiKey" ? "api-key" : "cli-credential",
+        kind: publicActorKind(authorization.kind),
         credentialId: authorization.credentialId,
       },
     },

@@ -1,4 +1,6 @@
 import { createHubApplication } from "./app.js";
+import { DaemonTriggerAuthenticator } from "./auth/daemon-credentials.js";
+import { PublicOrDaemonAuthenticator } from "./auth/public-credentials.js";
 import type { AuthServer } from "./auth/server.js";
 import type { BillingRuntime } from "./billing/index.js";
 import type { ConnectionResolver } from "./config/connections.js";
@@ -105,7 +107,16 @@ async function createOwnedApplicationRuntime(
     publicApi:
       options.auth?.publicCredentials === undefined
         ? { status: "unavailable" }
-        : { status: "enabled", authenticator: options.auth.publicCredentials },
+        : {
+            status: "enabled",
+            authenticator:
+              options.database === null
+                ? options.auth.publicCredentials
+                : new PublicOrDaemonAuthenticator(
+                    options.auth.publicCredentials,
+                    new DaemonTriggerAuthenticator(options.database),
+                  ),
+          },
     ...(options.publicBaseUrl === undefined ? {} : { publicBaseUrl: options.publicBaseUrl }),
     ...(options.completionTokenSecret === undefined
       ? {}

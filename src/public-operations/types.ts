@@ -4,7 +4,7 @@ import type { TriggerRunRecord } from "../db/types.js";
 import type { DeploymentProjectResolution } from "../project-deployments/index.js";
 
 export interface PublicAuthorization {
-  kind: "apiKey" | "cliCredential";
+  kind: "apiKey" | "cliCredential" | "daemon";
   credentialId: string;
   organizationId: string;
   scopes: readonly ApiKeyScope[];
@@ -226,7 +226,7 @@ export interface PublicOperationCapabilities {
     install(input: {
       yaml: string;
       credentialId: string;
-      credentialKind: "apiKey" | "cliCredential";
+      credentialKind: "apiKey" | "cliCredential" | "daemon";
     }): Promise<{ triggerId: string; name: string; revisionId: string; version: number }>;
   };
   configurationForProject(projectId: string): {

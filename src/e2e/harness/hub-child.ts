@@ -15,6 +15,8 @@ import {
 import { createFetchServer } from "../../http/node-server.js";
 import { loadBuiltStartServer } from "../../server/build.js";
 import { createAuthServer } from "../../auth/server.js";
+import { DaemonTriggerAuthenticator } from "../../auth/daemon-credentials.js";
+import { PublicOrDaemonAuthenticator } from "../../auth/public-credentials.js";
 import { composeEntitlements } from "../../auth/entitlements.js";
 import { readInstanceAuthPolicy } from "../../auth/instance-policy.js";
 import { OrganizationResources } from "../../organizations/resources.js";
@@ -179,7 +181,13 @@ async function main(): Promise<void> {
     publicApi:
       auth.publicCredentials === undefined
         ? { status: "unavailable" }
-        : { status: "enabled", authenticator: auth.publicCredentials },
+        : {
+            status: "enabled",
+            authenticator: new PublicOrDaemonAuthenticator(
+              auth.publicCredentials,
+              new DaemonTriggerAuthenticator(database),
+            ),
+          },
     outputRegistry: outputs,
     providers: [
       {
