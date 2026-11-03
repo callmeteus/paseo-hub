@@ -218,14 +218,12 @@ describe("Slack Phase 1 trigger provider", () => {
     assert.equal(match.outputContext.messageTs, "1700000000.000001");
   });
 
-  it("keeps provider reactions idempotent across the durable lifecycle hooks", async () => {
+  it("does not add a Slack reaction while the agent runs", async () => {
     const database = createMemoryDatabase();
     const { project, revision, store } = await createActiveProjectConfiguration(
       database,
       configuration(),
-      {
-        organizationId: "org-1",
-      },
+      { organizationId: "org-1" },
     );
     const client = new RecordingSlackClient();
     const provider = createSlackTriggerProvider({
@@ -235,16 +233,13 @@ describe("Slack Phase 1 trigger provider", () => {
     });
     const match = (await provider.match(external(project.id, revision.id)))[0];
     if (!isAcceptedTriggerProviderMatch(match)) throw new Error("expected accepted match");
+
+    await provider.onDispatchAccepted?.(match.triggerContext, match.outputContext);
     await provider.onAgentExecutionStarted?.(match.triggerContext, match.outputContext);
     await provider.onAgentExecutionCompleted?.(match.triggerContext, match.outputContext, {
       status: "succeeded",
     });
-    assert.deepEqual(client.reactions, [
-      "org-1:T1:remove:eyes",
-      "org-1:T1:add:hourglass_flowing_sand",
-      "org-1:T1:remove:hourglass_flowing_sand",
-      "org-1:T1:add:white_check_mark",
-    ]);
+    assert.deepEqual(client.reactions, []);
   });
 
   it("keeps a root Slack mention as the reply thread root", async () => {
@@ -298,6 +293,7 @@ describe("Slack Phase 1 trigger provider", () => {
     if (!isAcceptedTriggerProviderMatch(match)) throw new Error("expected accepted match");
 
     await provider.onAgentExecutionFailed?.(match.triggerContext, match.outputContext, "boom");
+    assert.deepEqual(client.reactions, []);
     assert.deepEqual(client.messages, [
       {
         organizationId: "org-1",
@@ -309,31 +305,20 @@ describe("Slack Phase 1 trigger provider", () => {
     ]);
   });
 
-  it("propagates terminal Slack reaction and notice failures", async () => {
+  it("propagates a Slack failure notice without adding a reaction", async () => {
     const database = createMemoryDatabase();
     const { project, revision, store } = await createActiveProjectConfiguration(
       database,
       configuration(),
       { organizationId: "org-1" },
     );
-    const reactionFailure = new RecordingSlackClient({ failAddReaction: "white_check_mark" });
-    const reactionProvider = createSlackTriggerProvider({
+    const provider = createSlackTriggerProvider({
       configurationStoreForProject: () => store,
       botUserIdForWorkspace: () => Promise.resolve("UBOT"),
-      client: reactionFailure,
+      client: new RecordingSlackClient(),
     });
-    const match = (await reactionProvider.match(external(project.id, revision.id)))[0];
+    const match = (await provider.match(external(project.id, revision.id)))[0];
     if (!isAcceptedTriggerProviderMatch(match)) throw new Error("expected accepted match");
-
-    await assert.rejects(async () => {
-      await reactionProvider.onAgentExecutionCompleted!(match.triggerContext, match.outputContext, {
-        status: "succeeded",
-      });
-    }, /slack add reaction failed/u);
-    assert.deepEqual(reactionFailure.reactions, [
-      "org-1:T1:remove:hourglass_flowing_sand",
-      "org-1:T1:add:white_check_mark",
-    ]);
 
     const noticeFailure = new RecordingSlackClient({ failMessages: true });
     const noticeProvider = createSlackTriggerProvider({
@@ -348,11 +333,7 @@ describe("Slack Phase 1 trigger provider", () => {
         "boom",
       );
     }, /slack message failed/u);
-    assert.deepEqual(noticeFailure.reactions, [
-      "org-1:T1:remove:eyes",
-      "org-1:T1:remove:hourglass_flowing_sand",
-      "org-1:T1:add:x",
-    ]);
+    assert.deepEqual(noticeFailure.reactions, []);
   });
 
   it("defers routed thread hydration until context materialization", async () => {
@@ -414,10 +395,81 @@ describe("Slack Phase 1 trigger provider", () => {
       providerEventReceiptId: "11111111-1111-4111-8111-111111111119",
       triggerContext: rootMatch.triggerContext,
     });
-    assert.deepEqual(rootContext, {
-      slack: { thread: { status: "not_applicable", messages: [] } },
-    });
+    assert.equal(rootContext?.slack.thread.status, "available");
+    assert.equal(rootContext?.slack.thread.messages[0]?.content, "<@UBOT> deploy now");
     assert.deepEqual(client.threadReads, ["1700000000.000001"]);
+  });
+
+  it("follows a forward into a channel the bot can read and keeps the private copy", async () => {
+    const database = createMemoryDatabase();
+    const { project, revision, store } = await createActiveProjectConfiguration(
+      database,
+      configuration(),
+      { organizationId: "org-1" },
+    );
+    const attachments = createAttachmentCapabilityRegistry({
+      database,
+      publicBaseUrl: "https://hub.test",
+      authoritySecret: "hub-secret",
+      resolvers: {},
+    });
+    const client = new RecordingSlackClient({
+      sharedMessages: {
+        "1700000000.000020": {
+          text: "Pessoal, boa tarde.",
+          attachments: [
+            {
+              is_share: true,
+              author_name: "André",
+              channel_id: "C09QAPR0VT7",
+              ts: "1700000000.000010",
+              text: "os títulos não foram liberados",
+              files: [{ id: "F1", name: "planilha.png", mimetype: "image/png", size: 10 }],
+            },
+          ],
+        },
+      },
+    });
+    const provider = createSlackTriggerProvider({
+      configurationStoreForProject: () => store,
+      botUserIdForWorkspace: () => Promise.resolve("UBOT"),
+      client,
+      attachments,
+    });
+    const received = external(project.id, revision.id, {
+      threadTs: null,
+      content: "<@UBOT> resumo",
+    });
+    const match = (
+      await provider.match({
+        ...received,
+        connectionId: "22222222-2222-4222-8222-222222222222",
+        payload: {
+          ...received.payload,
+          lead: "<@UBOT>",
+          forwards: [{ channelId: "C0BA6DKUQJJ", messageTs: "1700000000.000020" }],
+        },
+      })
+    )[0];
+    if (!isAcceptedTriggerProviderMatch(match)) throw new Error("expected accepted match");
+
+    assert.equal(
+      match.triggerContext.event.slack.trigger_message.content,
+      "<@UBOT>\n\nPessoal, boa tarde.\n\nEncaminhada de André:\nos títulos não foram liberados",
+    );
+    assert.deepEqual(client.sharedReads, ["C0BA6DKUQJJ", "C09QAPR0VT7"]);
+    const context = await provider.materializeContext!({
+      executionId: "execution-slack-forward",
+      organizationId: "org-1",
+      projectId: project.id,
+      providerEventReceiptId: "11111111-1111-4111-8111-111111111119",
+      triggerContext: match.triggerContext,
+    });
+    assert.equal(context?.slack.thread.messages[0]?.attachments[0]?.filename, "planilha.png");
+    assert.match(
+      context?.slack.thread.messages[0]?.attachments[0]?.url ?? "",
+      /execution-slack-forward/u,
+    );
   });
 
   it("exposes thread messages and execution-scoped attachments only through context", async () => {
@@ -862,6 +914,7 @@ class RecordingSlackClient implements SlackBotClient {
     content: string;
   }> = [];
   threadReads: string[] = [];
+  sharedReads: string[] = [];
   userLookups: string[] = [];
   private readonly threadMessages: SlackThreadMessage[];
 
@@ -873,6 +926,7 @@ class RecordingSlackClient implements SlackBotClient {
       failThreadRead?: boolean;
       threadComplete?: boolean;
       username?: string;
+      sharedMessages?: Record<string, unknown>;
     } = {},
   ) {
     this.threadMessages = options.threadMessages ?? [];
@@ -899,6 +953,10 @@ class RecordingSlackClient implements SlackBotClient {
   lookupUserName(input: { userId: string }): Promise<string | undefined> {
     this.userLookups.push(input.userId);
     return Promise.resolve(this.options.username);
+  }
+  readSharedMessage(input: { messageTs: string; channelId: string }): Promise<unknown> {
+    this.sharedReads.push(input.channelId);
+    return Promise.resolve(this.options.sharedMessages?.[input.messageTs]);
   }
   readThreadMessages(input: {
     organizationId: string;

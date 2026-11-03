@@ -40,13 +40,8 @@ describe("workflow-owned provider reactions", () => {
   it("uses one reaction sequence for a two-step Slack workflow", async () => {
     const result = await runTwoStepWorkflow(createSlackReactionFixture());
 
-    assert.deepEqual(result.visible(), ["white_check_mark"]);
-    assert.deepEqual(result.calls(), [
-      "remove:eyes",
-      "add:hourglass_flowing_sand",
-      "remove:hourglass_flowing_sand",
-      "add:white_check_mark",
-    ]);
+    assert.deepEqual(result.visible(), []);
+    assert.deepEqual(result.calls(), []);
     assert.equal(result.run.status, "succeeded");
   });
 
@@ -106,13 +101,8 @@ describe("workflow-owned provider reactions", () => {
     async (outcome) => {
       const result = await runTwoStepWorkflow(createSlackReactionFixture(), { outcome });
 
-      assert.deepEqual(result.visible(), ["x"]);
-      assert.deepEqual(result.calls(), [
-        "remove:eyes",
-        "add:hourglass_flowing_sand",
-        "remove:hourglass_flowing_sand",
-        "add:x",
-      ]);
+      assert.deepEqual(result.visible(), []);
+      assert.deepEqual(result.calls(), []);
     },
   );
 

@@ -1,7 +1,6 @@
 import type { AuthServer } from "../../auth/server.js";
 import { createHash } from "node:crypto";
 import type { Database } from "../../db/types.js";
-import { replyOutputTool } from "../../execution-capabilities/outputs.js";
 import { logger } from "../../logger.js";
 import { reportFailure } from "../../failures/index.js";
 import { createDiscordRegistration } from "../../providers/discord/index.js";
@@ -23,6 +22,7 @@ import type {
 import { parseProviderApplicationConfiguration } from "./store.js";
 import type { SlackDeliveryStatus } from "../../triggers/slack/source/index.js";
 import { GITHUB_TRIGGER_SOURCE_NAMES } from "../../triggers/github/classification.js";
+import { hostedOutputs } from "./hosted-outputs.js";
 
 interface Slot {
   active: ActiveRegistration | undefined;
@@ -398,28 +398,12 @@ export class DynamicProviderRuntime implements ProviderRuntimeOwner {
         },
       ],
       sources: [source],
-      outputs: [
-        {
-          type: `${provider}.reply`,
-          tool: replyOutputTool,
-          available: (context) => {
-            const output = slot.active?.registration.outputs.find(
-              (candidate) => candidate.type === `${provider}.reply`,
-            );
-            return output !== undefined && (output.available?.(context) ?? true);
-          },
-          execute: (input) => {
-            const active = slot.active;
-            const output = active?.registration.outputs.find(
-              (candidate) => candidate.type === `${provider}.reply`,
-            );
-            if (active === undefined || output === undefined) {
-              throw unavailable(`${provider}_output_unavailable`);
-            }
-            return this.withLease(active, () => output.execute(input));
-          },
-        },
-      ],
+      outputs: hostedOutputs(
+        provider,
+        slot,
+        (active, operation) => this.withLease(active, operation),
+        unavailable,
+      ),
       requests:
         provider === "discord"
           ? []
@@ -616,7 +600,8 @@ function actionNames(provider: Provider): readonly string[] {
 }
 
 function eventNames(provider: Provider): TriggerProvider["eventNames"] {
-  if (provider === "slack") return ["slack.mention"];
+  // The dispatcher drops an event that is missing here, before the real provider runs.
+  if (provider === "slack") return ["slack.mention", "slack.message"];
   if (provider === "discord") return ["discord.mention"];
   if (provider === "linear") return ["linear.issue", "linear.comment"];
   return GITHUB_TRIGGER_SOURCE_NAMES;

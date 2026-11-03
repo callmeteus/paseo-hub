@@ -6,13 +6,10 @@ import type {
 } from "../../attachments/capabilities.js";
 import { reportFailure } from "../../failures/index.js";
 import { agentFailureNotice, missingBillingUrl } from "../failure-notice.js";
-import {
-  type TriggerProvider,
-  type TriggerProviderMatch,
-  type TriggerProviderReactionState,
-} from "../index.js";
+import { type TriggerProvider, type TriggerProviderMatch } from "../index.js";
 import type { SlackBotClient, SlackThreadMessage } from "./client.js";
 import { NormalizedSlackMentionEventSchema, type NormalizedSlackMentionEvent } from "./events.js";
+import { expandStoredSlackForwards } from "./forwarded-message.js";
 import {
   matchSlackTriggers,
   readSlackInvocationParserMessage,
@@ -96,8 +93,6 @@ export interface SlackOutputContext {
   messageTs: string;
 }
 
-type SlackReactionPhase = "accepted" | "started";
-
 export function createSlackTriggerProvider(options: {
   configurationStoreForProject: (projectId: string) => ProjectConfigurationStore;
   botUserIdForWorkspace(organizationId: string, teamId: string): Promise<string | undefined>;
@@ -109,7 +104,11 @@ export function createSlackTriggerProvider(options: {
     name: "slack",
     eventNames: ["slack.mention", "slack.message"],
     async match(trigger) {
-      const rawEvent = NormalizedSlackMentionEventSchema.parse(trigger.payload);
+      const rawEvent = await includeReadableForwards(
+        NormalizedSlackMentionEventSchema.parse(trigger.payload),
+        trigger.organizationId,
+        options.client,
+      );
       const botUserId = await options.botUserIdForWorkspace(
         trigger.organizationId,
         rawEvent.teamId,
@@ -150,7 +149,7 @@ export function createSlackTriggerProvider(options: {
         const triggerContext: SlackTriggerContext = {
           provider: "slack",
           target: outputContext,
-          event: buildSlackMergeData(rawEvent, botUserId, trigger.connectionId),
+          event: buildSlackMergeData(event, botUserId, trigger.connectionId),
         };
         const invocation = parseInvocation(
           rawEvent.content,
@@ -204,7 +203,39 @@ export function createSlackTriggerProvider(options: {
     async materializeContext(launch): Promise<SlackMaterializedContext> {
       const locator = launch.triggerContext.event.slack.trigger_thread_context;
       if (locator.status === "not_applicable") {
-        return { slack: { thread: { status: "not_applicable", messages: [] } } };
+        // A channel message has no earlier thread. Show the message that started it
+        // instead of an empty not_applicable block.
+        const message = launch.triggerContext.event.slack.trigger_message;
+        return {
+          slack: {
+            thread: {
+              status: "available",
+              messages: [
+                {
+                  ts: message.ts,
+                  content: message.content,
+                  author: message.author,
+                  channel: message.channel,
+                  created_at: message.created_at,
+                  attachments: await registerAttachments(
+                    message.attachments.map((file) => ({
+                      id: file.id,
+                      filename: file.filename,
+                      contentType: file.content_type,
+                      size: file.size,
+                    })),
+                    launch.providerEventReceiptId,
+                    launch.organizationId,
+                    launch.triggerContext.event.slack.team.id,
+                    launch.triggerContext.event.slack.connection_id,
+                    launch.executionId,
+                    options.attachments,
+                  ),
+                },
+              ],
+            },
+          },
+        };
       }
       if (options.client.readThreadMessages === undefined) {
         return { slack: { thread: { status: "unavailable", messages: [] } } };
@@ -258,21 +289,7 @@ export function createSlackTriggerProvider(options: {
         },
       };
     },
-    async onDispatchAccepted(_triggerContext, _outputContext, reactionState) {
-      if (slackReactionPhase(reactionState) !== undefined) return reactionState;
-      return { phase: "accepted" };
-    },
-    async onAgentExecutionStarted(context, _outputContext, reactionState) {
-      if (slackReactionPhase(reactionState) === "started") return reactionState;
-      await replaceReaction(options.client, context.target, "eyes", "hourglass_flowing_sand");
-      return { phase: "started" };
-    },
-    async onAgentExecutionCompleted(context, _outputContext, _result, reactionState) {
-      await removeReactionForPhase(options.client, context.target, reactionState, "started");
-      await addReaction(options.client, context.target, "white_check_mark");
-      return null;
-    },
-    async onAgentExecutionFailed(context, _output, reason, reactionState) {
+    async onAgentExecutionFailed(context, _output, reason) {
       await failWithNotice(
         options.client,
         context.target,
@@ -281,22 +298,60 @@ export function createSlackTriggerProvider(options: {
           context.target.organizationId,
           options.billingUrlForOrganization ?? missingBillingUrl,
         ),
-        reactionState,
       );
       return null;
     },
     async onMachineTerminated(context, reason, reactionState) {
       if (reason === "launch_failed" || reason === "daemon_disconnected") {
-        await failWithNotice(
-          options.client,
-          context.target,
-          `Paseo agent failed: ${reason}`,
-          reactionState,
-        );
+        await failWithNotice(options.client, context.target, `Paseo agent failed: ${reason}`);
         return null;
       }
       return reactionState;
     },
+  };
+}
+
+/**
+ * Replaces a forward with the source message when the bot can read that channel.
+ *
+ * A private conversation returns nothing. The unfurl already stored on the event stays.
+ *
+ * @param event - Normalized Slack event
+ * @param organizationId - Hub organization that owns the Slack connection
+ * @param client - Slack client for the workspace
+ * @returns The event, with source text and files when a forward could be opened
+ */
+async function includeReadableForwards(
+  event: NormalizedSlackMentionEvent,
+  organizationId: string,
+  client: SlackBotClient,
+): Promise<NormalizedSlackMentionEvent> {
+  if (event.forwards.length === 0 || client.readSharedMessage === undefined) {
+    return event;
+  }
+
+  const expanded = await expandStoredSlackForwards(event, (locator) => {
+    if (client.readSharedMessage === undefined) {
+      return Promise.resolve(undefined);
+    }
+
+    return client.readSharedMessage({
+      organizationId,
+      teamId: event.teamId,
+      channelId: locator.channelId,
+      messageTs: locator.messageTs,
+    });
+  });
+
+  return {
+    ...event,
+    content: expanded.content,
+    attachments: expanded.files.map((file) => ({
+      id: file.id,
+      filename: file.name ?? file.title ?? file.id,
+      contentType: file.mimetype ?? null,
+      size: file.size ?? null,
+    })),
   };
 }
 
@@ -334,35 +389,6 @@ function needsSlackUsername(
       !candidate.filters.from_users.includes("*") &&
       !candidate.filters.from_users.includes(authorId),
   );
-}
-
-async function removeReactionForPhase(
-  client: SlackBotClient,
-  target: SlackOutputContext,
-  reactionState: TriggerProviderReactionState | undefined,
-  fallbackPhase?: SlackReactionPhase,
-): Promise<void> {
-  const phase = slackReactionPhase(reactionState) ?? fallbackPhase;
-  if (phase === "accepted") {
-    await removeReactionSafely(client, target, "eyes");
-    return;
-  }
-  if (phase === "started") {
-    await removeReactionSafely(client, target, "hourglass_flowing_sand");
-    return;
-  }
-  await removeReactionSafely(client, target, "eyes");
-  await removeReactionSafely(client, target, "hourglass_flowing_sand");
-}
-
-function slackReactionPhase(
-  reactionState: TriggerProviderReactionState | undefined,
-): SlackReactionPhase | undefined {
-  if (typeof reactionState !== "object" || reactionState === null || Array.isArray(reactionState)) {
-    return undefined;
-  }
-  const phase = reactionState["phase"];
-  return phase === "accepted" || phase === "started" ? phase : undefined;
 }
 
 function buildSlackMergeData(
@@ -439,24 +465,11 @@ async function registerAttachments(
   return references.map((reference) => attachments.materialize(reference, executionId));
 }
 
-async function replaceReaction(
-  client: SlackBotClient,
-  event: SlackOutputContext,
-  from: string,
-  to: string,
-): Promise<void> {
-  await removeReactionSafely(client, event, from);
-  await addReactionSafely(client, event, to);
-}
-
 async function failWithNotice(
   client: SlackBotClient,
   event: SlackOutputContext,
   reason: string,
-  reactionState?: TriggerProviderReactionState,
 ): Promise<void> {
-  await removeReactionForPhase(client, event, reactionState);
-  await addReaction(client, event, "x");
   await client.sendMessage({
     organizationId: event.organizationId,
     teamId: event.teamId,
@@ -464,62 +477,4 @@ async function failWithNotice(
     threadTs: event.threadTs,
     content: reason,
   });
-}
-
-async function addReaction(
-  client: SlackBotClient,
-  event: SlackOutputContext,
-  name: string,
-): Promise<void> {
-  await client.addReaction({
-    organizationId: event.organizationId,
-    teamId: event.teamId,
-    channelId: event.channelId,
-    messageTs: event.messageTs,
-    name,
-  });
-}
-
-async function addReactionSafely(
-  client: SlackBotClient,
-  event: SlackOutputContext,
-  name: string,
-): Promise<void> {
-  try {
-    await client.addReaction({
-      organizationId: event.organizationId,
-      teamId: event.teamId,
-      channelId: event.channelId,
-      messageTs: event.messageTs,
-      name,
-    });
-  } catch (error) {
-    reportFailure(
-      error,
-      { operation: "slack.reaction.add", component: "triggers", provider: "slack" },
-      { diagnostic: { teamId: event.teamId, reaction: name } },
-    );
-  }
-}
-
-async function removeReactionSafely(
-  client: SlackBotClient,
-  event: SlackOutputContext,
-  name: string,
-): Promise<void> {
-  try {
-    await client.removeReaction({
-      organizationId: event.organizationId,
-      teamId: event.teamId,
-      channelId: event.channelId,
-      messageTs: event.messageTs,
-      name,
-    });
-  } catch (error) {
-    reportFailure(
-      error,
-      { operation: "slack.reaction.cleanup", component: "triggers", provider: "slack" },
-      { diagnostic: { teamId: event.teamId, reaction: name } },
-    );
-  }
 }

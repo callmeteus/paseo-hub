@@ -129,6 +129,7 @@ export class DaemonAgents implements AgentConnection {
           providerOptions: options.providerOptions,
           mcpServers: options.mcpServers,
           toolPolicy: options.toolPolicy,
+          ...(options.featureValues === undefined ? {} : { featureValues: options.featureValues }),
         },
         env: options.env,
         worktree: options.worktree,

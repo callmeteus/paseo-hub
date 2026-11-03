@@ -164,6 +164,65 @@ export type ListTriggersResult =
   | { status: "listed"; triggers: readonly PublicTrigger[] }
   | InfrastructureUnavailable;
 
+export interface ListSlackChannelsInput {
+  connection?: string | undefined;
+  query?: string | undefined;
+}
+
+export interface PublicSlackChannel {
+  id: string;
+  name: string;
+  isPrivate: boolean;
+}
+
+export type ListSlackChannelsResult =
+  | {
+      status: "channels";
+      connection: string;
+      channels: readonly PublicSlackChannel[];
+      truncated: boolean;
+    }
+  | { status: "not_connected" }
+  | { status: "connection_not_found"; connection: string }
+  | {
+      status: "connection_required";
+      connections: readonly { slug: string; teamName: string }[];
+    }
+  | { status: "slack_rejected"; slackError: string }
+  | InfrastructureUnavailable;
+
+export interface ReadSlackMessagesInput {
+  connection?: string | undefined;
+  channel: string;
+  limit?: number | undefined;
+}
+
+export interface PublicSlackMessage {
+  ts: string;
+  author: string | null;
+  text: string;
+  threadTs: string | null;
+  isReply: boolean;
+}
+
+export type ReadSlackMessagesResult =
+  | {
+      status: "messages";
+      connection: string;
+      channel: { id: string; name: string };
+      messages: readonly PublicSlackMessage[];
+    }
+  | { status: "not_connected" }
+  | { status: "connection_not_found"; connection: string }
+  | {
+      status: "connection_required";
+      connections: readonly { slug: string; teamName: string }[];
+    }
+  | { status: "channel_not_found"; query: string }
+  | { status: "channel_ambiguous"; channels: readonly PublicSlackChannel[] }
+  | { status: "slack_rejected"; slackError: string }
+  | InfrastructureUnavailable;
+
 export interface PublicOperations {
   listTriggers(authorization: PublicAuthorization): Promise<ListTriggersResult>;
   validateTrigger(
@@ -179,6 +238,14 @@ export interface PublicOperations {
     authorization: PublicAuthorization,
   ): Promise<ListConfigurationResourcesResult>;
   listSetupResources(authorization: PublicAuthorization): Promise<ListSetupResourcesResult>;
+  listSlackChannels(
+    authorization: PublicAuthorization,
+    input: ListSlackChannelsInput,
+  ): Promise<ListSlackChannelsResult>;
+  readSlackMessages(
+    authorization: PublicAuthorization,
+    input: ReadSlackMessagesInput,
+  ): Promise<ReadSlackMessagesResult>;
   validateConfiguration(
     authorization: PublicAuthorization,
     input: ValidateConfigurationInput,
@@ -198,6 +265,14 @@ export interface PublicOperationRepository {
   listActiveProjects(organizationId: string): Promise<readonly PublicProject[]>;
   listConfigurationResources(organizationId: string): Promise<ConfigurationResources>;
   listSetupResources(organizationId: string): Promise<SetupResources>;
+  slackConnection(
+    organizationId: string,
+    connection: string | undefined,
+  ): Promise<
+    | { status: "ready"; slug: string; token: string }
+    | { status: "missing" }
+    | { status: "ambiguous"; connections: readonly { slug: string; teamName: string }[] }
+  >;
   resolveManualRunProject(
     organizationId: string,
     triggerName: string,

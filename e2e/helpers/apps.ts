@@ -1,5 +1,5 @@
 import { expect, type Locator, type Page } from "@playwright/test";
-import AxeBuilder from "@axe-core/playwright";
+import { AxeBuilder } from "@axe-core/playwright";
 import { DaemonHandoffSurface } from "./daemon-handoff.js";
 
 export type AppProvider = "GitHub" | "Slack" | "Discord" | "Linear";
@@ -21,7 +21,7 @@ const PORTAL_LINKS: Readonly<Record<AppProvider, string>> = {
 
 const APP_SUMMARIES: Readonly<Record<AppProvider, string>> = {
   GitHub: "Reads issues and pull requests, and lets agents push.",
-  Slack: "Reads mentions in your workspace and replies in the thread.",
+  Slack: "Reads channel messages and mentions, and replies in the thread.",
   Discord: "Reads mentions in your server and replies in the thread.",
   Linear: "Starts project-scoped workflows from issues and posts outcomes back to Linear.",
 };
@@ -206,14 +206,18 @@ export class AppSection {
   }
 
   async save(): Promise<void> {
+    let name: string | RegExp = "Verify and save";
+
+    // Slack and Linear continue into the provider. The others verify in place.
+    if (this.provider === "Slack") {
+      name = /^(?:Connect Slack|Save and continue to Slack)$/u;
+    } else if (this.provider === "Linear") {
+      name = "Save and continue to Linear";
+    }
+
     await this.body()
       .getByRole("button", {
-        name:
-          this.provider === "Slack"
-            ? /^(?:Connect Slack|Save and continue to Slack)$/u
-            : this.provider === "Linear"
-              ? "Save and continue to Linear"
-              : "Verify and save",
+        name,
       })
       .click();
   }
@@ -440,7 +444,7 @@ export class AppSection {
   }
 
   /** HTTPS exposes every user action needed to create and install the Slack app. */
-  async expectSlackSetupActionable(origin: string): Promise<void> {
+  async expectSlackSetupActionable(_origin: string): Promise<void> {
     await this.expectExpanded();
     await expect(this.body().getByRole("link", { name: "Create a Slack app" })).toBeVisible();
     await expect(this.body().getByRole("list")).toBeVisible();

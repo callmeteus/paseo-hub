@@ -3,7 +3,12 @@ import { Writable } from "node:stream";
 import { describe, it } from "vitest";
 import { ProductRequestError } from "../auth/organization-access.js";
 import { createLogger } from "../logger.js";
-import { CONNECTIONS_RETURN_ROUTE, connectionCallbackFailure } from "./shared.js";
+import { EmbeddedConnectionHandoff } from "./app-handoff.js";
+import {
+  CONNECTIONS_RETURN_ROUTE,
+  connectionCallbackFailure,
+  continueConnectionState,
+} from "./shared.js";
 
 class CaptureStream extends Writable {
   readonly chunks: string[] = [];
@@ -85,5 +90,35 @@ describe("connection callback failures", () => {
     assert.match(output, /"failureKind":"authentication"/u);
     assert.match(output, /"host":"hub.fly.example"/u);
     assert.match(output, /"sessionCookiePresent":false/u);
+  });
+
+  it("hands an embedded callback to the Paseo window instead of the signed-out landing", async () => {
+    EmbeddedConnectionHandoff.reset();
+    const next = continueConnectionState(
+      new Request("https://hub.test/api/integrations/github/setup?state=ew.previous"),
+      "ew.previous",
+      "session-2",
+    );
+    assert.equal(next.startsWith("ew."), true);
+
+    const response = connectionCallbackFailure({
+      error: new ProductRequestError(401, "unauthenticated"),
+      provider: "github",
+      phase: "authorization",
+      request: new Request(
+        `https://hub.test/api/integrations/github/callback?state=${next}&code=c`,
+        { headers: { "user-agent": "Mozilla/5.0 Chrome/120.0.0.0" } },
+      ),
+      applicationBaseUrl: "https://hub.test",
+      returnRoute: CONNECTIONS_RETURN_ROUTE,
+    });
+
+    assert.equal(response.status, 200);
+    assert.match(await response.text(), /close this tab/u);
+    assert.equal(
+      EmbeddedConnectionHandoff.take("session-2"),
+      `/api/integrations/github/callback?state=${next}&code=c`,
+    );
+    EmbeddedConnectionHandoff.reset();
   });
 });

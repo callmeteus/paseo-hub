@@ -266,6 +266,7 @@ async function main(): Promise<void> {
       Promise.resolve(Response.json({ error: "provider_not_configured" }, { status: 409 })),
     connectionAction: () =>
       Promise.resolve(Response.json({ error: "provider_not_configured" }, { status: 409 })),
+    connectionHandoff: () => Promise.resolve(Response.json({ path: null })),
     webhook: () => Promise.resolve(new Response("Not Found", { status: 404 })),
     billingWebhook: () => Promise.resolve(new Response("Not Found", { status: 404 })),
     billingPlans: () => Promise.resolve(null),

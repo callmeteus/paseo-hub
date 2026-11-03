@@ -101,6 +101,25 @@ describe("organization trigger store", () => {
    * daemon says when Hub sends its tool policy to a provider that cannot honour one. Hub sends
    * that policy with every run, so the provider is refused at save.
    */
+  it("saves a Cursor agent for an unattended run", async () => {
+    const database = await enrolledDatabase();
+    const store = new OrganizationTriggerStore(
+      database,
+      "org",
+      catalogAgentValidator({ cursor: { modes: ["agent"] } }),
+    );
+
+    const saved = await store.save({
+      yaml: triggerYaml(true).replace(
+        "agent: { provider: codex, mode: full-access }",
+        "agent: { provider: cursor, mode: agent }",
+      ),
+      userId: null,
+    });
+
+    assert.match((await store.activeRevision(saved)).yaml, /provider: cursor/u);
+  });
+
   it("rejects a provider that cannot run unattended, without asking the daemon", async () => {
     const database = await enrolledDatabase();
     const store = new OrganizationTriggerStore(
@@ -114,7 +133,7 @@ describe("organization trigger store", () => {
         yaml: triggerYaml(true).replace("provider: codex", "provider: omp"),
         userId: null,
       }),
-      /run\.agent\.provider: Provider 'omp' cannot run unattended Hub automations; select Claude, Codex, or OpenCode/u,
+      /run\.agent\.provider: Provider 'omp' cannot run unattended Hub automations; select Claude, Codex, Cursor, or OpenCode/u,
     );
   });
 

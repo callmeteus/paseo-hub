@@ -324,4 +324,79 @@ export const EnrollmentTokenSchema = z
     },
   });
 
+export const SlackChannelsQuerySchema = z
+  .object({
+    connection: z.string().trim().min(1).max(100).optional(),
+    query: z.string().trim().min(1).max(80).optional(),
+  })
+  .strict()
+  .openapi("SlackChannelsQuery");
+
+export const SlackChannelSchema = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    isPrivate: z.boolean(),
+  })
+  .strict()
+  .openapi("SlackChannel");
+
+export const SlackChannelListSchema = z
+  .object({
+    connection: z.string(),
+    channels: z.array(SlackChannelSchema),
+    truncated: z.boolean(),
+  })
+  .strict()
+  .openapi("SlackChannelList", {
+    example: {
+      connection: "acme",
+      truncated: false,
+      channels: [{ id: "C01234567", name: "engineering", isPrivate: false }],
+    },
+  });
+
+export const SlackMessagesQuerySchema = z
+  .object({
+    connection: z.string().trim().min(1).max(100).optional(),
+    channel: z.string().trim().min(1).max(80),
+    limit: z.coerce.number().int().min(1).max(50).optional(),
+  })
+  .strict()
+  .openapi("SlackMessagesQuery");
+
+export const SlackMessageSchema = z
+  .object({
+    ts: z.string(),
+    author: z.string().nullable(),
+    text: z.string(),
+    threadTs: z.string().nullable(),
+    isReply: z.boolean(),
+  })
+  .strict()
+  .openapi("SlackMessage");
+
+export const SlackMessageListSchema = z
+  .object({
+    connection: z.string(),
+    channel: z.object({ id: z.string(), name: z.string() }).strict(),
+    messages: z.array(SlackMessageSchema),
+  })
+  .strict()
+  .openapi("SlackMessageList", {
+    example: {
+      connection: "acme",
+      channel: { id: "C01234567", name: "engineering" },
+      messages: [
+        {
+          ts: "1710000000.000100",
+          author: "U012",
+          text: "Need a hand with the deploy.",
+          threadTs: null,
+          isReply: false,
+        },
+      ],
+    },
+  });
+
 export type Problem = z.infer<typeof ProblemSchema>;

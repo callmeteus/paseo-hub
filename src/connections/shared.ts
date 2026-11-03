@@ -12,6 +12,8 @@ import type {
 import { logger } from "../logger.js";
 import { classifyFailure, reportFailure, type FailureKind } from "../failures/index.js";
 import { resolveRouteTenant } from "../projects/access.js";
+import { EmbeddedConnectionHandoff } from "./app-handoff.js";
+import { embeddedConnectionState, isEmbeddedConnectionState } from "./callback-path.js";
 import {
   CONNECTIONS_RETURN_ROUTE,
   connectionReturnUrl,
@@ -75,8 +77,53 @@ export async function callbackConnectionAccess(
   return { sessionId: account.session.id, userId: account.account.id };
 }
 
-export function newConnectionState(): string {
-  return randomBytes(32).toString("base64url");
+export function newConnectionState(options?: { embedded?: boolean }): string {
+  const token = randomBytes(32).toString("base64url");
+  if (options?.embedded === true) {
+    return embeddedConnectionState(token);
+  }
+  return token;
+}
+
+/**
+ * Starts an attempt, and remembers it when Paseo has to finish the callback.
+ *
+ * @param request - The signed-in request that asked to connect.
+ * @param sessionId - Session that must load the callback later.
+ * @returns The OAuth state to send to the provider.
+ */
+export function beginConnectionState(request: Request, sessionId: string): string {
+  const embedded = EmbeddedConnectionHandoff.startedInApp(request);
+  const state = newConnectionState({ embedded });
+  if (embedded) {
+    EmbeddedConnectionHandoff.remember(state, sessionId);
+  }
+  return state;
+}
+
+/**
+ * Continues a GitHub install into the user-authorization step.
+ *
+ * The second state stays marked when the first one was, so the authorization
+ * callback also comes back to the Paseo window.
+ *
+ * @param request - The setup callback, loaded by the embedded window.
+ * @param previousState - State from the install step.
+ * @param sessionId - Session that started the install.
+ * @returns The next OAuth state.
+ */
+export function continueConnectionState(
+  request: Request,
+  previousState: string,
+  sessionId: string,
+): string {
+  const embedded =
+    EmbeddedConnectionHandoff.startedInApp(request) || isEmbeddedConnectionState(previousState);
+  const state = newConnectionState({ embedded });
+  if (embedded) {
+    EmbeddedConnectionHandoff.remember(state, sessionId);
+  }
+  return state;
 }
 
 export function stateHash(state: string): string {
@@ -160,6 +207,12 @@ export function connectionCallbackFailure(input: {
   returnRoute: string;
   log?: Pick<Logger, "warn" | "error">;
 }): Response {
+  // The system browser that finished the install has no Hub session. The Paseo
+  // window that started it does, so the same callback is handed back there.
+  if (EmbeddedConnectionHandoff.park(input.request)) {
+    return EmbeddedConnectionHandoff.page();
+  }
+
   const log = input.log ?? logger;
   const kind = classifyFailure(input.error);
   const report = reportFailure(

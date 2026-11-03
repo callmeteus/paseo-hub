@@ -7,6 +7,7 @@ import {
   type CompiledEnvironment,
   type CompiledTrigger,
 } from "../../config/compiler.js";
+import { appendSlackReactGrant } from "../slack/react.js";
 import { TriggerDocumentSchema, type TriggerDocument } from "./schema.js";
 
 export { TriggerDocumentSchema, type TriggerDocument } from "./schema.js";
@@ -127,11 +128,21 @@ function withAutomaticReply(trigger: CompiledTrigger): CompiledTrigger {
     ...trigger,
     steps: trigger.steps.map((step) => ({
       ...step,
-      allowOutputs: step.allowOutputs.some(({ type }) => type === replyType)
-        ? step.allowOutputs
-        : [...step.allowOutputs, { type: replyType, required: false }],
+      allowOutputs: automaticAllowOutputs(step.allowOutputs, replyType, trigger.on),
     })),
   };
+}
+
+function automaticAllowOutputs(
+  allowOutputs: CompiledTrigger["steps"][number]["allowOutputs"],
+  replyType: string,
+  event: string,
+): CompiledTrigger["steps"][number]["allowOutputs"] {
+  const withReply = allowOutputs.some((output) => output.type === replyType)
+    ? allowOutputs
+    : [...allowOutputs, { type: replyType, required: false }];
+  if (event !== "slack.message" && event !== "slack.mention") return withReply;
+  return appendSlackReactGrant(withReply);
 }
 
 function automaticReplyType(event: string): string | undefined {

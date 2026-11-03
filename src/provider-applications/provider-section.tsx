@@ -21,6 +21,8 @@ import { Skeleton } from "../components/ui/skeleton.js";
 import { ProviderGlyph } from "../connections/provider-glyph.js";
 import type { Result } from "../contract/respond.js";
 import { cn } from "../lib/utils.js";
+import { armConnectionHandoff } from "../connections/handoff-watch.js";
+import { embeddedHubKeepsPage } from "../shell/external-url.js";
 import {
   guideFields,
   guideGroups,
@@ -133,6 +135,7 @@ export function ProviderSection({
       // Slack's save is its install: it leaves for Slack and nothing is stored until Slack
       // accepts. There is no local success to report here.
       if (response.data.status === "continuing") {
+        armConnectionHandoff();
         window.location.assign(response.data.url);
         return;
       }
@@ -152,6 +155,7 @@ export function ProviderSection({
         setOutcome({ tone: "error", message: response.error.message });
         return;
       }
+      armConnectionHandoff();
       window.location.assign(response.data.url);
     },
     onError: () => setOutcome({ tone: "error", message: unreachable(guide.name) }),
@@ -170,11 +174,15 @@ export function ProviderSection({
   });
 
   const pending = save.isPending || connect.isPending || retryDelivery.isPending;
-  // A save that resolved into a redirect keeps the section busy until the browser leaves, so the
-  // form cannot be submitted twice in the gap.
+  // A website save that resolved into a redirect keeps the section busy until the browser leaves,
+  // so the form cannot be submitted twice in the gap. Paseo keeps this page and opens the provider
+  // outside, so the button has to be usable again.
+  const embeddedInPaseo =
+    typeof navigator !== "undefined" && embeddedHubKeepsPage(navigator.userAgent);
   const leaving =
-    (save.isSuccess && save.data.status === "ok" && save.data.data.status === "continuing") ||
-    (connect.isSuccess && connect.data.status === "ok");
+    !embeddedInPaseo &&
+    ((save.isSuccess && save.data.status === "ok" && save.data.data.status === "continuing") ||
+      (connect.isSuccess && connect.data.status === "ok"));
   const busy = pending || leaving;
 
   const submit = useCallback(

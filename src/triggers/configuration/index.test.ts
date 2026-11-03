@@ -171,6 +171,7 @@ describe("self-contained trigger documents", () => {
     });
     assert.deepEqual(compiled.events[0]?.steps[0]?.allowOutputs, [
       { type: "slack.reply", max: 5, required: false },
+      { type: "slack.react", required: false },
     ]);
     assert.deepEqual(compiled.events[1]?.steps[0]?.allowOutputs, [
       { type: "slack.reply", max: 5, required: false },
@@ -214,6 +215,7 @@ run:
 
     assert.deepEqual(compiled.events[0]?.steps[0]?.allowOutputs, [
       { type: "slack.reply", required: false },
+      { type: "slack.react", required: false },
     ]);
   });
 

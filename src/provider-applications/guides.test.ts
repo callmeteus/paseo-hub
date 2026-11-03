@@ -48,6 +48,16 @@ test("the Slack manifest asks for exactly the scopes Hub checks installations ag
     })
     .parse(load(slackManifest(LOCAL, "socket")));
   assert.deepEqual(socket.oauth_config.scopes.bot, [...SLACK_REQUIRED_BOT_SCOPES]);
+  assert.deepEqual(
+    z
+      .object({
+        settings: z.object({
+          event_subscriptions: z.object({ bot_events: z.array(z.string()) }),
+        }),
+      })
+      .parse(load(slackManifest(LOCAL, "socket"))).settings.event_subscriptions.bot_events,
+    ["app_mention", "message.channels", "message.groups"],
+  );
 });
 
 test("generated URLs are built from the resolved callback origin", () => {

@@ -18,6 +18,21 @@ export const SLACK_REQUIRED_BOT_SCOPES = [
   "users:read",
 ] as const;
 
+/**
+ * Scopes a saved workspace needs before Hub accepts its events and posts a reply.
+ *
+ * Channel listing stays on the install grant. An older workspace that has not been
+ * reauthorized can still run a message trigger.
+ */
+const SLACK_DISPATCH_BOT_SCOPES = [
+  "app_mentions:read",
+  "channels:history",
+  "chat:write",
+  "files:read",
+  "groups:history",
+  "users:read",
+] as const;
+
 const SlackOAuthResponseSchema = z
   .object({
     ok: z.boolean(),
@@ -50,6 +65,17 @@ export interface SlackInstallation {
 export function hasRequiredSlackScopes(scopes: readonly string[]): boolean {
   const granted = new Set(scopes);
   return SLACK_REQUIRED_BOT_SCOPES.every((scope) => granted.has(scope));
+}
+
+/**
+ * Reports whether a saved workspace can receive events and post a reply.
+ *
+ * @param scopes - Bot scopes stored for the workspace
+ * @returns True when every dispatch scope is present
+ */
+export function hasSlackDispatchScopes(scopes: readonly string[]): boolean {
+  const granted = new Set(scopes);
+  return SLACK_DISPATCH_BOT_SCOPES.every((scope) => granted.has(scope));
 }
 
 export interface SlackConnectionClient {

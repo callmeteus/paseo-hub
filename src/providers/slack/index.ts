@@ -7,9 +7,9 @@ import {
   connectionAccess,
   connectionActionFailure,
   connectionCallbackFailure,
+  beginConnectionState,
   connectionResult,
   manageConnectionAccess,
-  newConnectionState,
   requiredConnectionId,
   stateHash,
 } from "../../connections/shared.js";
@@ -20,6 +20,7 @@ import { createSlackBotClient, type SlackBotClient } from "../../triggers/slack/
 import { createSlackTriggerProvider } from "../../triggers/slack/provider.js";
 import { organizationBillingUrl } from "../../triggers/failure-notice.js";
 import { createSlackAttachmentResolver } from "../../triggers/slack/attachments.js";
+import { createSlackReactExecutor, reactOutputTool } from "../../triggers/slack/react.js";
 import { createSlackReplyExecutor } from "../../triggers/slack/reply.js";
 import { outputContextProvider, replyOutputTool } from "../../execution-capabilities/outputs.js";
 import { createSlackEventSource } from "../../triggers/slack/source/index.js";
@@ -28,6 +29,7 @@ import type { ProviderConnectionRegistration, ProviderRegistration } from "../re
 import {
   createSlackConnectionClient,
   hasRequiredSlackScopes,
+  hasSlackDispatchScopes,
   type SlackConnectionClient,
   type SlackInstallation,
   SlackBotVerificationError,
@@ -183,6 +185,12 @@ export function createSlackRegistration(
         available: outputContextProvider("slack"),
         execute: createSlackReplyExecutor({ client: bot }),
       },
+      {
+        type: "slack.react",
+        tool: reactOutputTool,
+        available: outputContextProvider("slack"),
+        execute: createSlackReactExecutor({ client: bot }),
+      },
     ],
     requests:
       events.request === undefined ? [] : [{ name: "slack.events", handle: events.request }],
@@ -203,7 +211,8 @@ async function findSlackBindingForOrganization(
   teamId: string,
 ): Promise<SlackConnectionRecord | undefined> {
   const binding = await database.findSlackConnectionForOrganization(organizationId, teamId);
-  return binding?.organizationId === organizationId && hasRequiredSlackScopes(binding.scopes)
+  // Listing channels is an editor feature. A workspace can still receive and reply without it.
+  return binding?.organizationId === organizationId && hasSlackDispatchScopes(binding.scopes)
     ? binding
     : undefined;
 }
@@ -263,11 +272,12 @@ function createSlackConnection(
       if (client === undefined) {
         return Response.json({ error: "provider_not_configured" }, { status: 409 });
       }
-      const state = newConnectionState();
+      const authority = connectionAccess(access);
+      const state = beginConnectionState(request, authority.sessionId);
       await options.database.startConnectionAttempt({
         provider: "slack",
         stateVerifier: stateHash(state),
-        access: connectionAccess(access),
+        access: authority,
         lifetimeMinutes: CONNECTION_ATTEMPT_LIFETIME_MINUTES,
         callbackOrigin: options.callbackOrigin,
         configurationVersion: options.configurationVersion,

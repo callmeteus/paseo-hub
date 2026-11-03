@@ -232,6 +232,84 @@ describe("Slack Web API client", () => {
     assert.equal(requests, 2);
   });
 
+  it("returns nothing when the forwarded conversation is closed", async () => {
+    const client = createSlackBotClient({
+      tokenForWorkspace: () => Promise.resolve("xoxb-secret"),
+      fetch: async () => Response.json({ ok: false, error: "channel_not_found" }),
+    });
+    const message = await client.readSharedMessage?.({
+      organizationId: "org-1",
+      teamId: "T1",
+      channelId: "C09QAPR0VT7",
+      messageTs: "1700000000.000010",
+    });
+
+    assert.equal(message, undefined);
+  });
+
+  it("returns the source message when the bot is in that channel", async () => {
+    const client = createSlackBotClient({
+      tokenForWorkspace: () => Promise.resolve("xoxb-secret"),
+      fetch: async () =>
+        Response.json({
+          ok: true,
+          messages: [{ ts: "1700000000.000020", text: "Pessoal, boa tarde." }],
+        }),
+    });
+    const message = await client.readSharedMessage?.({
+      organizationId: "org-1",
+      teamId: "T1",
+      channelId: "C0BA6DKUQJJ",
+      messageTs: "1700000000.000020",
+    });
+
+    assert.equal(
+      typeof message === "object" && message !== null && "text" in message ? message.text : "",
+      "Pessoal, boa tarde.",
+    );
+  });
+
+  it("reads forwarded layers inside a thread reply", async () => {
+    const client = createSlackBotClient({
+      tokenForWorkspace: () => Promise.resolve("xoxb-secret"),
+      fetch: () =>
+        Promise.resolve(
+          Response.json({
+            ok: true,
+            messages: [
+              { ts: "1700000000.000000", text: "root", user: "UROOT" },
+              {
+                ts: "1700000000.000001",
+                text: "",
+                user: "U1",
+                attachments: [
+                  {
+                    is_share: true,
+                    author_name: "João",
+                    text: "repassa",
+                    attachments: [{ is_share: true, author_name: "Maria", text: "o problema" }],
+                  },
+                ],
+              },
+            ],
+          }),
+        ),
+    });
+
+    const hydrated = await client.readThreadMessages?.({
+      organizationId: "org-1",
+      teamId: "T1",
+      channelId: "C1",
+      threadTs: "1700000000.000000",
+      beforeTs: "1700000000.000002",
+    });
+
+    assert.equal(
+      hydrated?.messages[1]?.content,
+      "Encaminhada de João:\nrepassa\nEncaminhada de Maria:\no problema",
+    );
+  });
+
   it("rejects Slack thread context when the API omits its root", async () => {
     const client = createSlackBotClient({
       tokenForWorkspace: () => Promise.resolve("xoxb-secret"),

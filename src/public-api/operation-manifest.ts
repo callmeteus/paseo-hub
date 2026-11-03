@@ -7,8 +7,10 @@ import type {
   ListConfigurationResourcesResult,
   ListSetupResourcesResult,
   ListProjectsResult,
+  ListSlackChannelsResult,
   ListTriggersResult,
   PublicOperations,
+  ReadSlackMessagesResult,
   ValidateConfigurationResult,
   ValidateTriggerResult,
 } from "../public-operations/index.js";
@@ -23,6 +25,10 @@ import {
   TriggerListSchema,
   ConfigurationResourcesSchema,
   SetupResourcesSchema,
+  SlackChannelListSchema,
+  SlackChannelsQuerySchema,
+  SlackMessageListSchema,
+  SlackMessagesQuerySchema,
   ValidatedConfigurationSchema,
   TriggerYamlRequestSchema,
   ValidatedTriggerSchema,
@@ -30,6 +36,8 @@ import {
 
 export type PublicOperationId =
   | "listTriggers"
+  | "listSlackChannels"
+  | "readSlackMessages"
   | "validateTrigger"
   | "installTrigger"
   | "listProjects"
@@ -49,6 +57,7 @@ export interface PublicOperationDefinition {
     | typeof InstallConfigurationRequestSchema
     | typeof DispatchManualRunRequestSchema
     | typeof TriggerYamlRequestSchema;
+  querySchema?: typeof SlackChannelsQuerySchema | typeof SlackMessagesQuerySchema;
   successSchema:
     | typeof InstalledTriggerSchema
     | typeof ValidatedTriggerSchema
@@ -58,12 +67,16 @@ export interface PublicOperationDefinition {
     | typeof TriggerListSchema
     | typeof ConfigurationResourcesSchema
     | typeof SetupResourcesSchema
+    | typeof SlackChannelListSchema
+    | typeof SlackMessageListSchema
     | typeof DispatchedManualRunSchema
     | typeof EnrollmentTokenSchema;
   successStatus: 200 | 201;
   resultMapping:
     | "trigger-validation"
     | "triggers"
+    | "slack-channels"
+    | "slack-messages"
     | "trigger-installation"
     | "projects"
     | "configuration-resources"
@@ -82,7 +95,9 @@ export interface PublicOperationDefinition {
     input: unknown,
   ): Promise<
     | ListProjectsResult
+    | ListSlackChannelsResult
     | ListTriggersResult
+    | ReadSlackMessagesResult
     | ValidateTriggerResult
     | InstallTriggerResult
     | ListConfigurationResourcesResult
@@ -114,6 +129,58 @@ export const publicOperationManifest: readonly PublicOperationDefinition[] = [
       503: "Hub authentication or storage is unavailable.",
     },
     invoke: (operations, authorization) => operations.listTriggers(authorization),
+  },
+  {
+    id: "listSlackChannels",
+    method: "get",
+    path: "/api/v1/slack/channels",
+    scope: "configuration:validate",
+    querySchema: SlackChannelsQuerySchema,
+    successSchema: SlackChannelListSchema,
+    successStatus: 200,
+    resultMapping: "slack-channels",
+    summary: "List Slack channels",
+    description:
+      "Lists channels the connected Slack bot can see. Trigger filters store the returned ids, not names.",
+    tag: "Triggers",
+    responses: {
+      200: "Channels the Slack bot can see.",
+      400: "The query string is malformed.",
+      401: "The bearer credential is missing, malformed, or revoked.",
+      403: "The bearer credential lacks configuration:validate, or Slack refused the token.",
+      404: "Slack is not connected.",
+      409: "More than one Slack connection exists and none was selected.",
+      500: "The operation failed unexpectedly.",
+      503: "Hub authentication or storage is unavailable.",
+    },
+    invoke: (operations, authorization, input) =>
+      operations.listSlackChannels(authorization, SlackChannelsQuerySchema.parse(input)),
+  },
+  {
+    id: "readSlackMessages",
+    method: "get",
+    path: "/api/v1/slack/messages",
+    scope: "configuration:validate",
+    querySchema: SlackMessagesQuerySchema,
+    successSchema: SlackMessageListSchema,
+    successStatus: 200,
+    resultMapping: "slack-messages",
+    summary: "Read Slack messages",
+    description:
+      "Reads recent messages in a channel the bot belongs to. channel may be a name or an id.",
+    tag: "Triggers",
+    responses: {
+      200: "Recent messages in the channel.",
+      400: "The query string is malformed.",
+      401: "The bearer credential is missing, malformed, or revoked.",
+      403: "The bearer credential lacks configuration:validate, or Slack refused the token.",
+      404: "Slack is not connected, or no channel matches.",
+      409: "More than one Slack connection or channel matches.",
+      500: "The operation failed unexpectedly.",
+      503: "Hub authentication or storage is unavailable.",
+    },
+    invoke: (operations, authorization, input) =>
+      operations.readSlackMessages(authorization, SlackMessagesQuerySchema.parse(input)),
   },
   {
     id: "validateTrigger",

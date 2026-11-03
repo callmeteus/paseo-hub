@@ -13,8 +13,10 @@ import {
   cancelledConnectionResult,
   connectionAccess,
   connectionActionFailure,
+  beginConnectionState,
   connectionCallbackFailure,
   connectionResult,
+  continueConnectionState,
   manageConnectionAccess,
   newConnectionState,
   positiveInteger,
@@ -360,11 +362,12 @@ function createGitHubConnection(
       if (client === undefined) {
         return Response.json({ error: "provider_not_configured" }, { status: 409 });
       }
-      const state = newConnectionState();
+      const authority = connectionAccess(access);
+      const state = beginConnectionState(request, authority.sessionId);
       await options.database.startConnectionAttempt({
         provider: "github",
         stateVerifier: stateHash(state),
-        access: connectionAccess(access),
+        access: authority,
         lifetimeMinutes: CONNECTION_ATTEMPT_LIFETIME_MINUTES,
         callbackOrigin: options.callbackOrigin,
         configurationVersion: options.configurationVersion,
@@ -459,7 +462,7 @@ async function completeSetup(
         returnRoute: attempt.returnRoute,
       });
     }
-    const nextState = newConnectionState();
+    const nextState = continueConnectionState(request, state, attempt.sessionId);
     const verifier = newConnectionState();
     await options.database.advanceGitHubConnectionAttempt({
       stateVerifier: stateHash(state),

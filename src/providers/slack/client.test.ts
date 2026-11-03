@@ -1,8 +1,36 @@
 import assert from "node:assert/strict";
 import { describe, it } from "vitest";
-import { createSlackConnectionClient } from "./client.js";
+import { createSlackConnectionClient, hasSlackDispatchScopes } from "./client.js";
 
 describe("Slack connection client", () => {
+  it("accepts a workspace that can reply but cannot list channels", () => {
+    assert.equal(
+      hasSlackDispatchScopes([
+        "app_mentions:read",
+        "channels:history",
+        "chat:write",
+        "files:read",
+        "groups:history",
+        "reactions:write",
+        "users:read",
+      ]),
+      true,
+    );
+  });
+
+  it("rejects a workspace that cannot post a reply", () => {
+    assert.equal(
+      hasSlackDispatchScopes([
+        "app_mentions:read",
+        "channels:history",
+        "files:read",
+        "groups:history",
+        "users:read",
+      ]),
+      false,
+    );
+  });
+
   it("builds the minimal OAuth grant and validates the installation identity", async () => {
     let exchangeBody: URLSearchParams | undefined;
     const client = createSlackConnectionClient({

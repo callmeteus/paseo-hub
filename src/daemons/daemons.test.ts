@@ -231,6 +231,7 @@ describe("daemon enrollment and execution", () => {
         { kind: "mcp", server: "hub", tool: "reply" },
       ],
     });
+    assert.deepEqual(hub.createdAgent()["featureValues"], { auto_accept: true });
 
     await hub.dispatch({
       outputContext: { provider: "manual", channelId: "channel-1" },

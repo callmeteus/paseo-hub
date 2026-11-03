@@ -32,6 +32,8 @@ import type { ProviderApplications } from "./provider-applications/index.js";
 import { DaemonProviderCatalog } from "./daemons/provider-catalog.js";
 import { HomeDashboard } from "./home/dashboard.js";
 import type { ProviderConnectionRegistration } from "./providers/registration.js";
+import { EmbeddedConnectionHandoff } from "./connections/app-handoff.js";
+import { ProductRequestError } from "./auth/organization-access.js";
 
 export interface ApplicationCompositionOptions {
   database: Database | null;
@@ -259,6 +261,21 @@ async function createOwnedApplicationRuntime(
         connections.get(provider)?.actions[action]?.(request) ??
         Promise.resolve(Response.json({ error: "provider_not_configured" }, { status: 409 }))
       );
+    },
+    connectionHandoff: async (request) => {
+      if (options.auth === null) {
+        return Response.json({ path: null });
+      }
+      try {
+        const account = await options.auth.resolveAccount(request);
+        return Response.json({ path: EmbeddedConnectionHandoff.take(account.session.id) });
+      } catch (error) {
+        // A signed-out poll is not a failed connection. The window simply has nothing to load.
+        if (error instanceof ProductRequestError) {
+          return Response.json({ path: null });
+        }
+        throw error;
+      }
     },
     webhook: (request) =>
       requests.get("webhook")?.(request) ??

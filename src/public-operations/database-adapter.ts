@@ -55,6 +55,50 @@ export function createDatabasePublicOperationRepository(
         slack: connections.slack.map(({ teamId, teamName }) => ({ teamId, teamName })),
       };
     },
+    async slackConnection(organizationId, connection) {
+      // The token stays in this process. Public responses only receive the slug.
+      const { slack } = await database.organizationConnectionUsage(organizationId);
+
+      if (connection !== undefined) {
+        const match = slack.find((item) => item.slug === connection);
+
+        if (match === undefined) {
+          return { status: "missing" };
+        }
+
+        return {
+          status: "ready",
+          slug: match.slug,
+          token: match.botAccessToken,
+        };
+      }
+
+      if (slack.length === 0) {
+        return { status: "missing" };
+      }
+
+      if (slack.length > 1) {
+        return {
+          status: "ambiguous",
+          connections: slack.map((item) => ({
+            slug: item.slug,
+            teamName: item.teamName,
+          })),
+        };
+      }
+
+      const only = slack[0];
+
+      if (only === undefined) {
+        return { status: "missing" };
+      }
+
+      return {
+        status: "ready",
+        slug: only.slug,
+        token: only.botAccessToken,
+      };
+    },
     async resolveManualRunProject(organizationId, triggerName, projectSlug) {
       const organizationTrigger = (await database.listOrganizationTriggers(organizationId)).find(
         ({ name }) => name === triggerName,

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { reportFailure } from "../../failures/index.js";
+import { readSlackMessageFiles, readSlackMessageText } from "./forwarded-message.js";
 
 const SlackApiResponseSchema = z
   .object({ ok: z.boolean(), error: z.string().optional() })
@@ -22,6 +23,9 @@ const SlackThreadMessageSchema = z
     files: z.array(SlackFileSchema).optional(),
   })
   .passthrough();
+const SlackSharedMessageSchema = SlackApiResponseSchema.extend({
+  messages: z.array(z.object({ ts: z.string() }).passthrough()).optional(),
+});
 const SlackThreadRepliesSchema = SlackApiResponseSchema.extend({
   messages: z.array(SlackThreadMessageSchema).optional(),
   response_metadata: z.object({ next_cursor: z.string().optional() }).optional(),
@@ -83,6 +87,12 @@ export interface SlackBotClient {
     messageTs: string;
     name: string;
   }): Promise<void>;
+  readSharedMessage?(input: {
+    organizationId: string;
+    teamId: string;
+    channelId: string;
+    messageTs: string;
+  }): Promise<unknown>;
   readThreadMessages?(input: {
     organizationId: string;
     teamId: string;
@@ -169,6 +179,41 @@ export function createSlackBotClient(options: {
     });
     if (!response.ok) throw new Error(`Slack API HTTP ${response.status}`);
     return response.json();
+  }
+
+  async function readSharedMessage(input: {
+    organizationId: string;
+    teamId: string;
+    channelId: string;
+    messageTs: string;
+  }): Promise<unknown> {
+    let result: z.infer<typeof SlackSharedMessageSchema>;
+
+    try {
+      result = SlackSharedMessageSchema.parse(
+        await queryJson(input.organizationId, input.teamId, "conversations.history", {
+          channel: input.channelId,
+          latest: input.messageTs,
+          oldest: input.messageTs,
+          inclusive: "true",
+          limit: "1",
+        }),
+      );
+    } catch (error) {
+      reportFailure(
+        error,
+        { operation: "slack.forward.read", component: "providers", provider: "slack" },
+        { diagnostic: { teamId: input.teamId, channelId: input.channelId } },
+      );
+      return undefined;
+    }
+
+    // A private conversation the bot is not in, or a message Slack will not return.
+    if (!result.ok) {
+      return undefined;
+    }
+
+    return result.messages?.find((message) => message.ts === input.messageTs);
   }
 
   async function readThreadMessages(input: {
@@ -299,6 +344,7 @@ export function createSlackBotClient(options: {
         name: input.name,
       }),
     readThreadMessages,
+    readSharedMessage,
     lookupUserName,
     downloadAttachment,
   };
@@ -310,9 +356,9 @@ function normalizeThreadMessage(
   return {
     ts: message.ts,
     createdAt: new Date(Number(message.ts) * 1_000).toISOString(),
-    content: message.text,
+    content: readSlackMessageText(message),
     author: { id: message.user ?? message.bot_id ?? "unknown" },
-    attachments: (message.files ?? []).map((file) => ({
+    attachments: readSlackMessageFiles(message).map((file) => ({
       id: file.id,
       filename: file.name ?? file.title ?? file.id,
       contentType: file.mimetype ?? null,

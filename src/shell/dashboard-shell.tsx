@@ -55,6 +55,7 @@ import {
 } from "./switchers.js";
 import { SiteHeader } from "./site-header.js";
 import { SiteHeaderActionsProvider } from "./site-header-actions.js";
+import { ConnectionHandoffWatcher } from "../connections/handoff-watcher.js";
 
 type ActiveAccount = ActiveAccountState;
 type AccountCommandResult = Result<{
@@ -150,6 +151,7 @@ function DashboardContent({
   const instance = useInstanceScope(account.isInstanceOperator);
   return (
     <>
+      <ConnectionHandoffWatcher />
       <AppSidebar
         account={account}
         tenant={tenant}

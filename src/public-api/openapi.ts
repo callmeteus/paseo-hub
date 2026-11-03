@@ -106,14 +106,19 @@ for (const definition of publicOperationManifest) {
     description: definition.description,
     tags: [definition.tag],
     security: [{ bearerAuth: [] }],
-    ...(definition.requestSchema === undefined
+    ...(definition.requestSchema === undefined && definition.querySchema === undefined
       ? {}
       : {
           request: {
-            body: {
-              required: true,
-              content: { "application/json": { schema: definition.requestSchema } },
-            },
+            ...(definition.requestSchema === undefined
+              ? {}
+              : {
+                  body: {
+                    required: true,
+                    content: { "application/json": { schema: definition.requestSchema } },
+                  },
+                }),
+            ...(definition.querySchema === undefined ? {} : { query: definition.querySchema }),
           },
         }),
     responses,

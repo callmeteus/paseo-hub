@@ -238,6 +238,8 @@ describe("HTTP failure ownership", () => {
       installConfiguration: failOperation,
       dispatchManualRun: failOperation,
       issueEnrollmentToken: failOperation,
+      listSlackChannels: failOperation,
+      readSlackMessages: failOperation,
     };
     const api = createPublicApi(
       {

@@ -8,11 +8,13 @@ import type {
   InstallTriggerResult,
   IssueEnrollmentTokenResult,
   ListProjectsResult,
+  ListSlackChannelsResult,
   ListTriggersResult,
   ListConfigurationResourcesResult,
   ListSetupResourcesResult,
   PublicAuthorization,
   PublicOperations,
+  ReadSlackMessagesResult,
   ValidateConfigurationResult,
   ValidateTriggerResult,
 } from "../public-operations/index.js";
@@ -25,10 +27,8 @@ import {
   TriggerListSchema,
   ConfigurationResourcesSchema,
   SetupResourcesSchema,
-  ProblemSchema,
   ValidatedConfigurationSchema,
   ValidatedTriggerSchema,
-  type Problem,
 } from "./contracts.js";
 import { publicOpenApiDocument } from "./openapi.js";
 import {
@@ -37,6 +37,19 @@ import {
   type PublicOperationId,
   type PublicOperationDefinition,
 } from "./operation-manifest.js";
+import {
+  assertNever,
+  infrastructureProblem,
+  problem,
+  success,
+  validationProblem,
+} from "./problem-response.js";
+import {
+  isSlackChannelsResult,
+  isSlackMessagesResult,
+  slackChannelsResponse,
+  slackMessagesResponse,
+} from "./slack-response.js";
 
 export type { PublicOperationId } from "./operation-manifest.js";
 
@@ -44,6 +57,8 @@ type PublicOperationResult =
   | ValidateTriggerResult
   | InstallTriggerResult
   | ListTriggersResult
+  | ListSlackChannelsResult
+  | ReadSlackMessagesResult
   | ListProjectsResult
   | ListConfigurationResourcesResult
   | ListSetupResourcesResult
@@ -214,17 +229,61 @@ async function execute(
       return validationProblem(requestId, parsed.error.issues);
     }
     input = parsed.data;
+  } else if (definition.querySchema !== undefined) {
+    const parsed = definition.querySchema.safeParse(readQuery(request));
+    if (!parsed.success) {
+      return validationProblem(
+        requestId,
+        parsed.error.issues,
+        "The query string contains invalid fields.",
+      );
+    }
+    input = parsed.data;
   }
   const result = await definition.invoke(operations, access, input);
   if (definition.resultMapping === "triggers") {
     if (!isTriggersResult(result)) throw new Error("invalid triggers operation result");
     return triggersResponse(requestId, result);
   }
+  if (definition.resultMapping === "slack-channels") {
+    if (!isSlackChannelsResult(result)) throw new Error("invalid slack channels result");
+    return slackChannelsResponse(requestId, result);
+  }
+  if (definition.resultMapping === "slack-messages") {
+    if (!isSlackMessagesResult(result)) throw new Error("invalid slack messages result");
+    return slackMessagesResponse(requestId, result);
+  }
   return operationResponse(definition.resultMapping, requestId, result);
 }
 
+/**
+ * Reads a query string and drops blank values.
+ *
+ * @param request - Incoming public API request
+ * @returns Named query fields
+ */
+function readQuery(request: Request): Record<string, string> {
+  const query: Record<string, string> = {};
+  const url = new URL(request.url);
+
+  for (const [key, value] of url.searchParams) {
+    const trimmed = value.trim();
+
+    if (trimmed.length === 0) {
+      continue;
+    }
+
+    query[key] = trimmed;
+  }
+
+  return query;
+}
+
 function operationResponse(
-  mapping: Exclude<PublicOperationDefinition["resultMapping"], "triggers">,
+  mapping: Exclude<
+    PublicOperationDefinition["resultMapping"],
+    "triggers" | "slack-channels" | "slack-messages"
+  >,
   requestId: string,
   result: PublicOperationResult,
 ): Response {
@@ -398,23 +457,6 @@ async function readJson(
   }
 }
 
-function validationProblem(
-  requestId: string,
-  issues: readonly { path: readonly PropertyKey[]; message: string }[],
-): Response {
-  return problem(
-    requestId,
-    400,
-    "invalid_request",
-    "Invalid request",
-    "The request body contains invalid fields.",
-    issues.map((issue) => ({
-      path: issue.path.flatMap((part) => (typeof part === "symbol" ? [] : [part])),
-      message: issue.message,
-    })),
-  );
-}
-
 function installationResponse(requestId: string, result: InstallConfigurationResult): Response {
   switch (result.status) {
     case "installed":
@@ -556,56 +598,6 @@ function enrollmentResponse(requestId: string, result: IssueEnrollmentTokenResul
       return infrastructureProblem(requestId);
   }
   return assertNever(result);
-}
-
-function infrastructureProblem(requestId: string): Response {
-  return problem(
-    requestId,
-    503,
-    "infrastructure_unavailable",
-    "Service unavailable",
-    "The operation could not reach durable storage. Retry the request later.",
-  );
-}
-
-function success(
-  requestId: string,
-  status: number,
-  schema: { parse(value: unknown): unknown },
-  value: unknown,
-): Response {
-  return Response.json(schema.parse(value), { status, headers: { "x-request-id": requestId } });
-}
-
-function assertNever(value: never): never {
-  throw new Error(`Unhandled public operation result: ${String(value)}`);
-}
-
-function problem(
-  requestId: string,
-  status: number,
-  code: string,
-  title: string,
-  detail: string,
-  issues?: readonly { path: readonly (string | number)[]; message: string }[],
-): Response {
-  const body: Problem = ProblemSchema.parse({
-    type: `https://paseo.sh/problems/${code.replaceAll("_", "-")}`,
-    title,
-    status,
-    detail,
-    code,
-    requestId,
-    ...(issues === undefined ? {} : { issues }),
-  });
-  return Response.json(body, {
-    status,
-    headers: {
-      "content-type": "application/problem+json",
-      "x-request-id": requestId,
-      ...(status === 401 ? { "www-authenticate": "Bearer" } : {}),
-    },
-  });
 }
 
 function isInstallationResult(result: PublicOperationResult): result is InstallConfigurationResult {

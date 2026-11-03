@@ -1,4 +1,10 @@
 import { z } from "zod";
+import {
+  readSlackForwardLocators,
+  readSlackMessageFiles,
+  readSlackMessageLead,
+  readSlackMessageText,
+} from "./forwarded-message.js";
 
 const SlackIdSchema = z.string().min(1).max(255);
 const SlackTimestampSchema = z.string().regex(/^\d+\.\d+$/u);
@@ -93,6 +99,15 @@ export const NormalizedSlackMentionEventSchema = z.object({
   eventTs: SlackTimestampSchema,
   eventTime: z.number().int().nonnegative(),
   content: z.string(),
+  lead: z.string().default(""),
+  forwards: z
+    .array(
+      z.object({
+        channelId: SlackIdSchema,
+        messageTs: SlackTimestampSchema,
+      }),
+    )
+    .default([]),
   author: z.object({ id: SlackIdSchema, username: z.string().min(1).max(255).optional() }),
   createdAt: z.string(),
   attachments: z.array(SlackAttachmentMetadataSchema).default([]),
@@ -108,14 +123,12 @@ export function normalizeSlackEvent(
     if (mention.data.bot_id !== undefined || mention.data.subtype === "bot_message") {
       return undefined;
     }
-    return normalizedSlackEvent(envelope, "mention", {
+    return normalizedSlackEvent(envelope, "mention", mention.data, {
       channel: mention.data.channel,
-      text: mention.data.text,
       ts: mention.data.ts,
       eventTs: mention.data.event_ts,
       threadTs: mention.data.thread_ts ?? null,
       user: mention.data.user,
-      files: mention.data.files,
     });
   }
 
@@ -128,38 +141,29 @@ export function normalizeSlackEvent(
   if (message.data.thread_ts !== undefined && message.data.thread_ts !== message.data.ts) {
     return undefined;
   }
-  return normalizedSlackEvent(envelope, "message", {
+  return normalizedSlackEvent(envelope, "message", message.data, {
     channel: message.data.channel,
-    text: message.data.text ?? "",
     ts: message.data.ts,
     eventTs: message.data.event_ts,
     threadTs: null,
     user: message.data.user,
-    files: message.data.files,
   });
 }
 
 function normalizedSlackEvent(
   envelope: z.infer<typeof SlackEventCallbackSchema>,
   type: "mention" | "message",
+  source: unknown,
   event: {
     channel: string;
-    text: string;
     ts: string;
     eventTs: string;
     threadTs: string | null;
     user: string;
-    files:
-      | {
-          id: string;
-          name?: string | undefined;
-          title?: string | undefined;
-          mimetype?: string | undefined;
-          size?: number | undefined;
-        }[]
-      | undefined;
   },
 ): NormalizedSlackMentionEvent {
+  // A forward keeps the original text on the attachment. `text` itself is often empty.
+  const files = readSlackMessageFiles(source);
   return NormalizedSlackMentionEventSchema.parse({
     type,
     id: envelope.event_id,
@@ -170,10 +174,12 @@ function normalizedSlackEvent(
     threadTs: event.threadTs,
     eventTs: event.eventTs,
     eventTime: envelope.event_time,
-    content: event.text,
+    content: readSlackMessageText(source),
+    lead: readSlackMessageLead(source),
+    forwards: readSlackForwardLocators(source),
     author: { id: event.user },
     createdAt: new Date(Number(event.ts) * 1_000).toISOString(),
-    attachments: (event.files ?? []).map((file) => ({
+    attachments: files.map((file) => ({
       id: file.id,
       filename: file.name ?? file.title ?? file.id,
       contentType: file.mimetype ?? null,

@@ -18,6 +18,8 @@ export interface DaemonCreateAgentOptions {
   thinkingOptionId?: string;
   providerOptions?: Readonly<Record<string, JsonValue>>;
   toolPolicy: ToolPolicy;
+  /** Provider feature values, such as ACP auto-accept for an unattended run. */
+  featureValues?: Readonly<Record<string, JsonValue>>;
   cwd: string;
   env: Record<string, string>;
   mcpServers?: Record<string, McpHttpServerConfig>;

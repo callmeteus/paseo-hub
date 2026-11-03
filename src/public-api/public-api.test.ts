@@ -13,6 +13,8 @@ import type { PublicOperations } from "../public-operations/index.js";
 import {
   ConfigurationResourcesSchema,
   SetupResourcesSchema,
+  SlackChannelListSchema,
+  SlackMessageListSchema,
   createPublicApi,
   DispatchedManualRunSchema,
   EnrollmentTokenSchema,
@@ -278,6 +280,68 @@ describe("public API interface", () => {
     assert.equal(serialized.includes("constraint"), false);
     assert.equal(serialized.includes("insert into"), false);
   });
+
+  it("returns Slack channel ids and a problem when Slack is not connected", async () => {
+    const listed = createPublicApi(
+      { status: "enabled", authenticator: authenticator() },
+      {
+        ...successfulOperations(),
+        listSlackChannels: () =>
+          Promise.resolve({
+            status: "channels",
+            connection: "acme",
+            truncated: false,
+            channels: [{ id: "C01234567", name: "tecnologia-triagem-teste", isPrivate: false }],
+          }),
+      },
+    );
+    const response = await listed.handle(
+      new Request("https://hub.test/api/v1/slack/channels?query=%23tecnologia", {
+        headers: { authorization: "Bearer valid" },
+      }),
+    );
+    assert.equal(response.status, 200);
+    assert.deepEqual(SlackChannelListSchema.parse(await response.json()), {
+      connection: "acme",
+      truncated: false,
+      channels: [{ id: "C01234567", name: "tecnologia-triagem-teste", isPrivate: false }],
+    });
+
+    const missing = createPublicApi(
+      { status: "enabled", authenticator: authenticator() },
+      {
+        ...successfulOperations(),
+        listSlackChannels: () => Promise.resolve({ status: "not_connected" }),
+      },
+    );
+    const refused = await missing.handle(
+      new Request("https://hub.test/api/v1/slack/channels", {
+        headers: { authorization: "Bearer valid" },
+      }),
+    );
+    assert.equal(refused.status, 404);
+    assert.equal(ProblemSchema.parse(await refused.json()).code, "slack_not_connected");
+
+    const messages = createPublicApi(
+      { status: "enabled", authenticator: authenticator() },
+      successfulOperations(),
+    );
+    const history = await messages.handle(
+      new Request("https://hub.test/api/v1/slack/messages?channel=general", {
+        headers: { authorization: "Bearer valid" },
+      }),
+    );
+    assert.equal(history.status, 200);
+    SlackMessageListSchema.parse(await history.json());
+
+    const invalid = await messages.handle(
+      new Request("https://hub.test/api/v1/slack/messages?limit=nope", {
+        headers: { authorization: "Bearer valid" },
+      }),
+    );
+    assert.equal(invalid.status, 400);
+    assert.equal(ProblemSchema.parse(await invalid.json()).code, "invalid_request");
+  });
 });
 
 describe("generated public OpenAPI", () => {
@@ -300,6 +364,8 @@ describe("generated public OpenAPI", () => {
       "/api/v1/manual-runs",
       "/api/v1/projects",
       "/api/v1/setup-resources",
+      "/api/v1/slack/channels",
+      "/api/v1/slack/messages",
       "/api/v1/triggers",
       "/api/v1/triggers/install",
       "/api/v1/triggers/validate",
@@ -319,6 +385,14 @@ describe("generated public OpenAPI", () => {
       ],
       "/api/v1/setup-resources": ["configuration:validate", ["200", "401", "403", "500", "503"]],
       "/api/v1/triggers": ["configuration:validate", ["200", "401", "403", "500", "503"]],
+      "/api/v1/slack/channels": [
+        "configuration:validate",
+        ["200", "400", "401", "403", "404", "409", "500", "503"],
+      ],
+      "/api/v1/slack/messages": [
+        "configuration:validate",
+        ["200", "400", "401", "403", "404", "409", "500", "503"],
+      ],
       "/api/v1/projects": ["projects:read", ["200", "401", "403", "500", "503"]],
       "/api/v1/manual-runs": [
         "runs:dispatch",
@@ -331,7 +405,9 @@ describe("generated public OpenAPI", () => {
         path === "/api/v1/projects" ||
         path === "/api/v1/triggers" ||
         path === "/api/v1/configuration-resources" ||
-        path === "/api/v1/setup-resources"
+        path === "/api/v1/setup-resources" ||
+        path === "/api/v1/slack/channels" ||
+        path === "/api/v1/slack/messages"
           ? publicOpenApiDocument.paths?.[path]?.get
           : publicOpenApiDocument.paths?.[path]?.post;
       assert.ok(operation?.operationId);
@@ -507,6 +583,20 @@ function successfulOperations(): PublicOperations {
         status: "issued",
         token: "a".repeat(43),
         expiresAt: new Date("2026-08-06T18:10:00.000Z"),
+      }),
+    listSlackChannels: () =>
+      Promise.resolve({
+        status: "channels",
+        connection: "acme",
+        channels: [],
+        truncated: false,
+      }),
+    readSlackMessages: () =>
+      Promise.resolve({
+        status: "messages",
+        connection: "acme",
+        channel: { id: "C01234567", name: "general" },
+        messages: [],
       }),
   };
 }

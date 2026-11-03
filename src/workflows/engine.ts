@@ -1,3 +1,4 @@
+import { slackReactGrant } from "../triggers/slack/react.js";
 import { continuationKey } from "../triggers/continuation.js";
 import { DatabaseUnavailableError } from "../db/errors.js";
 import type {
@@ -979,7 +980,7 @@ function buildStepIntent(
         )
         .join("\n"),
       agent,
-      allowOutputs: step.allowOutputs,
+      allowOutputs: slackReactGrant(step.allowOutputs, run.outputContext),
       timeoutMs: step.maxRuntimeMs,
       idleTimeoutMs: step.idleTimeoutMs,
       ...(step.startupTimeoutMs === undefined ? {} : { startupTimeoutMs: step.startupTimeoutMs }),

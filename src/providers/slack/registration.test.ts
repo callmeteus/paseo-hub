@@ -11,6 +11,7 @@ import type {
 } from "../../db/types.js";
 import type { SlackBotClient } from "../../triggers/slack/client.js";
 import {
+  SLACK_REQUIRED_BOT_SCOPES,
   SlackBotVerificationError,
   type SlackConnectionClient,
   type SlackInstallation,
@@ -44,7 +45,7 @@ describe("Slack registration", () => {
     assert.equal(registration.triggerProviders.length, 1);
     assert.deepEqual(
       registration.outputs.map((output) => output.type),
-      ["slack.reply"],
+      ["slack.reply", "slack.react"],
     );
     assert.deepEqual(
       registration.requests.map((request) => request.name),
@@ -316,15 +317,7 @@ describe("Slack registration", () => {
         botUserId: "UBOT-B",
         botAccessToken: "token-b",
         providerApplicationId: "A1",
-        scopes: [
-          "app_mentions:read",
-          "channels:history",
-          "chat:write",
-          "files:read",
-          "groups:history",
-          "reactions:write",
-          "users:read",
-        ],
+        scopes: [...SLACK_REQUIRED_BOT_SCOPES],
       });
     const requests: string[] = [];
     const registration = createSlackRegistration({
@@ -366,7 +359,88 @@ describe("Slack registration", () => {
     });
     assert.deepEqual(requests, ["Bearer token-b"]);
   });
+
+  it("replies when the workspace is missing only the channel-list scopes", async () => {
+    const requests: string[] = [];
+    const registration = slackReplyRegistration(
+      SLACK_REQUIRED_BOT_SCOPES.filter(
+        (scope) => scope !== "channels:read" && scope !== "groups:read",
+      ),
+      requests,
+    );
+    const reply = registration.outputs[0]?.execute;
+    assert(reply !== undefined);
+
+    await reply({
+      agentExecutionId: "execution",
+      toolType: "slack.reply",
+      args: { content: "reply" },
+      outputContext: slackReplyContext(),
+    });
+
+    assert.deepEqual(requests, ["Bearer token"]);
+  });
+
+  it("does not reply when the workspace cannot post messages", async () => {
+    const requests: string[] = [];
+    const registration = slackReplyRegistration(
+      SLACK_REQUIRED_BOT_SCOPES.filter((scope) => scope !== "chat:write"),
+      requests,
+    );
+    const reply = registration.outputs[0]?.execute;
+    assert(reply !== undefined);
+
+    await assert.rejects(
+      () =>
+        reply({
+          agentExecutionId: "execution",
+          toolType: "slack.reply",
+          args: { content: "reply" },
+          outputContext: slackReplyContext(),
+        }),
+      /not connected/u,
+    );
+    assert.deepEqual(requests, []);
+  });
 });
+
+function slackReplyContext() {
+  return {
+    provider: "slack" as const,
+    organizationId: "org",
+    teamId: "T1",
+    channelId: "C1",
+    threadTs: "1.1",
+    messageTs: "1.1",
+  };
+}
+
+function slackReplyRegistration(scopes: readonly string[], requests: string[]) {
+  const database = createMemoryDatabase();
+  database.findSlackConnectionForOrganization = () =>
+    Promise.resolve({
+      id: "slack-connection",
+      organizationId: "org",
+      slug: "slack-workspace",
+      teamId: "T1",
+      teamName: "Workspace",
+      botUserId: "UBOT",
+      botAccessToken: "token",
+      providerApplicationId: "A1",
+      scopes: [...scopes],
+    });
+  return createSlackRegistration({
+    database,
+    auth: null,
+    applicationBaseUrl: "https://hub.test",
+    publicBaseUrl: "https://hub.test",
+    configuration: slackConfiguration(),
+    fetch: async (_input, init) => {
+      requests.push(new Headers(init?.headers).get("authorization") ?? "");
+      return Response.json({ ok: true });
+    },
+  });
+}
 
 function slackConfiguration() {
   return {
@@ -455,15 +529,7 @@ class CompletingSlackConnectionFake implements SlackConnectionClient {
 
   constructor(
     private readonly failVerification = false,
-    private readonly scopes = [
-      "app_mentions:read",
-      "channels:history",
-      "chat:write",
-      "files:read",
-      "groups:history",
-      "reactions:write",
-      "users:read",
-    ],
+    private readonly scopes = [...SLACK_REQUIRED_BOT_SCOPES],
   ) {}
 
   authorizationUrl(state: string): string {

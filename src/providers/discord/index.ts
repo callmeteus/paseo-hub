@@ -10,9 +10,9 @@ import {
   connectionAccess,
   connectionActionFailure,
   connectionCallbackFailure,
+  beginConnectionState,
   connectionResult,
   manageConnectionAccess,
-  newConnectionState,
   requiredConnectionId,
   stateHash,
 } from "../../connections/shared.js";
@@ -199,11 +199,12 @@ function createDiscordConnection(
       if (client === undefined) {
         return Response.json({ error: "provider_not_configured" }, { status: 409 });
       }
-      const state = newConnectionState();
+      const authority = connectionAccess(access);
+      const state = beginConnectionState(request, authority.sessionId);
       await options.database.startConnectionAttempt({
         provider: "discord",
         stateVerifier: stateHash(state),
-        access: connectionAccess(access),
+        access: authority,
         lifetimeMinutes: CONNECTION_ATTEMPT_LIFETIME_MINUTES,
         callbackOrigin: options.callbackOrigin,
         configurationVersion: options.configurationVersion,

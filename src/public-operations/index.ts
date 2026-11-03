@@ -16,6 +16,7 @@ import type {
   PublicOperations,
 } from "./types.js";
 import { TriggerDocumentError } from "../triggers/configuration/index.js";
+import { listPublicSlackChannels, readPublicSlackMessages } from "./slack.js";
 
 export type * from "./types.js";
 
@@ -96,6 +97,23 @@ export function createPublicOperations(
       } catch (error) {
         return storageUnavailableOrThrow(error);
       }
+    },
+    listSlackChannels(authorization, input) {
+      return listPublicSlackChannels({
+        repository,
+        organizationId: authorization.organizationId,
+        connection: input.connection,
+        query: input.query,
+      });
+    },
+    readSlackMessages(authorization, input) {
+      return readPublicSlackMessages({
+        repository,
+        organizationId: authorization.organizationId,
+        connection: input.connection,
+        channel: input.channel,
+        limit: input.limit,
+      });
     },
     async validateConfiguration(authorization, input) {
       try {

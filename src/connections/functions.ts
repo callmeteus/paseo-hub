@@ -60,6 +60,43 @@ const startSchema = z.object({ url: z.string().url() });
 export type ConnectionStatus = z.infer<typeof connectionStatusSchema>;
 export type ConnectionDisconnectResult = `${ConnectionProvider}_disconnected`;
 
+const handoffSchema = z.object({ path: z.string().nullable() });
+
+/**
+ * Reads the provider callback the system browser parked for this session.
+ *
+ * @returns The callback path, or null when nothing is waiting.
+ */
+export const takeConnectionHandoff = createServerFn({ method: "POST" }).handler(
+  async (): Promise<Result<{ path: string | null }>> => {
+    try {
+      const incoming = getRequest();
+      const headers = new Headers(incoming.headers);
+      headers.delete("content-length");
+      const response = await handleConnections(
+        new Request(new URL("/connections/handoff", incoming.url), {
+          method: "POST",
+          headers,
+          body: "{}",
+        }),
+        "handoff",
+      );
+      if (!response.ok) {
+        return respondOk({ path: null });
+      }
+      return respondOk(handoffSchema.parse(await response.json()));
+    } catch (error) {
+      return respondWithFailure(
+        error,
+        { operation: "connection.handoff", component: "connections" },
+        {
+          fallback: "Hub couldn't check for a connection to finish.",
+        },
+      );
+    }
+  },
+);
+
 export const connectionStatus = createServerFn({ method: "GET" })
   .validator(scopeSchema)
   .handler(async ({ data }): Promise<Result<ConnectionStatus>> => {

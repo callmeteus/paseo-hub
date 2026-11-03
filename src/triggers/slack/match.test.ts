@@ -133,6 +133,8 @@ function mention(
     eventTs: "1700000000.000001",
     eventTime: 1_700_000_001,
     content: "hello <@UBOT> run tests",
+    lead: "hello <@UBOT> run tests",
+    forwards: [],
     author: {
       id: overrides.authorId ?? "U1",
       ...(overrides.username === undefined ? {} : { username: overrides.username }),

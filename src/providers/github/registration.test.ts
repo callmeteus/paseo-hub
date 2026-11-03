@@ -14,6 +14,7 @@ import {
 } from "../../test-utils/project-configuration.js";
 import type { ProjectRecord, StartConnectionAttemptInput } from "../../db/types.js";
 import type { GitHubConnectionClient } from "./client.js";
+import { EmbeddedConnectionHandoff } from "../../connections/app-handoff.js";
 import { createGitHubRegistration } from "./index.js";
 import type { GitHubConfigurationProvider } from "../../configuration/github-sync.js";
 import { configurationBundleFixture } from "../../test-utils/configuration-bundle.js";
@@ -197,6 +198,7 @@ describe("GitHub registration", () => {
     assert(body !== null && typeof body === "object" && "url" in body);
     assert(typeof body.url === "string");
     assert.match(body.url, /^https:\/\/github\.test\/setup/u);
+    assert.equal(new URL(body.url).searchParams.get("state")?.startsWith("ew."), false);
   });
 
   it("reports readiness without constructing partial provider behavior", () => {
@@ -447,6 +449,77 @@ describe("GitHub registration", () => {
       response.headers.get("location"),
       "https://hub.test/connections?app=github&result=connection_unauthenticated",
     );
+  });
+
+  it("sends an embedded GitHub install back to the signed-in Paseo window", async () => {
+    EmbeddedConnectionHandoff.reset();
+    const database = createMemoryDatabase({
+      memberships: [
+        {
+          userId: "user",
+          organizationId: "org",
+          organizationName: "Org",
+          organizationSlug: "org",
+          membershipId: "membership",
+          role: "owner",
+        },
+      ],
+    });
+    database.startConnectionAttempt = () => Promise.resolve();
+    const registration = createGitHubRegistration({
+      database,
+      auth: new RegistrationAuth(),
+      applicationBaseUrl: "https://hub.test",
+      publicBaseUrl: "https://hub.test",
+      configuration: githubConfiguration(),
+      appAuth: githubAuth(),
+      connectionClient: new GitHubClientFake(),
+      reactionClient: {
+        createReaction: () => Promise.resolve({ id: 1 }),
+        deleteReaction: () => Promise.resolve(),
+      },
+    });
+
+    const started = await registration.connection.actions["start"]!(
+      new Request("https://hub.test/start?organizationSlug=org", {
+        method: "POST",
+        headers: { "user-agent": "Mozilla/5.0 Electron/33.0.0" },
+      }),
+    );
+    const body: unknown = await started.json();
+    assert(
+      body !== null && typeof body === "object" && "url" in body && typeof body.url === "string",
+    );
+    const state = new URL(body.url).searchParams.get("state");
+    assert(state !== null && state.startsWith("ew."));
+
+    const signedOut = createGitHubRegistration({
+      database: createMemoryDatabase(),
+      auth: new SignedOutAuth(),
+      applicationBaseUrl: "https://hub.test",
+      publicBaseUrl: "https://hub.test",
+      configuration: githubConfiguration(),
+      appAuth: githubAuth(),
+      connectionClient: new GitHubClientFake(),
+      reactionClient: {
+        createReaction: () => Promise.resolve({ id: 1 }),
+        deleteReaction: () => Promise.resolve(),
+      },
+    });
+    const response = await signedOut.connection.actions["setup"]!(
+      new Request(
+        `https://hub.test/api/integrations/github/setup?state=${state}&setup_action=install&installation_id=42`,
+        { headers: { "user-agent": "Mozilla/5.0 Chrome/120.0.0.0" } },
+      ),
+    );
+
+    assert.equal(response.status, 200);
+    assert.match(await response.text(), /close this tab/u);
+    assert.equal(
+      EmbeddedConnectionHandoff.take("session"),
+      `/api/integrations/github/setup?state=${state}&setup_action=install&installation_id=42`,
+    );
+    EmbeddedConnectionHandoff.reset();
   });
 
   it("keeps provider runtime active without browser authentication", async () => {

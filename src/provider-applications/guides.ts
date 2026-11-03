@@ -315,7 +315,7 @@ export const SLACK_WEBHOOK_GUIDE: ProviderGuide = {
   provider: "slack",
   transport: "webhook",
   name: "Slack",
-  summary: "Reads mentions in your workspace and replies in the thread.",
+  summary: "Reads channel messages and mentions, and replies in the thread.",
   portal: { label: "Create a Slack app", href: "https://api.slack.com/apps?new_app=1" },
   formTitle: "Paste from Slack",
   summaryLabels: { identity: "App ID", connections: "Workspaces" },
@@ -412,7 +412,7 @@ export const SLACK_GUIDE: ProviderGuide = {
   provider: "slack",
   transport: "socket",
   name: "Slack",
-  summary: "Reads mentions in your workspace and replies in the thread.",
+  summary: "Reads channel messages and mentions, and replies in the thread.",
   portal: { label: "Create a Slack app", href: "https://api.slack.com/apps?new_app=1" },
   formTitle: "Connect Slack",
   summaryLabels: { identity: "App ID", connections: "Workspaces" },
@@ -732,6 +732,8 @@ settings:
   event_subscriptions:
 ${requestUrl}    bot_events:
       - app_mention
+      - message.channels
+      - message.groups
   interactivity:
     is_enabled: false
   org_deploy_enabled: false

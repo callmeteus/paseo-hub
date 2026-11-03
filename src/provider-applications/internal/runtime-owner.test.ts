@@ -16,6 +16,62 @@ import { OutputExecutorRegistry, replyOutputTool } from "../../execution-capabil
 import { createGitHubReplyExecutor, githubReplyAvailable } from "../../triggers/github/reply.js";
 
 describe("dynamic provider runtime", () => {
+  it("advertises Slack channel messages to the dispatcher", () => {
+    const runtime = new DynamicProviderRuntime({
+      database: createMemoryDatabase(),
+      auth: testAuth(),
+      applicationBaseUrl: "https://hub.test",
+      registrationFactory: ({ configuration }) =>
+        connectionRegistration(configuration.provider, providerConfigurationId(configuration)),
+    });
+    const slack = runtime
+      .registrations()
+      .find((registration) => registration.connection.name === "slack");
+    assert.ok(slack);
+    const trigger = slack.triggerProviders[0]?.({
+      configurationStoreForProject: () => {
+        throw new Error("unused");
+      },
+      connectionsForProject: () => {
+        throw new Error("unused");
+      },
+    });
+    assert.ok(trigger);
+    assert.deepEqual(trigger.eventNames, ["slack.mention", "slack.message"]);
+    assert.deepEqual(
+      slack.outputs.map((output) => output.type),
+      ["slack.reply", "slack.react"],
+    );
+  });
+
+  it("does not advertise Slack channel messages on the GitHub runtime", () => {
+    const runtime = new DynamicProviderRuntime({
+      database: createMemoryDatabase(),
+      auth: testAuth(),
+      applicationBaseUrl: "https://hub.test",
+      registrationFactory: ({ configuration }) =>
+        connectionRegistration(configuration.provider, providerConfigurationId(configuration)),
+    });
+    const github = runtime
+      .registrations()
+      .find((registration) => registration.connection.name === "github");
+    assert.ok(github);
+    const trigger = github.triggerProviders[0]?.({
+      configurationStoreForProject: () => {
+        throw new Error("unused");
+      },
+      connectionsForProject: () => {
+        throw new Error("unused");
+      },
+    });
+    assert.ok(trigger);
+    assert.equal(trigger.eventNames.includes("slack.message"), false);
+    assert.equal(
+      github.outputs.some((output) => output.type === "slack.react"),
+      false,
+    );
+  });
+
   it("exposes and delivers GitHub replies through the hosted provider registration", async () => {
     const comments: unknown[] = [];
     const runtime = new DynamicProviderRuntime({

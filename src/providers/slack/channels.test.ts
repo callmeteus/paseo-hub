@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "vitest";
-import { SlackChannelListError, listSlackMemberChannels } from "./channels.js";
+import {
+  SlackChannelListError,
+  listSlackMemberChannels,
+  resolveSlackChannel,
+  selectSlackChannels,
+} from "./channels.js";
 
 describe("Slack channel list", () => {
   it("follows the cursor and returns named channels sorted by name", async () => {
@@ -56,6 +61,27 @@ describe("Slack channel list", () => {
         return true;
       },
     );
+  });
+
+  it("matches a channel name without the hash and prefers an exact name", () => {
+    const channels = [
+      { id: "C1", name: "tecnologia-triagem", isPrivate: false },
+      { id: "C2", name: "tecnologia-triagem-teste", isPrivate: false },
+      { id: "C3", name: "general", isPrivate: true },
+    ];
+
+    assert.deepEqual(selectSlackChannels(channels, "#Tecnologia-Triagem-Teste"), [channels[1]]);
+    assert.deepEqual(
+      selectSlackChannels(channels, "triagem").map((channel) => channel.id),
+      ["C1", "C2"],
+    );
+    assert.deepEqual(resolveSlackChannel(channels, "C2"), {
+      status: "resolved",
+      channel: channels[1],
+    });
+    assert.equal(resolveSlackChannel(channels, "missing").status, "missing");
+    assert.equal(resolveSlackChannel(channels, "#").status, "missing");
+    assert.equal(resolveSlackChannel(channels, "triagem").status, "ambiguous");
   });
 
   it("throws when Slack does not return a conversations payload", async () => {

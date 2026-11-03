@@ -31,7 +31,7 @@ const form: TriggerFormValue = {
 };
 
 describe("automation templates", () => {
-  it("grants slack.reply when the trigger is a Slack message", () => {
+  it("grants slack.reply and slack.react when the trigger is a Slack message", () => {
     const next = applyAutomationTemplate(form, "slack-message");
     const compiled = compileTriggerDocument(`
 name: ${next.name}
@@ -55,7 +55,34 @@ run:
     assert.equal(compiled.events[0]?.on, "slack.message");
     assert.deepEqual(compiled.events[0]?.steps[0]?.allowOutputs, [
       { type: "slack.reply", required: false },
+      { type: "slack.react", required: false },
     ]);
+  });
+
+  it("rejects a preset reactions block", () => {
+    assert.throws(
+      () =>
+        compileTriggerDocument(`
+name: slack-react
+enabled: true
+on:
+  slack.message:
+    connection: acme
+    filters:
+      from_users: ["*"]
+    reactions:
+      looking: eyes
+run:
+  target:
+    daemon: office
+    cwd: /workspace
+  agent:
+    provider: opencode
+    mode: default
+  prompt: Read the channel.
+`),
+      /reactions/u,
+    );
   });
 
   it("keeps a webhook secret on a hub-origin event", () => {

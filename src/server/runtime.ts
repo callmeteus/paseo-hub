@@ -121,6 +121,8 @@ export interface ApplicationRuntime {
   providerRequest(name: string, request: Request): Promise<Response>;
   connectionStatus(request: Request): Promise<Response>;
   connectionAction(request: Request, provider: string, action: string): Promise<Response>;
+  /** The callback parked for this session, or `{ path: null }` when nothing is waiting. */
+  connectionHandoff(request: Request): Promise<Response>;
   stop(): Promise<void>;
 }
 
@@ -214,10 +216,12 @@ export async function handleConnections(
     | "slackCallback"
     | "linearStart"
     | "linearDisconnect"
-    | "linearCallback",
+    | "linearCallback"
+    | "handoff",
 ): Promise<Response> {
   const runtime = await getApplication();
   if (operation === "status") return runtime.connectionStatus(request);
+  if (operation === "handoff") return runtime.connectionHandoff(request);
   const action = CONNECTION_ACTIONS[operation];
   return runtime.connectionAction(request, action.provider, action.name);
 }

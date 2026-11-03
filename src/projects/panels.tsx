@@ -23,6 +23,7 @@ import { StatusPill, statusLabel } from "../components/app/status-pill.js";
 import { SummaryPanel, type SummaryRow } from "../components/app/summary-panel.js";
 import { TwoLine } from "../components/app/two-line.js";
 import { ProviderGlyph } from "../connections/provider-glyph.js";
+import { armConnectionHandoff } from "../connections/handoff-watch.js";
 import { useConnectionReturn } from "../connections/result.js";
 import { connectionReturnCopy, type ConnectionReturnCopy } from "../connections/result-contract.js";
 import { Button } from "../components/ui/button.js";
@@ -112,7 +113,11 @@ export function OrganizationConnectionsPanel() {
       { data: { ...scope, provider } },
       {
         onSuccess: (response) => {
-          if (response.status === "ok") window.location.assign(response.data.url);
+          if (response.status !== "ok") {
+            return;
+          }
+          armConnectionHandoff();
+          window.location.assign(response.data.url);
         },
       },
     );

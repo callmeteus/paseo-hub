@@ -143,6 +143,97 @@ export async function listSlackMemberChannels(
 }
 
 /**
+ * Keeps channels whose name or id matches a picker query.
+ *
+ * An empty query returns every channel. A leading # is ignored. An exact name or id wins over a substring.
+ *
+ * @param channels - Channels the bot can see
+ * @param query - Name, #name, or channel id. Undefined returns the full list
+ * @returns Matching channels, still sorted by name
+ */
+export function selectSlackChannels(
+  channels: readonly SlackChannelChoice[],
+  query: string | undefined,
+): SlackChannelChoice[] {
+  const normalized = normalizeChannelQuery(query);
+
+  if (normalized === undefined) {
+    return [...channels];
+  }
+
+  const trimmed = query?.trim() ?? "";
+  const exact = channels.filter((channel) => {
+    if (channel.id === trimmed || channel.id.toLowerCase() === normalized) {
+      return true;
+    }
+
+    return channel.name.toLowerCase() === normalized;
+  });
+
+  if (exact.length > 0) {
+    return exact;
+  }
+
+  return channels.filter((channel) => channel.name.toLowerCase().includes(normalized));
+}
+
+/**
+ * Resolves one channel from a name or id.
+ *
+ * @param channels - Channels the bot can see
+ * @param channel - Name, #name, or channel id
+ * @returns The only match, or why it could not be chosen
+ */
+export function resolveSlackChannel(
+  channels: readonly SlackChannelChoice[],
+  channel: string,
+):
+  | { status: "resolved"; channel: SlackChannelChoice }
+  | { status: "missing" }
+  | { status: "ambiguous"; channels: SlackChannelChoice[] } {
+  const normalized = normalizeChannelQuery(channel);
+
+  if (normalized === undefined) {
+    return { status: "missing" };
+  }
+
+  const matches = selectSlackChannels(channels, channel);
+  const first = matches[0];
+
+  if (first === undefined) {
+    return { status: "missing" };
+  }
+
+  if (matches.length > 1) {
+    return { status: "ambiguous", channels: matches };
+  }
+
+  return { status: "resolved", channel: first };
+}
+
+/**
+ * Strips one leading # and ignores a blank query.
+ *
+ * @param query - Raw channel text
+ * @returns Lowercase name, or undefined when there is nothing to match
+ */
+function normalizeChannelQuery(query: string | undefined): string | undefined {
+  if (query === undefined) {
+    return undefined;
+  }
+
+  const trimmed = query.trim();
+  const withoutHash = trimmed.startsWith("#") ? trimmed.slice(1).trim() : trimmed;
+  const normalized = withoutHash.toLowerCase();
+
+  if (normalized.length === 0) {
+    return undefined;
+  }
+
+  return normalized;
+}
+
+/**
  * Parses one `users.conversations` page.
  *
  * @param response - A successful HTTP response whose body should be Slack's JSON

@@ -70,4 +70,70 @@ describe("normalizeSlackEvent", () => {
 
     assert.equal(event?.type, "mention");
   });
+
+  it("reads every forwarded layer and a file that arrived inside the forward", () => {
+    const event = normalizeSlackEvent({
+      ...envelope,
+      event: {
+        type: "message",
+        user: "U1",
+        channel: "C1",
+        text: "",
+        ts: "1700000000.000003",
+        event_ts: "1700000000.000003",
+        channel_type: "channel",
+        attachments: [
+          {
+            is_share: true,
+            is_msg_unfurl: true,
+            author_name: "João",
+            channel_id: "C0BA6DKUQJJ",
+            ts: "1700000000.000010",
+            text: "repassa",
+            attachments: [
+              {
+                is_share: true,
+                author_name: "Maria",
+                channel_id: "C09QAPR0VT7",
+                ts: "1700000000.000011",
+                text: "o problema",
+                files: [{ id: "F1", name: "nota.png", mimetype: "image/png", size: 10 }],
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    assert.equal(
+      event?.content,
+      "Encaminhada de João:\nrepassa\nEncaminhada de Maria:\no problema",
+    );
+    assert.deepEqual(event?.attachments, [
+      { id: "F1", filename: "nota.png", contentType: "image/png", size: 10 },
+    ]);
+    assert.equal(event?.lead, "");
+    assert.deepEqual(event?.forwards, [
+      { channelId: "C0BA6DKUQJJ", messageTs: "1700000000.000010" },
+    ]);
+  });
+
+  it("ignores a link preview that is not a forwarded message", () => {
+    const event = normalizeSlackEvent({
+      ...envelope,
+      event: {
+        type: "message",
+        user: "U1",
+        channel: "C1",
+        text: "",
+        ts: "1700000000.000004",
+        event_ts: "1700000000.000004",
+        channel_type: "channel",
+        attachments: [{ text: "preview de um site", fallback: "preview" }],
+      },
+    });
+
+    assert.equal(event?.content, "");
+    assert.deepEqual(event?.attachments, []);
+  });
 });
