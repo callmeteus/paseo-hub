@@ -134,6 +134,7 @@ export class DaemonAgents implements AgentConnection {
         env: options.env,
         worktree: options.worktree,
         background: options.background,
+        ...(options.idleTimeoutMs === undefined ? {} : { idleTimeoutMs: options.idleTimeoutMs }),
       },
       timeoutMs,
     );

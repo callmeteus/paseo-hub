@@ -77,6 +77,22 @@ test("ordinary creation keeps prompt delivery separate from creation and preserv
     messageId: "stable-message-key",
     text: prompt,
   });
+  expect(requests[1]).not.toHaveProperty("idleTimeoutMs");
+});
+
+test("creation carries the automation idle timeout and the prompt does not", async () => {
+  const requests: Record<string, unknown>[] = [];
+  const agents = connect(requests);
+  const created = await agents.create("stable-creation-key", {
+    ...options,
+    idleTimeoutMs: 3_600_000,
+  });
+  await agents.send(created.id, "stable-message-key", prompt);
+  expect(requests[0]).toMatchObject({
+    type: "create_agent_request",
+    idleTimeoutMs: 3_600_000,
+  });
+  expect(requests[1]).not.toHaveProperty("idleTimeoutMs");
 });
 
 test("a titled creation names the agent and then the workspace the daemon created for it", async () => {

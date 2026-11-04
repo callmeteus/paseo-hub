@@ -122,6 +122,7 @@ const ExecutionSessionRequestSchema = z.object({
       env: z.record(z.string(), z.string()).optional(),
       worktree: z.unknown().optional(),
       background: z.boolean().optional(),
+      idleTimeoutMs: z.number().int().positive().optional(),
     }),
     z.object({
       type: z.literal("fetch_agent_request"),

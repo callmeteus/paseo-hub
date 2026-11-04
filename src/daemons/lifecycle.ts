@@ -1974,6 +1974,7 @@ async function buildCreateAgentOptions(
     // Nobody is at the keyboard. Auto-accept approves the ACP prompt once.
     // A question with several answers still waits.
     featureValues: { auto_accept: true },
+    ...(intent.idleTimeoutMs === undefined ? {} : { idleTimeoutMs: intent.idleTimeoutMs }),
     ...(intent.environment.worktree === undefined
       ? {}
       : {

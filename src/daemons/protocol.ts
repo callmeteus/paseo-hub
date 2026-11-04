@@ -21,6 +21,11 @@ export interface DaemonCreateAgentOptions {
   /** Provider feature values, such as ACP auto-accept for an unattended run. */
   featureValues?: Readonly<Record<string, JsonValue>>;
   cwd: string;
+  /**
+   * Silence budget from the automation `idle_timeout`. It is stored on the agent
+   * at creation. Prompts do not carry it.
+   */
+  idleTimeoutMs?: number;
   env: Record<string, string>;
   mcpServers?: Record<string, McpHttpServerConfig>;
   worktree?: WorktreeTarget;
