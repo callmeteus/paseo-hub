@@ -68,6 +68,7 @@ const JsonAgentSchema = z
     model: z.string().min(1).optional(),
     mode: z.string().min(1).optional(),
     thinkingOptionId: z.string().min(1).optional(),
+    features: z.record(z.string().min(1), z.string().min(1)).optional(),
     options: z.record(z.string(), z.custom<JsonValue>(isJsonValue)).optional(),
   })
   .strict();

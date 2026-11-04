@@ -70,6 +70,8 @@ export const TriggerAgentSchema = z
     model: z.string().min(1).optional(),
     mode: z.string().min(1).optional(),
     thinkingOptionId: z.string().min(1).optional(),
+    // ACP feature values. Cursor Fast is the string "false" or "true".
+    features: z.record(z.string().min(1), z.string().min(1)).optional(),
     options: z.record(z.string(), z.custom<JsonValue>()).optional(),
   })
   .strict();

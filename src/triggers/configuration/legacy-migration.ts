@@ -195,6 +195,7 @@ function authoredAgent(agent: CompiledAgentSelection): TriggerDocument["run"]["a
 function cloneAgent(agent: CompiledAgent): CompiledAgent {
   return {
     ...agent,
+    ...(agent.features === undefined ? {} : { features: { ...agent.features } }),
     ...(agent.options === undefined ? {} : { options: structuredClone(agent.options) }),
   };
 }

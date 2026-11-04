@@ -297,3 +297,67 @@ it("applies the continuation default when reading old trigger revisions without 
   });
   assert.deepEqual(migratedLegacy, legacy);
 });
+
+it("keeps a Cursor model, thinking option, and Fast feature through compile", () => {
+  const yaml = `
+name: model-pin
+enabled: true
+on:
+  manual.run: {}
+run:
+  target:
+    daemon: office
+    cwd: /workspace
+  agent:
+    provider: cursor
+    model: grok-4.7
+    mode: agent
+    thinkingOptionId: high
+    features:
+      fast: "false"
+  prompt: Reply.
+`;
+  const parsed = parseTriggerDocument(yaml);
+
+  // A single agent, not a named choice
+  if ("choices" in parsed.run.agent) {
+    assert.fail("expected one agent");
+  }
+
+  assert.equal(parsed.run.agent.model, "grok-4.7");
+  assert.equal(parsed.run.agent.thinkingOptionId, "high");
+  assert.deepEqual(parsed.run.agent.features, { fast: "false" });
+
+  const compiled = compileTriggerDocument(yaml);
+  const agent = compiled.events[0]?.steps[0]?.agent;
+
+  // Compile keeps the same agent fields
+  if (agent === undefined || "selector" in agent) {
+    assert.fail("expected a compiled agent");
+  }
+
+  assert.equal(agent.model, "grok-4.7");
+  assert.equal(agent.thinkingOptionId, "high");
+  assert.deepEqual(agent.features, { fast: "false" });
+});
+
+it("rejects a boolean Fast feature", () => {
+  const yaml = `
+name: model-pin
+enabled: true
+on:
+  manual.run: {}
+run:
+  target:
+    daemon: office
+    cwd: /workspace
+  agent:
+    provider: cursor
+    mode: agent
+    features:
+      fast: false
+  prompt: Reply.
+`;
+
+  assert.throws(() => parseTriggerDocument(yaml), TriggerDocumentError);
+});

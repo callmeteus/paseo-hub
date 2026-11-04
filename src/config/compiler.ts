@@ -53,6 +53,8 @@ const AgentSchema = z
     model: z.string().min(1).optional(),
     mode: z.string().min(1).optional(),
     thinkingOptionId: z.string().min(1).optional(),
+    // ACP feature values. Cursor Fast is the string "false" or "true".
+    features: z.record(z.string().min(1), z.string().min(1)).optional(),
     options: z.record(z.string(), z.custom<JsonValue>(isJsonValue)).optional(),
   })
   .strict();
@@ -229,6 +231,7 @@ export interface CompiledAgent {
   model?: string | undefined;
   mode?: string | undefined;
   thinkingOptionId?: string | undefined;
+  features?: Readonly<Record<string, string>> | undefined;
   options?: Readonly<Record<string, JsonValue>> | undefined;
 }
 
@@ -341,6 +344,7 @@ const CompiledAgentSchema: z.ZodType<CompiledAgent> = z
     model: z.string().min(1).optional(),
     mode: z.string().min(1).optional(),
     thinkingOptionId: z.string().min(1).optional(),
+    features: z.record(z.string().min(1), z.string().min(1)).optional(),
     options: z.record(z.string(), z.custom<JsonValue>(isJsonValue)).optional(),
   })
   .strict();
@@ -677,6 +681,7 @@ function compileAgentSelection(
 function cloneAgent(agent: CompiledAgent): CompiledAgent {
   return {
     ...agent,
+    ...(agent.features === undefined ? {} : { features: { ...agent.features } }),
     ...(agent.options === undefined ? {} : { options: cloneJsonObject(agent.options) }),
   };
 }

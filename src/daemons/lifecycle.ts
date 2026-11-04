@@ -28,7 +28,7 @@ import {
 import { logger as defaultLogger } from "../logger.js";
 import { MAX_EXPLICIT_AGENT_TITLE_CHARS } from "@getpaseo/protocol/agent-title-limits";
 import { reportFailure } from "../failures/index.js";
-import type { TriggerProvider } from "../triggers/index.js";
+import { executionFeatureValues, type TriggerProvider } from "../triggers/index.js";
 import type { ExecutionAuthority } from "../execution-authority/index.js";
 import { OutputExecutorRegistry } from "../execution-capabilities/outputs.js";
 import { executionToolPolicy } from "../execution-capabilities/tool-policy.js";
@@ -1973,7 +1973,8 @@ async function buildCreateAgentOptions(
     }),
     // Nobody is at the keyboard. Auto-accept approves the ACP prompt once.
     // A question with several answers still waits.
-    featureValues: { auto_accept: true },
+    // Cursor Fast stays off unless the workflow sets features.fast.
+    featureValues: executionFeatureValues(intent.agent),
     ...(intent.idleTimeoutMs === undefined ? {} : { idleTimeoutMs: intent.idleTimeoutMs }),
     ...(intent.environment.worktree === undefined
       ? {}

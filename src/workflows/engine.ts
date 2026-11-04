@@ -35,7 +35,11 @@ import type {
 } from "../triggers/index.js";
 import type { ProviderEventDropReasonCode } from "../triggers/drop-reason.js";
 import { logProviderEventRouting } from "../triggers/audit.js";
-import { asTriggerContextValue, isAcceptedTriggerProviderMatch } from "../triggers/index.js";
+import {
+  asTriggerContextValue,
+  continuationAgentIdentity,
+  isAcceptedTriggerProviderMatch,
+} from "../triggers/index.js";
 import {
   ExpressionEvaluationError,
   evaluateExpression,
@@ -999,7 +1003,9 @@ function buildStepIntent(
               renderExpressionTemplate(value, context),
             ),
             compatibility: {
-              agent,
+              // Model, thinking, and Fast are chosen per run. They stay off the
+              // fingerprint so an existing thread is not abandoned when they change.
+              agent: continuationAgentIdentity(agent),
               target: environment,
               // Preserve existing visible-session fingerprints when using the default.
               ...(step.background ? { background: true } : {}),

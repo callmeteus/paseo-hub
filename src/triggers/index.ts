@@ -37,6 +37,7 @@ export interface TriggerAgentConfig {
   mode?: string | undefined;
   model?: string | undefined;
   thinkingOptionId?: string | undefined;
+  features?: Readonly<Record<string, string>> | undefined;
   options?: Readonly<Record<string, JsonValue>> | undefined;
 }
 
@@ -46,7 +47,43 @@ export function cleanTriggerAgent(agent: TriggerAgentConfig): TriggerAgentConfig
     ...(agent.mode === undefined ? {} : { mode: agent.mode }),
     ...(agent.model === undefined ? {} : { model: agent.model }),
     ...(agent.thinkingOptionId === undefined ? {} : { thinkingOptionId: agent.thinkingOptionId }),
+    ...(agent.features === undefined ? {} : { features: { ...agent.features } }),
     ...(agent.options === undefined ? {} : { options: structuredClone(agent.options) }),
+  };
+}
+
+/**
+ * Feature values sent when a workflow launches an agent.
+ * Cursor Fast defaults to off. An authored `features.fast` replaces that default.
+ * `auto_accept` stays on because nobody is at the keyboard.
+ *
+ * @param agent - Agent selected for the run
+ * @returns Feature map for the Paseo create request
+ */
+export function executionFeatureValues(
+  agent: TriggerAgentConfig,
+): Readonly<Record<string, JsonValue>> {
+  const authored = agent.features ?? {};
+
+  return {
+    ...(agent.provider === "cursor" && authored["fast"] === undefined ? { fast: "false" } : {}),
+    ...authored,
+    auto_accept: true,
+  };
+}
+
+/**
+ * Agent fields that identify a continued thread.
+ * Model, thinking, and feature values can change without abandoning that thread.
+ *
+ * @param agent - Agent selected for the run
+ * @returns The fields a continuation fingerprint keeps
+ */
+export function continuationAgentIdentity(agent: TriggerAgentConfig): TriggerAgentConfig {
+  return {
+    provider: agent.provider,
+    ...(agent.mode === undefined ? {} : { mode: agent.mode }),
+    ...(agent.options === undefined ? {} : { options: agent.options }),
   };
 }
 
