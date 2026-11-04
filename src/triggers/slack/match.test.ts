@@ -113,7 +113,65 @@ describe("Slack trigger matching", () => {
     person.content = "hello";
     assert.equal(matchSlackTriggers(closed, person, "UBOT").length, 1);
   });
+
+  it("opens a monitoring alert only for CPU, RAM, or an attack symptom", () => {
+    const config = monitoringConfig();
+    const open = (content: string, authorId = "U09FFH54LM9") => {
+      const event = mention({ authorId });
+      event.type = "message";
+      event.content = content;
+      event.lead = content;
+      event.fromBot = authorId === "U09FFH54LM9";
+      return matchSlackTriggers(config, event, "UBOT").length;
+    };
+
+    assert.equal(open(":rotating_light: ALERTA: [KWA] RDS PI · RAM OS · kwai (99.9% > 85)"), 1);
+    assert.equal(open(":rotating_light: ALERTA: [LM/BAR] CPU do Redis acima de 70%"), 1);
+    assert.equal(open(":rotating_light: ALERTA: Memória do Redis acima de 90%"), 1);
+    assert.equal(open(":rotating_light: ALERTA: [CF] Cloudflare registrou eventos de firewall"), 1);
+    assert.equal(open(":white_check_mark: RESOLVIDO: [KWA] RDS PI · RAM OS · kwai"), 0);
+    assert.equal(open(":rotating_light: ALERTA: [VVS] RDS PI · Disk Write IOPS · vivasorte"), 0);
+    assert.equal(open(":rotating_light: ALERTA: DRAM do host"), 0);
+    assert.equal(open(":rotating_light: ALERTA: [KWA] RDS PI · RAM OS · kwai", "U9"), 0);
+
+    const own = mention({ authorId: "UBOT" });
+    own.type = "message";
+    own.content = ":rotating_light: ALERTA: [KWA] RDS PI · RAM OS · kwai";
+    own.lead = own.content;
+    own.fromBot = true;
+    assert.equal(matchSlackTriggers(config, own, "UBOT").length, 0);
+  });
 });
+
+function monitoringConfig() {
+  return compileHubConfig({
+    environments: [{ name: "runner", kind: "daemon", daemon: "runner", cwd: "/repo" }],
+    triggers: [
+      {
+        name: "diagnostico-monitoramento",
+        on: "slack.message",
+        max_runtime: "2h",
+        filters: {
+          channels: ["C1"],
+          from_users: ["U09FFH54LM9"],
+          include_bots: true,
+          contains_all: ["ALERTA:"],
+          contains_any: ["CPU", "RAM", "Memória", "firewall", "WAF", "ataque", "DDoS", "flood"],
+        },
+        steps: [
+          {
+            id: "run",
+            environment: "runner",
+            max_runtime: "1h",
+            idle_timeout: "5m",
+            agent: { provider: "opencode", mode: "default" },
+            prompt: [{ text: "Diagnose the alert" }],
+          },
+        ],
+      },
+    ],
+  });
+}
 
 function channelConfig(includeBots: boolean) {
   return compileHubConfig({

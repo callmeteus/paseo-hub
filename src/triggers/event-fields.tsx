@@ -1,8 +1,10 @@
 /* oxlint-disable eslint-plugin-react-perf/jsx-no-new-function-as-prop -- event controls bind their own configuration */
+import { CheckboxField } from "../components/app/checkbox-field.js";
 import { FormField } from "../components/app/form-field.js";
 import { CopyButton } from "../components/app/copy-field.js";
 import { eventDefinition, type QualifierKey } from "./configuration/events.js";
-import type { TriggerFieldErrors, TriggerFormValue } from "./configuration/editor.js";
+import { type TriggerFieldErrors, type TriggerFormValue } from "./configuration/editor.js";
+import { selectedTriggerEvents, setEventTerms } from "./configuration/form-events.js";
 import { ScheduleFields } from "./schedule/fields.js";
 import { SlackChannelPicker } from "./slack/channel-picker.js";
 
@@ -20,6 +22,8 @@ export function EventFields({
 }) {
   const updateQualifier = (key: QualifierKey, next: string) =>
     onChange({ ...value, qualifiers: { ...value.qualifiers, [key]: next } });
+  const events = selectedTriggerEvents(value);
+  const slack = events.some((event) => eventDefinition(event).provider === "slack");
   return (
     <>
       <ScheduleFields
@@ -28,7 +32,7 @@ export function EventFields({
         error={errors.recurrence}
         onChange={(recurrence) => onChange({ ...value, recurrence })}
       />
-      {value.event === "slack.message" ? (
+      {slack ? (
         <FormField
           id="trigger-channels"
           label="Channels"
@@ -45,6 +49,16 @@ export function EventFields({
           )}
         </FormField>
       ) : null}
+      {events.includes("slack.message") ? (
+        <CheckboxField
+          id="trigger-include-bots"
+          label="Include bot messages"
+          description="Run when another app posts in the channel."
+          checked={value.includeBots}
+          onChange={(includeBots) => onChange({ ...value, includeBots })}
+        />
+      ) : null}
+      <MessageTextFields value={value} onChange={onChange} />
       {value.event === "webhook.received" ? <WebhookFields value={value} errors={errors} /> : null}
       {eventDefinition(value.event).provider === "slack" ? (
         <p className="text-sm text-muted-foreground">Send to Slack is on.</p>
@@ -68,6 +82,66 @@ export function EventFields({
       })}
     </>
   );
+}
+
+/**
+ * Terms a Slack event looks for in the message. Hidden when none of the selected events use them,
+ * so a trigger that matches every message stays as it was.
+ */
+function MessageTextFields({
+  value,
+  onChange,
+}: {
+  value: TriggerFormValue;
+  onChange: (value: TriggerFormValue) => void;
+}) {
+  const events = selectedTriggerEvents(value).filter(
+    (event) => eventDefinition(event).provider === "slack",
+  );
+  const visible = events.some((event) => hasTerms(value, event));
+  if (!visible) return null;
+  return (
+    <div className="grid gap-4">
+      {events.map((event) => (
+        <div key={event} className="grid gap-4">
+          {events.length > 1 ? (
+            <p className="text-sm text-muted-foreground">{eventDefinition(event).label}</p>
+          ) : null}
+          <FormField
+            id={`trigger-contains-all-${event}`}
+            label="Must contain all"
+            description="Comma-separated. Every term has to appear."
+            kind="text"
+            name={`contains-all-${event}`}
+            value={value.containsAll?.[event] ?? ""}
+            onChange={(terms) => onChange(setEventTerms(value, event, "containsAll", terms))}
+          />
+          <FormField
+            id={`trigger-contains-any-${event}`}
+            label="Must contain one of"
+            description="Comma-separated. One term is enough."
+            kind="text"
+            name={`contains-any-${event}`}
+            value={value.containsAny?.[event] ?? ""}
+            onChange={(terms) => onChange(setEventTerms(value, event, "containsAny", terms))}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Whether this event already filters on message text.
+ *
+ * @param value - Current form
+ * @param event - Event to inspect
+ * @returns True when either term list has text
+ */
+function hasTerms(value: TriggerFormValue, event: TriggerFormValue["event"]): boolean {
+  const required = value.containsAll?.[event]?.trim() ?? "";
+  const accepted = value.containsAny?.[event]?.trim() ?? "";
+  return required.length > 0 || accepted.length > 0;
 }
 
 function WebhookFields({ value, errors }: { value: TriggerFormValue; errors: TriggerFieldErrors }) {

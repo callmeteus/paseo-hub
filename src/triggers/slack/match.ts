@@ -56,6 +56,23 @@ function matchesFilters(
   if (workspace !== undefined && workspace !== event.teamId) return false;
   const channels = readStrings(filters, "channels");
   if (channels !== undefined && !channels.includes(event.channelId)) return false;
+  return matchesMessageBody(event, filters, botUserId);
+}
+
+/**
+ * Term lists scan the raw message. A prefix marker, when present, still has to start the body.
+ *
+ * @param event - Normalized Slack event
+ * @param filters - Trigger filters that already passed the audience checks
+ * @param botUserId - Hub bot user id, used to strip the mention
+ * @returns Whether the message text satisfies this trigger
+ */
+function matchesMessageBody(
+  event: NormalizedSlackMentionEvent,
+  filters: TriggerFilter,
+  botUserId: string,
+): boolean {
+  if (!matchesTextTerms(event.content, filters)) return false;
   const pattern = readString(filters, "pattern") ?? readString(filters, "contains");
   if (pattern === undefined || pattern.length === 0) return true;
   const body = readSlackPromptBody(event, botUserId);
@@ -90,6 +107,20 @@ export function readSlackInvocationParserMessage(
     : body;
 }
 
+// contains_all and contains_any scan the message body. contains and pattern stay a prefix.
+function matchesTextTerms(text: string, filters: TriggerFilter): boolean {
+  const required = readStrings(filters, "contains_all");
+  if (required !== undefined && !required.every((term) => termAppears(text, term))) return false;
+  const accepted = readStrings(filters, "contains_any");
+  if (accepted !== undefined && !accepted.some((term) => termAppears(text, term))) return false;
+  return true;
+}
+
+function termAppears(text: string, term: string): boolean {
+  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "iu").test(text);
+}
+
 function readPatternMarker(filters: TriggerFilter): string | undefined {
   return readString(filters, "pattern") ?? readString(filters, "contains");
 }
@@ -102,7 +133,10 @@ function readString(
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-function readStrings(filters: TriggerFilter, key: "channels"): string[] | undefined {
+function readStrings(
+  filters: TriggerFilter,
+  key: "channels" | "contains_all" | "contains_any",
+): string[] | undefined {
   const value = filters[key];
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string" && item.length > 0)

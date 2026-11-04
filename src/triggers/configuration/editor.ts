@@ -13,16 +13,41 @@ import {
   eventDefinition,
   isEditorEvent,
   type EditorEvent,
-  type QualifierValues,
   type QualifierKey,
+  type QualifierValues,
 } from "./events.js";
+import {
+  blankToUndefined,
+  clearEmptyMap,
+  commaSeparated,
+  cursorFastValue,
+  eventAudience,
+  formEventDefinition,
+  projectEditorEvents,
+  type ProjectedEvents,
+  readQualifiers,
+  selectedTriggerEvents,
+  setIfChanged,
+  setOptional,
+  writeEvent,
+} from "./form-events.js";
 
 export interface TriggerFormValue {
   name: string;
   enabled: boolean;
   event: EditorEvent;
+  /** Every event this trigger runs for. The first one is `event`. */
+  events: EditorEvent[];
+  /** Slack messages from other apps. Written on `slack.message` only. */
+  includeBots: boolean;
   connection: string;
   allowedUsers: string;
+  /** People each event listens to. The primary event also uses `allowedUsers`. */
+  eventUsers?: Partial<Record<EditorEvent, string>>;
+  /** Comma-separated substrings that must all appear in that event's text. */
+  containsAll?: Partial<Record<EditorEvent, string>>;
+  /** Comma-separated substrings of which one must appear in that event's text. */
+  containsAny?: Partial<Record<EditorEvent, string>>;
   qualifiers: QualifierValues;
   recurrence?: Recurrence;
   daemon: string;
@@ -30,6 +55,8 @@ export interface TriggerFormValue {
   agent: string;
   mode: string;
   thinkingOptionId: string;
+  /** Cursor Fast. "false" and "true" are the feature values; empty means the workflow does not set it. */
+  cursorFast: string;
   providerOptions: string;
   continuationMode: string;
   continuationKey: string;
@@ -55,34 +82,44 @@ export function projectTriggerForm(yaml: string): TriggerFormProjection {
   const parsed = parseEditorDocument(yaml);
   if (!parsed.success) return { status: "yaml_only", reason: parsed.error };
   const trigger = parsed.data;
-  const events = Object.entries(trigger.on);
-  if (events.length !== 1) {
-    return { status: "yaml_only", reason: "The form supports exactly one event." };
-  }
-  const [event, definition] = events[0]!;
-  if (!isEditorEvent(event)) {
-    return { status: "yaml_only", reason: `The form does not support the ${event} event.` };
-  }
+  const projected = projectEditorEvents(trigger);
+  if (projected.status !== "editable") return projected;
   if ("choices" in trigger.run.agent) {
     return { status: "yaml_only", reason: "Agent choices can only be edited in YAML." };
   }
   const agent = trigger.run.agent;
+  const fast = agent.features?.["fast"];
+  if (fast !== undefined && fast !== "true" && fast !== "false") {
+    return { status: "yaml_only", reason: "The form cannot edit that Fast setting." };
+  }
   return {
     status: "editable",
-    value: toFormValue(trigger, event, definition, agent),
+    value: toFormValue(trigger, projected, agent),
   };
 }
 
 function toFormValue(
   trigger: TriggerDocument,
-  event: EditorEvent,
-  definition: TriggerDocument["on"][string],
+  projected: ProjectedEvents,
   agent: Extract<TriggerDocument["run"]["agent"], { provider: string }>,
 ): TriggerFormValue {
+  const event = projected.events[0];
+  if (event === undefined) {
+    throw new Error("The form supports at least one event.");
+  }
+  const definition = trigger.on[event];
+  if (definition === undefined) {
+    throw new Error("The form supports at least one event.");
+  }
   return {
     name: trigger.name,
     enabled: trigger.enabled,
     event,
+    events: projected.events,
+    includeBots: projected.includeBots,
+    eventUsers: projected.eventUsers,
+    containsAll: projected.containsAll,
+    containsAny: projected.containsAny,
     ...eventFormFields(event, definition),
     ...runFormFields(trigger, agent),
   };
@@ -115,6 +152,7 @@ function runFormFields(
   | "agent"
   | "mode"
   | "thinkingOptionId"
+  | "cursorFast"
   | "providerOptions"
   | "continuationMode"
   | "continuationKey"
@@ -132,6 +170,7 @@ function runFormFields(
     agent: joinAgentId(agent.provider, agent.model),
     mode: agent.mode ?? "",
     thinkingOptionId: agent.thinkingOptionId ?? "",
+    cursorFast: cursorFastValue(agent),
     providerOptions: agent.options === undefined ? "" : JSON.stringify(agent.options, null, 2),
     continuationMode: trigger.run.continuation.mode,
     continuationKey: trigger.run.continuation.mode === "key" ? trigger.run.continuation.key : "",
@@ -160,48 +199,29 @@ export function patchTriggerYaml(yaml: string, value: TriggerFormValue): string 
   setIfChanged(document, ["name"], value.name);
   setIfChanged(document, ["enabled"], value.enabled);
 
-  const previousEvent = projection.value.event;
-  if (previousEvent !== value.event) {
-    const definition = document.getIn(["on", previousEvent], true);
-    document.deleteIn(["on", previousEvent]);
-    document.setIn(["on", value.event], definition ?? {});
+  const previousEvents = selectedTriggerEvents(projection.value);
+  const nextEvents = selectedTriggerEvents(value);
+  // A one-for-one change keeps the old node, including filters the form does not draw.
+  const [previousOnly] = previousEvents;
+  const [nextOnly] = nextEvents;
+  if (
+    previousEvents.length === 1 &&
+    nextEvents.length === 1 &&
+    previousOnly !== undefined &&
+    nextOnly !== undefined &&
+    previousOnly !== nextOnly
+  ) {
+    const definition = document.getIn(["on", previousOnly], true);
+    document.deleteIn(["on", previousOnly]);
+    document.setIn(["on", nextOnly], definition ?? {});
   }
-  if (eventDefinition(value.event).origin === "hub") {
-    deleteIfPresent(document, ["on", value.event, "connection"]);
-    deleteIfPresent(document, ["on", value.event, "filters", "from_users"]);
-  } else {
-    setIfChanged(document, ["on", value.event, "connection"], value.connection);
-    setIfChanged(document, ["on", value.event, "filters", "from_users"], users(value.allowedUsers));
+  for (const event of previousEvents) {
+    if (!nextEvents.includes(event)) document.deleteIn(["on", event]);
   }
-
-  setOptional(
-    document,
-    ["on", value.event, "recurrence"],
-    value.event === "schedule.tick" ? (value.recurrence ?? DEFAULT_RECURRENCE) : undefined,
+  const retiredQualifiers = previousEvents.flatMap((event) =>
+    eventDefinition(event).qualifiers.map((qualifier) => qualifier.key),
   );
-  if (value.event === "schedule.tick") deleteIfPresent(document, ["on", value.event, "filters"]);
-  if (value.event === "slack.message") {
-    const channels = commaSeparated(value.channels);
-    setOptional(
-      document,
-      ["on", value.event, "filters", "channels"],
-      channels.length === 0 ? undefined : channels,
-    );
-  }
-  setOptional(
-    document,
-    ["on", value.event, "filters", "webhook_secret"],
-    value.event === "webhook.received" ? value.webhookSecret.trim() : undefined,
-  );
-  const qualifiers = authoredQualifiers(value);
-  const ownedKeys = new Set(
-    [...eventDefinition(previousEvent).qualifiers, ...eventDefinition(value.event).qualifiers].map(
-      (qualifier) => qualifier.key,
-    ),
-  );
-  for (const key of ownedKeys) {
-    setOptional(document, ["on", value.event, "filters", key], qualifiers[key]);
-  }
+  for (const event of nextEvents) writeEvent(document, event, value, retiredQualifiers);
 
   setIfChanged(document, ["run", "target", "daemon"], value.daemon);
   setIfChanged(document, ["run", "target", "cwd"], value.cwd);
@@ -214,6 +234,12 @@ export function patchTriggerYaml(yaml: string, value: TriggerFormValue): string 
     ["run", "agent", "thinkingOptionId"],
     blankToUndefined(value.thinkingOptionId),
   );
+  setOptional(
+    document,
+    ["run", "agent", "features", "fast"],
+    agent.provider === "cursor" ? blankToUndefined(value.cursorFast) : undefined,
+  );
+  clearEmptyMap(document, ["run", "agent", "features"]);
   setOptional(document, ["run", "agent", "options"], parseProviderOptions(value.providerOptions));
   setIfChanged(document, ["run", "continuation"], formContinuation(value));
   setIfChanged(document, ["run", "max_runtime"], value.maxRuntime.trim());
@@ -261,12 +287,13 @@ export function createTriggerYaml(value: TriggerFormValue): string {
   const agent = splitAgentId(value.agent);
   const providerOptions = parseProviderOptions(value.providerOptions);
   const github = githubAuthority(value);
-  const definition = formEventDefinition(value);
   return stringify(
     {
       name: value.name,
       enabled: value.enabled,
-      on: { [value.event]: definition },
+      on: Object.fromEntries(
+        selectedTriggerEvents(value).map((event) => [event, formEventDefinition(value, event)]),
+      ),
       run: {
         target: { daemon: value.daemon, cwd: value.cwd },
         agent: {
@@ -276,6 +303,9 @@ export function createTriggerYaml(value: TriggerFormValue): string {
           ...(blankToUndefined(value.thinkingOptionId) === undefined
             ? {}
             : { thinkingOptionId: value.thinkingOptionId.trim() }),
+          ...(agent.provider === "cursor" && blankToUndefined(value.cursorFast) !== undefined
+            ? { features: { fast: value.cursorFast.trim() } }
+            : {}),
           ...(providerOptions === undefined ? {} : { options: providerOptions }),
         },
         continuation: formContinuation(value),
@@ -287,24 +317,6 @@ export function createTriggerYaml(value: TriggerFormValue): string {
     },
     { lineWidth: 0, compat: ["timestamp"] },
   );
-}
-
-function formEventDefinition(value: TriggerFormValue): TriggerDocument["on"][string] {
-  if (value.event === "schedule.tick")
-    return { recurrence: value.recurrence ?? DEFAULT_RECURRENCE };
-  if (value.event === "webhook.received") {
-    return { filters: { webhook_secret: value.webhookSecret.trim() } };
-  }
-  if (eventDefinition(value.event).origin === "hub") return {};
-  const channels = value.event === "slack.message" ? commaSeparated(value.channels) : [];
-  return {
-    connection: value.connection,
-    filters: {
-      from_users: users(value.allowedUsers),
-      ...authoredQualifiers(value),
-      ...(channels.length === 0 ? {} : { channels }),
-    },
-  };
 }
 
 function workingDirectoryErrors(value: TriggerFormValue): TriggerFieldErrors {
@@ -375,10 +387,8 @@ export function triggerFormErrors(value: TriggerFormValue): TriggerFieldErrors {
   }
   if (eventDefinition(value.event).origin === "provider") {
     if (value.connection.trim().length === 0) errors.connection = "Connection is required.";
-    if (value.allowedUsers.trim().length === 0) {
-      errors.allowedUsers = "Name at least one user ID, or let everyone trigger it.";
-    }
   }
+  Object.assign(errors, audienceErrors(value));
   for (const qualifier of eventDefinition(value.event).qualifiers) {
     const selection = value.qualifiers[qualifier.key];
     if (qualifier.required && (selection === undefined || selection.trim().length === 0)) {
@@ -402,6 +412,22 @@ export function triggerFormErrors(value: TriggerFormValue): TriggerFieldErrors {
   Object.assign(errors, continuationErrors(value));
   if (value.prompt.trim().length === 0) errors.prompt = "Instructions are required.";
   return errors;
+}
+
+/**
+ * The audience error, when any selected event listens to nobody.
+ *
+ * @param value - Current form
+ * @returns The user-id error, or an empty list
+ */
+function audienceErrors(value: TriggerFormValue): TriggerFieldErrors {
+  for (const event of selectedTriggerEvents(value)) {
+    if (eventDefinition(event).origin !== "provider") continue;
+    if (eventAudience(value, event).trim().length === 0) {
+      return { allowedUsers: "Name at least one user ID, or let everyone trigger it." };
+    }
+  }
+  return {};
 }
 
 /** The message a parse refused with, or `undefined` when it accepted the value. */
@@ -469,38 +495,8 @@ function assertDocument(document: Document): void {
   if (document.errors.length > 0) throw new Error(document.errors[0]!.message);
 }
 
-function setIfChanged(document: Document, path: readonly string[], value: unknown): void {
-  if (JSON.stringify(document.getIn(path)) !== JSON.stringify(value)) document.setIn(path, value);
-}
-
-function setOptional(document: Document, path: readonly string[], value: unknown): void {
-  if (value === undefined) deleteIfPresent(document, path);
-  else setIfChanged(document, path, value);
-}
-
-function deleteIfPresent(document: Document, path: readonly string[]): void {
-  if (document.hasIn(path)) document.deleteIn(path);
-}
-
 function sameFormValue(left: TriggerFormValue, right: TriggerFormValue): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
-}
-
-function users(value: string): string[] {
-  const values = commaSeparated(value);
-  return values.length === 0 ? ["*"] : values;
-}
-
-function commaSeparated(value: string): string[] {
-  return value
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-}
-
-function blankToUndefined(value: string): string | undefined {
-  const normalized = value.trim();
-  return normalized.length === 0 ? undefined : normalized;
 }
 
 /** Provider-bound state and qualifier compatibility belong to the form model. */
@@ -525,9 +521,15 @@ export function changeTriggerEvent(value: TriggerFormValue, event: EditorEvent):
     event === "webhook.received" && value.webhookSecret.trim().length === 0
       ? createWebhookSecret()
       : value.webhookSecret;
+  // Message text belongs to the event that moved. A different provider does not keep it.
+  const carriedTerms = sameProvider && next.provider === "slack";
   return {
     ...value,
     event,
+    events: [event],
+    eventUsers: { [event]: value.allowedUsers },
+    containsAll: carriedTerms ? { [event]: value.containsAll?.[value.event] ?? "" } : {},
+    containsAny: carriedTerms ? { [event]: value.containsAny?.[value.event] ?? "" } : {},
     qualifiers,
     connection: sameProvider ? value.connection : "",
     webhookSecret,
@@ -592,27 +594,6 @@ const AUTOMATION_TEMPLATE_PROMPTS = {
   schedule: "Run the scheduled task.\n\n${{ paseo.prompt }}",
   webhook: "Read the webhook body and do what it asks.\n\n${{ paseo.prompt }}",
 } as const satisfies Record<AutomationTemplateId, string>;
-
-function readQualifiers(
-  event: EditorEvent,
-  filters: TriggerDocument["on"][string]["filters"],
-): QualifierValues {
-  const values: QualifierValues = {};
-  for (const qualifier of eventDefinition(event).qualifiers) {
-    const value = filters?.[qualifier.key];
-    if (value !== undefined) values[qualifier.key] = value;
-  }
-  return values;
-}
-
-function authoredQualifiers(value: TriggerFormValue): QualifierValues {
-  const filters: QualifierValues = {};
-  for (const qualifier of eventDefinition(value.event).qualifiers) {
-    const selection = value.qualifiers[qualifier.key];
-    if (selection !== undefined) filters[qualifier.key] = selection.trim();
-  }
-  return filters;
-}
 
 function formContinuation(value: TriggerFormValue) {
   return ContinuationSchema.parse(

@@ -12,6 +12,7 @@ import {
   splitAgentId,
   triggerFormErrors,
 } from "./editor.js";
+import { setEventAudience, setEventTerms, toggleTriggerEvent } from "./form-events.js";
 
 import {
   GITHUB_SEMANTIC_TRIGGER_EVENT_NAMES,
@@ -136,6 +137,183 @@ describe("trigger form YAML bridge", () => {
     expect(value.run.outputs).toBeDefined();
   });
 
+  test("edits two Slack events, bot messages, and Cursor Fast in the form", () => {
+    const yaml = `
+name: pedido-deploy
+enabled: true
+on:
+  slack.message:
+    connection: slack-office
+    filters:
+      from_users:
+        - "*"
+      channels:
+        - C096XDA2478
+      include_bots: true
+  slack.mention:
+    connection: slack-office
+    filters:
+      from_users:
+        - "*"
+      channels:
+        - C096XDA2478
+run:
+  target:
+    daemon: office
+    cwd: /workspace
+  agent:
+    provider: cursor
+    mode: agent
+    model: grok-4.7
+    thinkingOptionId: high
+    features:
+      fast: "false"
+  prompt: Reply.
+  max_runtime: 2h
+  idle_timeout: 10m
+`;
+    const projection = projectTriggerForm(yaml);
+    expect(projection.status).toBe("editable");
+    if (projection.status !== "editable") return;
+    expect(projection.value.events).toEqual(["slack.message", "slack.mention"]);
+    expect(projection.value.includeBots).toBe(true);
+    expect(projection.value.agent).toBe("cursor/grok-4.7");
+    expect(projection.value.thinkingOptionId).toBe("high");
+    expect(projection.value.cursorFast).toBe("false");
+    expect(patchTriggerYaml(yaml, projection.value)).toBe(yaml);
+
+    const withoutMention = patchTriggerYaml(
+      yaml,
+      toggleTriggerEvent(projection.value, "slack.mention", false),
+    );
+    const parsed = TriggerDocumentSchema.parse(parseDocument(withoutMention).toJS());
+    expect(Object.keys(parsed.on)).toEqual(["slack.message"]);
+    expect(parsed.on["slack.message"]?.filters?.include_bots).toBe(true);
+    if ("choices" in parsed.run.agent) throw new Error("expected one agent");
+    expect(parsed.run.agent.features).toEqual({ fast: "false" });
+
+    const fast = patchTriggerYaml(yaml, { ...projection.value, cursorFast: "true" });
+    const spedUp = TriggerDocumentSchema.parse(parseDocument(fast).toJS());
+    if ("choices" in spedUp.run.agent) throw new Error("expected one agent");
+    expect(spedUp.run.agent.features).toEqual({ fast: "true" });
+    expect(spedUp.on["slack.mention"]?.filters?.channels).toEqual(["C096XDA2478"]);
+  });
+
+  test("edits events that listen to different people and match different text", () => {
+    const yaml = `
+name: diagnostico-monitoramento
+enabled: true
+on:
+  slack.message:
+    connection: slack-office
+    filters:
+      from_users:
+        - U09FFH54LM9
+      channels:
+        - C096V21TE0K
+      include_bots: true
+      contains_all:
+        - "ALERTA:"
+      contains_any:
+        - CPU
+        - RAM
+        - "Memória"
+        - firewall
+        - WAF
+        - ataque
+        - DDoS
+        - flood
+  slack.mention:
+    connection: slack-office
+    filters:
+      from_users:
+        - "*"
+      channels:
+        - C096V21TE0K
+run:
+  target:
+    daemon: office
+    cwd: /workspace
+  agent:
+    provider: cursor
+    mode: agent
+    model: grok-4.7
+    thinkingOptionId: high
+    features:
+      fast: "false"
+  prompt: Reply.
+  max_runtime: 2h
+  idle_timeout: 10m
+`;
+    const projection = projectTriggerForm(yaml);
+    expect(projection.status).toBe("editable");
+    if (projection.status !== "editable") return;
+    expect(projection.value.eventUsers?.["slack.message"]).toBe("U09FFH54LM9");
+    expect(projection.value.eventUsers?.["slack.mention"]).toBe("*");
+    expect(projection.value.containsAll?.["slack.message"]).toBe("ALERTA:");
+    expect(projection.value.containsAny?.["slack.message"]).toContain("Memória");
+    expect(patchTriggerYaml(yaml, projection.value)).toBe(yaml);
+
+    const widened = patchTriggerYaml(
+      yaml,
+      setEventAudience(projection.value, "slack.mention", "U123"),
+    );
+    const parsed = TriggerDocumentSchema.parse(parseDocument(widened).toJS());
+    expect(parsed.on["slack.mention"]?.filters?.from_users).toEqual(["U123"]);
+    expect(parsed.on["slack.message"]?.filters?.from_users).toEqual(["U09FFH54LM9"]);
+    expect(parsed.on["slack.message"]?.filters?.contains_any).toContain("Memória");
+
+    const narrowed = patchTriggerYaml(
+      yaml,
+      setEventTerms(projection.value, "slack.message", "containsAll", "ALERTA:, disco"),
+    );
+    const terms = TriggerDocumentSchema.parse(parseDocument(narrowed).toJS());
+    expect(terms.on["slack.message"]?.filters?.contains_all).toEqual(["ALERTA:", "disco"]);
+    expect(terms.on["slack.message"]?.filters?.contains_any).toContain("flood");
+    expect(terms.on["slack.mention"]?.filters?.from_users).toEqual(["*"]);
+  });
+
+  test("adds a second Slack event without dropping the first", () => {
+    const projection = projectTriggerForm(ADVANCED);
+    if (projection.status !== "editable") throw new Error(projection.reason);
+    const yaml = patchTriggerYaml(
+      ADVANCED,
+      toggleTriggerEvent(projection.value, "slack.message", true),
+    );
+    const parsed = TriggerDocumentSchema.parse(parseDocument(yaml).toJS());
+    expect(Object.keys(parsed.on)).toEqual(["slack.mention", "slack.message"]);
+    expect(parsed.on["slack.message"]?.filters?.channels).toEqual(["engineering"]);
+    expect(parsed.on["slack.mention"]?.filters?.channels).toEqual(["engineering"]);
+  });
+
+  test("keeps events that disagree in YAML-only mode", () => {
+    const projection = projectTriggerForm(`
+name: split
+enabled: true
+on:
+  slack.message:
+    connection: one
+    filters:
+      from_users: ["*"]
+  slack.mention:
+    connection: two
+    filters:
+      from_users: ["*"]
+run:
+  target:
+    daemon: office
+    cwd: /workspace
+  agent:
+    provider: cursor
+    mode: agent
+  prompt: Reply.
+`);
+    expect(projection).toEqual({
+      status: "yaml_only",
+      reason: "These events use different connections.",
+    });
+  });
+
   test("keeps unsupported shapes in YAML-only mode", () => {
     expect(projectTriggerForm(ADVANCED.replace("slack.mention:", "custom.event:"))).toEqual({
       status: "yaml_only",
@@ -156,6 +334,8 @@ describe("trigger form YAML bridge", () => {
       name: "answer",
       enabled: true,
       event: "manual.run",
+      events: ["manual.run"],
+      includeBots: false,
       connection: "",
       allowedUsers: "*",
       qualifiers: {},
@@ -164,6 +344,7 @@ describe("trigger form YAML bridge", () => {
       agent: "codex/gpt-5.4",
       mode: "full-access",
       thinkingOptionId: "",
+      cursorFast: "",
       providerOptions: "",
       continuationMode: "conversation",
       continuationKey: "",
@@ -197,6 +378,8 @@ describe("trigger form YAML bridge", () => {
       name: "deploy",
       enabled: true,
       event: "manual.run",
+      events: ["manual.run"],
+      includeBots: false,
       connection: "",
       allowedUsers: "*",
       qualifiers: {},
@@ -205,6 +388,7 @@ describe("trigger form YAML bridge", () => {
       agent: "opencode",
       mode: "full-access",
       thinkingOptionId: "",
+      cursorFast: "",
       providerOptions: "",
       continuationMode: "conversation",
       continuationKey: "",

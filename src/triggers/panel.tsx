@@ -41,9 +41,11 @@ import {
   type TriggerFieldErrors,
   type TriggerFormValue,
 } from "./configuration/editor.js";
+import { toggleTriggerEvent } from "./configuration/form-events.js";
 import { saveTrigger, triggerSnapshot, type TriggerSnapshot } from "./functions.js";
 import { daemonProviderSnapshot } from "../daemons/functions.js";
 import type { HubProviderSnapshotEntry } from "../hub/protocol.js";
+import { AudienceFields } from "./audience-fields.js";
 import { EventFields } from "./event-fields.js";
 import { AutomationTemplates, automationTemplateFromLocation } from "./templates.js";
 import { EDITOR_EVENTS, eventDefinition, parseEditorEvent } from "./configuration/events.js";
@@ -624,7 +626,6 @@ function TriggerForm({
   const githubEnabled = form.githubConnection !== "";
   const [githubExpanded, setGithubExpanded] = useState(githubEnabled);
   const [optionsExpanded, setOptionsExpanded] = useState(false);
-  const everyone = form.allowedUsers.trim() === "*";
   const update = <Key extends keyof TriggerFormValue>(key: Key, value: TriggerFormValue[Key]) =>
     onChange({ ...form, [key]: value });
   const text = (key: TriggerTextField) => (value: string) => update(key, value);
@@ -709,7 +710,10 @@ function TriggerForm({
                     empty="No connections found."
                     onChange={(option) => {
                       // Channel ids belong to one Slack workspace
-                      if (form.event === "slack.message" && option.value !== form.connection) {
+                      if (
+                        eventDefinition(form.event).provider === "slack" &&
+                        option.value !== form.connection
+                      ) {
                         onChange({ ...form, connection: option.value, channels: "" });
                         return;
                       }
@@ -721,6 +725,7 @@ function TriggerForm({
               </FormField>
             )}
           </div>
+          <AdditionalEvents form={form} onChange={onChange} />
           <EventFields
             value={form}
             errors={errors}
@@ -731,31 +736,7 @@ function TriggerForm({
 
         {eventDefinition(form.event).origin === "hub" ? null : (
           <Card title={EDITOR_STEPS.access.title} description={EDITOR_STEPS.access.description}>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <FormField id="trigger-audience" label="Audience">
-                {() => (
-                  <SegmentedControl
-                    label="Audience"
-                    value={everyone ? "everyone" : "specific"}
-                    options={AUDIENCE_OPTIONS}
-                    onChange={(value) => update("allowedUsers", value === "everyone" ? "*" : "")}
-                  />
-                )}
-              </FormField>
-              {everyone ? null : (
-                <FormField
-                  id="trigger-allowed-users"
-                  label="User IDs"
-                  description="Comma-separated provider user IDs."
-                  kind="text"
-                  name="allowedUsers"
-                  value={form.allowedUsers}
-                  onChange={text("allowedUsers")}
-                  required
-                  {...fieldError(errors, "allowedUsers")}
-                />
-              )}
-            </div>
+            <AudienceFields form={form} onChange={onChange} />
           </Card>
         )}
 
@@ -797,6 +778,7 @@ function TriggerForm({
                         agent: "",
                         mode: "",
                         thinkingOptionId: "",
+                        cursorFast: "",
                         providerOptions: "",
                       })
                     }
@@ -1014,10 +996,49 @@ function TriggerForm({
   );
 }
 
-const AUDIENCE_OPTIONS: readonly SegmentedOption[] = [
-  { value: "everyone", label: "Everyone" },
-  { value: "specific", label: "Specific people" },
+const FAST_OPTIONS: readonly SegmentedOption[] = [
+  { value: "false", label: "Off" },
+  { value: "true", label: "On" },
 ];
+
+function cursorAgent(agent: string): boolean {
+  const provider = agent
+    .slice(0, agent.indexOf("/") < 0 ? agent.length : agent.indexOf("/"))
+    .trim();
+  return provider === "cursor";
+}
+
+function AdditionalEvents({
+  form,
+  onChange,
+}: {
+  form: TriggerFormValue;
+  onChange: (value: TriggerFormValue) => void;
+}) {
+  const current = eventDefinition(form.event);
+  if (current.origin === "hub") return null;
+  const siblings = EDITOR_EVENTS.filter((event) => {
+    if (event === form.event) return false;
+    const definition = eventDefinition(event);
+    return definition.provider === current.provider && definition.origin !== "hub";
+  });
+  if (siblings.length === 0) return null;
+  const selected = new Set(form.events);
+  return (
+    <div className="grid gap-3">
+      {siblings.map((event) => (
+        <CheckboxField
+          key={event}
+          id={`trigger-also-${event}`}
+          label={eventDefinition(event).label}
+          description="Also run for this event."
+          checked={selected.has(event)}
+          onChange={(checked) => onChange(toggleTriggerEvent(form, event, checked))}
+        />
+      ))}
+    </div>
+  );
+}
 
 /**
  * The trigger editor before the snapshot arrives. The back link, the step titles, and the page
@@ -1207,7 +1228,13 @@ function ProviderCatalogFields({
             searchPlaceholder="Search models…"
             empty="No models found."
             onChange={(option) =>
-              onChange({ ...form, agent: option.value, mode: "", thinkingOptionId: "" })
+              onChange({
+                ...form,
+                agent: option.value,
+                mode: "",
+                thinkingOptionId: "",
+                cursorFast: cursorAgent(option.value) ? form.cursorFast || "false" : "",
+              })
             }
           />
         )}
@@ -1231,6 +1258,18 @@ function ProviderCatalogFields({
           />
         )}
       </FormField>
+      {cursorAgent(form.agent) ? (
+        <FormField id="trigger-fast" label="Fast" description="Off is the normal model.">
+          {() => (
+            <SegmentedControl
+              label="Fast"
+              value={form.cursorFast === "true" ? "true" : "false"}
+              options={FAST_OPTIONS}
+              onChange={(cursorFast) => onChange({ ...form, cursorFast })}
+            />
+          )}
+        </FormField>
+      ) : null}
       {thinkingOptions.length === 0 ? null : (
         <FormField
           id="trigger-thinking"
@@ -1309,7 +1348,10 @@ function defaultForm(snapshot: TriggerSnapshot): TriggerFormValue {
     agent: "",
     mode: "",
     thinkingOptionId: "",
+    cursorFast: "",
     providerOptions: "",
+    events: [slack === undefined ? "manual.run" : "slack.mention"],
+    includeBots: false,
     continuationMode: "conversation",
     continuationKey: "",
     maxRuntime: "2h",

@@ -89,6 +89,13 @@ const AuthoredTriggerFilterSchema = z
   .object({
     pattern: z.string().optional(),
     contains: z.string().optional(),
+    /**
+     * Substrings that must all appear. Slack matching ignores case and requires a
+     * letter or number boundary, so a short token does not hit the middle of another word.
+     */
+    contains_all: z.array(z.string().min(1)).min(1).optional(),
+    /** Substrings of which at least one must appear, with the same Slack boundary rule. */
+    contains_any: z.array(z.string().min(1)).min(1).optional(),
     /** GitHub text which makes an event ineligible, such as a command another trigger owns. */
     exclude_contains: z.string().optional(),
     label: z.string().min(1).optional(),
