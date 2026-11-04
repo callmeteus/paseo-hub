@@ -21,10 +21,19 @@ export function matchSlackTriggers(
   const expectedOn = event.type === "message" ? "slack.message" : "slack.mention";
   return config.triggers.flatMap((trigger) => {
     return trigger.on === expectedOn &&
+      acceptsBotMessage(event, trigger.filters) &&
       matchesFilters(event, trigger.filters, botUserId, connectionId)
       ? [{ event, trigger }]
       : [];
   });
+}
+
+// Another app's message runs only the automations that opted in. The Hub's own user is already excluded.
+function acceptsBotMessage(
+  event: NormalizedSlackMentionEvent,
+  filters: TriggerFilter | undefined,
+): boolean {
+  return event.fromBot !== true || filters?.include_bots === true;
 }
 
 function matchesFilters(

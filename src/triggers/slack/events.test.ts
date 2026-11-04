@@ -28,6 +28,7 @@ describe("normalizeSlackEvent", () => {
     assert.equal(event?.type, "message");
     assert.equal(event?.content, "hello channel");
     assert.equal(event?.channelId, "C1");
+    assert.equal(event?.fromBot, undefined);
   });
 
   it("drops bot messages, subtypes, and thread replies", () => {
@@ -41,8 +42,12 @@ describe("normalizeSlackEvent", () => {
       channel_type: "channel",
     };
 
-    assert.equal(normalizeSlackEvent({ ...envelope, event: { ...base, bot_id: "B1" } }), undefined);
-    assert.equal(describeDroppedSlackEvent({ ...base, bot_id: "B1" })?.reason, "bot");
+    const { user: _ignoredUser, ...withoutUser } = base;
+    assert.equal(
+      normalizeSlackEvent({ ...envelope, event: { ...withoutUser, bot_id: "B1" } }),
+      undefined,
+    );
+    assert.equal(describeDroppedSlackEvent({ ...withoutUser, bot_id: "B1" })?.reason, "bot");
     assert.equal(
       normalizeSlackEvent({ ...envelope, event: { ...base, subtype: "message_changed" } }),
       undefined,
@@ -67,6 +72,32 @@ describe("normalizeSlackEvent", () => {
     );
     assert.equal(describeDroppedSlackEvent({ type: "reaction_added" }), undefined);
     assert.equal(describeDroppedSlackEvent({ ...base, text: "hello" }), undefined);
+  });
+
+  it("keeps a channel message posted by another Slack app", () => {
+    const raw = {
+      type: "message",
+      user: "U09FFH54LM9",
+      bot_id: "B1",
+      subtype: "bot_message",
+      channel: "C1",
+      text: "Deploy Request #846",
+      ts: "1700000000.000004",
+      event_ts: "1700000000.000004",
+      channel_type: "group",
+    };
+    const event = normalizeSlackEvent({ ...envelope, event: raw });
+
+    assert.equal(event?.type, "message");
+    assert.equal(event?.author.id, "U09FFH54LM9");
+    assert.equal(event?.content, "Deploy Request #846");
+    assert.equal(event?.fromBot, true);
+    assert.equal(describeDroppedSlackEvent(raw), undefined);
+
+    const { subtype: _subtype, ...withoutSubtype } = raw;
+    const untyped = normalizeSlackEvent({ ...envelope, event: withoutSubtype });
+    assert.equal(untyped?.type, "message");
+    assert.equal(untyped?.author.id, "U09FFH54LM9");
   });
 
   it("keeps an app mention", () => {

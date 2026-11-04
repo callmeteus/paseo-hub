@@ -93,7 +93,54 @@ describe("Slack trigger matching", () => {
     assert.equal(matchSlackTriggers(configForUsers(["*"]), posted, "UBOT").length, 0);
     assert.equal(matchSlackTriggers(message, mention(), "UBOT").length, 0);
   });
+
+  it("runs a bot message only for the automation that set include_bots", () => {
+    const closed = channelConfig(false);
+    const open = channelConfig(true);
+    const botMessage = mention({ authorId: "U09FFH54LM9" });
+    botMessage.type = "message";
+    botMessage.content = "Deploy Request #846";
+    botMessage.fromBot = true;
+
+    assert.equal(matchSlackTriggers(closed, botMessage, "UBOT").length, 0);
+    assert.equal(matchSlackTriggers(open, botMessage, "UBOT").length, 1);
+    assert.equal(
+      matchSlackTriggers(open, { ...botMessage, author: { id: "UBOT" } }, "UBOT").length,
+      0,
+    );
+    const person = mention({ authorId: "U9" });
+    person.type = "message";
+    person.content = "hello";
+    assert.equal(matchSlackTriggers(closed, person, "UBOT").length, 1);
+  });
 });
+
+function channelConfig(includeBots: boolean) {
+  return compileHubConfig({
+    environments: [{ name: "runner", kind: "daemon", daemon: "runner", cwd: "/repo" }],
+    triggers: [
+      {
+        name: "channel",
+        on: "slack.message",
+        max_runtime: "2h",
+        filters: {
+          from_users: ["*"],
+          ...(includeBots ? { include_bots: true } : {}),
+        },
+        steps: [
+          {
+            id: "run",
+            environment: "runner",
+            max_runtime: "1h",
+            idle_timeout: "5m",
+            agent: { provider: "opencode", mode: "default" },
+            prompt: [{ text: "Read the channel" }],
+          },
+        ],
+      },
+    ],
+  });
+}
 
 function configForUsers(fromUsers: string[]) {
   return compileHubConfig({

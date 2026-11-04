@@ -59,6 +59,49 @@ run:
     ]);
   });
 
+  it("keeps include_bots off unless the automation turns it on", () => {
+    const off = compileTriggerDocument(`
+name: channel-watch
+enabled: true
+on:
+  slack.message:
+    connection: acme
+    filters:
+      from_users: ["*"]
+      channels: [C1]
+run:
+  target:
+    daemon: office
+    cwd: /workspace
+  agent:
+    provider: opencode
+    mode: default
+  prompt: Read the channel.
+`);
+    const on = compileTriggerDocument(`
+name: channel-watch
+enabled: true
+on:
+  slack.message:
+    connection: acme
+    filters:
+      from_users: ["*"]
+      channels: [C1]
+      include_bots: true
+run:
+  target:
+    daemon: office
+    cwd: /workspace
+  agent:
+    provider: opencode
+    mode: default
+  prompt: Read the channel.
+`);
+
+    assert.equal(off.events[0]?.filters?.include_bots, undefined);
+    assert.equal(on.events[0]?.filters?.include_bots, true);
+  });
+
   it("rejects a preset reactions block", () => {
     assert.throws(
       () =>

@@ -104,6 +104,8 @@ const AuthoredTriggerFilterSchema = z
     assignees: z.array(z.string().min(1)).min(1).optional(),
     channels: z.array(z.string().min(1)).optional(),
     from_users: z.array(z.string().min(1)).optional(),
+    /** When true, a Slack message from another app can run this trigger. Off when omitted. */
+    include_bots: z.boolean().optional(),
     webhook_secret: z.string().min(32).optional(),
     inputs: z.record(z.string(), InputValueSchema).optional(),
     connection: z

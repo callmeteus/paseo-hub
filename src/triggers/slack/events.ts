@@ -109,6 +109,8 @@ export const NormalizedSlackMentionEventSchema = z.object({
     )
     .default([]),
   author: z.object({ id: SlackIdSchema, username: z.string().min(1).max(255).optional() }),
+  /** True when another Slack app posted the message. Absent on events stored before the flag. */
+  fromBot: z.boolean().optional(),
   createdAt: z.string(),
   attachments: z.array(SlackAttachmentMetadataSchema).default([]),
 });
@@ -157,11 +159,26 @@ export function describeDroppedSlackEvent(event: unknown): DroppedSlackEvent | u
   };
 }
 
+/**
+ * Another Slack app posted in the channel under its own bot user.
+ * A webhook with no user stays dropped. The Hub's own user is filtered later.
+ *
+ * @param event - Inner Slack event
+ * @returns Whether this is a channel message from another app
+ */
+function isForeignAppChannelMessage(event: Record<string, unknown>): boolean {
+  if (typeof event["user"] !== "string") return false;
+  const subtype = event["subtype"];
+  if (typeof subtype === "string" && subtype !== "bot_message") return false;
+  return event["bot_id"] !== undefined || subtype === "bot_message";
+}
+
 function slackEventDropReason(
   event: Record<string, unknown>,
   eventType: "message" | "app_mention",
 ): DroppedSlackEvent["reason"] | undefined {
-  if (event["bot_id"] !== undefined || event["subtype"] === "bot_message") {
+  const foreignApp = eventType === "message" && isForeignAppChannelMessage(event);
+  if (!foreignApp && (event["bot_id"] !== undefined || event["subtype"] === "bot_message")) {
     return "bot";
   }
 
@@ -173,7 +190,7 @@ function slackEventDropReason(
     return "missing_user";
   }
 
-  if (event["subtype"] !== undefined) {
+  if (event["subtype"] !== undefined && event["subtype"] !== "bot_message") {
     return "subtype";
   }
 
@@ -232,7 +249,9 @@ export function normalizeSlackEvent(
   const message = SlackChannelMessageSchema.safeParse(envelope.event);
   if (!message.success) return undefined;
   if (message.data.user === undefined) return undefined;
-  if (message.data.bot_id !== undefined || message.data.subtype !== undefined) return undefined;
+  // Joins and edits stay out. A card from another app arrives as bot_message and has a user.
+  if (message.data.subtype !== undefined && message.data.subtype !== "bot_message")
+    return undefined;
   if (message.data.channel_type === "im" || message.data.channel_type === "mpim") return undefined;
   // A thread reply carries a parent timestamp. The message that opened the thread uses its own.
   if (message.data.thread_ts !== undefined && message.data.thread_ts !== message.data.ts) {
@@ -244,6 +263,7 @@ export function normalizeSlackEvent(
     eventTs: message.data.event_ts,
     threadTs: null,
     user: message.data.user,
+    fromBot: message.data.bot_id !== undefined || message.data.subtype === "bot_message",
   });
 }
 
@@ -257,6 +277,7 @@ function normalizedSlackEvent(
     eventTs: string;
     threadTs: string | null;
     user: string;
+    fromBot?: boolean;
   },
 ): NormalizedSlackMentionEvent {
   // A forward keeps the original text on the attachment. `text` itself is often empty.
@@ -275,6 +296,7 @@ function normalizedSlackEvent(
     lead: readSlackMessageLead(source),
     forwards: readSlackForwardLocators(source),
     author: { id: event.user },
+    ...(event.fromBot === true ? { fromBot: true } : {}),
     createdAt: new Date(Number(event.ts) * 1_000).toISOString(),
     attachments: files.map((file) => ({
       id: file.id,
