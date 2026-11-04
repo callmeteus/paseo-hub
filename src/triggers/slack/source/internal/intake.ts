@@ -1,8 +1,13 @@
 import type { ProviderEventAcceptance } from "../../../../db/types.js";
+import { logger } from "../../../../logger.js";
 import { logProviderEventIntake } from "../../../audit.js";
 import type { ProviderEventDropReasonCode } from "../../../drop-reason.js";
 import type { TriggerHandler } from "../../../index.js";
-import { normalizeSlackEvent, SlackEventCallbackSchema } from "../../events.js";
+import {
+  describeDroppedSlackEvent,
+  normalizeSlackEvent,
+  SlackEventCallbackSchema,
+} from "../../events.js";
 
 export interface SlackEventIntakeOptions {
   appId: string;
@@ -34,7 +39,17 @@ export async function intakeSlackEvent(
     throw new SlackEventIntakeValidationError();
   }
   const normalizedEvent = normalizeSlackEvent(callback.data);
-  if (normalizedEvent === undefined) return;
+  // A dropped message never reaches the trigger log. Say why, without the text.
+  if (normalizedEvent === undefined) {
+    const dropped = describeDroppedSlackEvent(callback.data.event);
+    if (dropped !== undefined) {
+      logger.info(
+        { provider: "slack", operation: "slack.event.ignore", ...dropped },
+        "Slack message ignored",
+      );
+    }
+    return;
+  }
 
   const source = normalizedEvent.type === "message" ? "slack.message" : "slack.mention";
   const deliveryId = `slack-${normalizedEvent.id}`;

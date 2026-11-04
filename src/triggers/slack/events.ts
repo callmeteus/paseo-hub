@@ -115,6 +115,103 @@ export const NormalizedSlackMentionEventSchema = z.object({
 
 export type NormalizedSlackMentionEvent = z.infer<typeof NormalizedSlackMentionEventSchema>;
 
+export interface DroppedSlackEvent {
+  reason: "bot" | "missing_user" | "subtype" | "direct_message" | "thread_reply";
+  eventType: string;
+  subtype?: string;
+  channelType?: string;
+  channelId?: string;
+}
+
+/**
+ * Describes a message Slack delivered and the intake refused.
+ *
+ * Reactions and other event types are not messages, so they stay undescribed.
+ *
+ * @param event - Inner event of an Events API callback
+ * @returns The drop, or undefined when this event is not a refused message
+ */
+export function describeDroppedSlackEvent(event: unknown): DroppedSlackEvent | undefined {
+  if (!isRecord(event)) {
+    return undefined;
+  }
+
+  const eventType = event["type"];
+
+  if (eventType !== "message" && eventType !== "app_mention") {
+    return undefined;
+  }
+
+  const reason = slackEventDropReason(event, eventType);
+
+  if (reason === undefined) {
+    return undefined;
+  }
+
+  return {
+    reason,
+    eventType,
+    ...optionalString(event, "subtype", "subtype"),
+    ...optionalString(event, "channel_type", "channelType"),
+    ...optionalString(event, "channel", "channelId"),
+  };
+}
+
+function slackEventDropReason(
+  event: Record<string, unknown>,
+  eventType: "message" | "app_mention",
+): DroppedSlackEvent["reason"] | undefined {
+  if (event["bot_id"] !== undefined || event["subtype"] === "bot_message") {
+    return "bot";
+  }
+
+  if (eventType === "app_mention") {
+    return undefined;
+  }
+
+  if (typeof event["user"] !== "string") {
+    return "missing_user";
+  }
+
+  if (event["subtype"] !== undefined) {
+    return "subtype";
+  }
+
+  const channelType = event["channel_type"];
+
+  if (channelType === "im" || channelType === "mpim") {
+    return "direct_message";
+  }
+
+  const threadTs = event["thread_ts"];
+
+  // A thread reply carries a parent timestamp. The message that opened the thread uses its own.
+  if (typeof threadTs === "string" && threadTs !== event["ts"]) {
+    return "thread_reply";
+  }
+
+  // The message passed every refusal. Intake keeps it.
+  return undefined;
+}
+
+function optionalString(
+  event: Record<string, unknown>,
+  key: string,
+  field: "subtype" | "channelType" | "channelId",
+): Partial<Pick<DroppedSlackEvent, "subtype" | "channelType" | "channelId">> {
+  const value = event[key];
+
+  if (typeof value !== "string" || value.length === 0) {
+    return {};
+  }
+
+  return { [field]: value };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
 export function normalizeSlackEvent(
   envelope: z.infer<typeof SlackEventCallbackSchema>,
 ): NormalizedSlackMentionEvent | undefined {

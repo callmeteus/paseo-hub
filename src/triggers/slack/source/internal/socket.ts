@@ -22,6 +22,8 @@ import {
 } from "./socket-protocol.js";
 
 const MAX_FRAME_BYTES = 1_048_576;
+const DEFAULT_SOCKET_PING_INTERVAL_MS = 30_000;
+const DEFAULT_SOCKET_PONG_TIMEOUT_MS = 10_000;
 
 export type SlackDeliveryStatus =
   | { state: "connecting" | "reconnecting" | "connected" }
@@ -41,6 +43,10 @@ export interface SlackSocketSourceOptions extends SlackEventIntakeOptions {
   apiUrl?: string;
   random?: () => number;
   timeoutMs?: number;
+  /** How often an open socket is pinged. Tests pass a short interval. */
+  pingIntervalMs?: number;
+  /** How long a ping may go unanswered before the socket is replaced. */
+  pongTimeoutMs?: number;
 }
 
 export function createSlackSocketSource(options: SlackSocketSourceOptions): SlackSocketSource {
@@ -59,6 +65,10 @@ export function createSlackSocketSource(options: SlackSocketSourceOptions): Slac
   let terminalDisconnect: "socketModeOff" | undefined;
   let transientReported = false;
   let minimumDelay = 0;
+  let pingTimer: ReturnType<typeof setInterval> | undefined;
+  let pongTimer: ReturnType<typeof setTimeout> | undefined;
+  let heartbeatSocket: WebSocket | undefined;
+  let onHeartbeatPong: (() => void) | undefined;
   const scrubValues = () => [
     options.appToken,
     ...(options.apiUrl === undefined ? [] : [options.apiUrl]),
@@ -85,9 +95,18 @@ export function createSlackSocketSource(options: SlackSocketSourceOptions): Slac
         attempt = 0;
         status = { state: "connected" };
         logger.info(
-          { provider: "slack", operation: "slack.socket.connect", appId: options.appId },
+          {
+            provider: "slack",
+            operation: "slack.socket.connect",
+            appId: options.appId,
+            ...(connection.connectionCount === undefined
+              ? {}
+              : { connectionCount: connection.connectionCount }),
+          },
           "Slack Socket Mode connected",
         );
+        // A dead peer does not emit close. The ping below is what notices it.
+        startHeartbeat(connection.socket);
         connection.socket.on("message", (data, binary) => {
           frames = frames
             .then(() => handleFrame(connection, data, binary))
@@ -100,6 +119,7 @@ export function createSlackSocketSource(options: SlackSocketSourceOptions): Slac
             });
         });
         const closed = await connection.closed;
+        stopHeartbeat();
         current = undefined;
         if (stopped) return;
         if (terminalDisconnect !== undefined) {
@@ -156,6 +176,7 @@ export function createSlackSocketSource(options: SlackSocketSourceOptions): Slac
     async stop() {
       if (stopped) return;
       stopped = true;
+      stopHeartbeat();
       controller?.abort();
       wake?.();
       const connection = current;
@@ -177,6 +198,92 @@ export function createSlackSocketSource(options: SlackSocketSourceOptions): Slac
       startSupervisor();
     },
   };
+
+  /**
+   * Pings Slack and replaces the socket when a pong never comes back.
+   *
+   * @param socket - Open Socket Mode websocket
+   * @returns Nothing.
+   */
+  function startHeartbeat(socket: WebSocket): void {
+    stopHeartbeat();
+    const intervalMs = options.pingIntervalMs ?? DEFAULT_SOCKET_PING_INTERVAL_MS;
+    const pongTimeoutMs = options.pongTimeoutMs ?? DEFAULT_SOCKET_PONG_TIMEOUT_MS;
+    const onPong = () => {
+      if (heartbeatSocket !== socket || pongTimer === undefined) {
+        return;
+      }
+      clearTimeout(pongTimer);
+      pongTimer = undefined;
+    };
+    heartbeatSocket = socket;
+    onHeartbeatPong = onPong;
+    socket.on("pong", onPong);
+    const beat = () => {
+      if (stopped || heartbeatSocket !== socket || socket.readyState !== WebSocket.OPEN) {
+        return;
+      }
+      // One unanswered ping is enough. The timeout owns the reconnect.
+      if (pongTimer !== undefined) {
+        return;
+      }
+      socket.ping((error: unknown) => {
+        if (error instanceof Error) {
+          missPong(socket);
+        }
+      });
+      pongTimer = setTimeout(() => missPong(socket), pongTimeoutMs);
+      pongTimer.unref();
+    };
+    beat();
+    pingTimer = setInterval(beat, intervalMs);
+    pingTimer.unref();
+  }
+
+  /**
+   * Stops the ping and the unanswered-pong timer for the current socket.
+   *
+   * @returns Nothing.
+   */
+  function stopHeartbeat(): void {
+    if (heartbeatSocket !== undefined && onHeartbeatPong !== undefined) {
+      heartbeatSocket.off("pong", onHeartbeatPong);
+    }
+    heartbeatSocket = undefined;
+    onHeartbeatPong = undefined;
+    if (pingTimer !== undefined) {
+      clearInterval(pingTimer);
+      pingTimer = undefined;
+    }
+    if (pongTimer !== undefined) {
+      clearTimeout(pongTimer);
+      pongTimer = undefined;
+    }
+  }
+
+  /**
+   * Closes a socket that stopped answering so the supervisor opens another one.
+   *
+   * @param socket - Socket that missed a pong or failed to send a ping
+   * @returns Nothing.
+   */
+  function missPong(socket: WebSocket): void {
+    if (heartbeatSocket !== undefined && heartbeatSocket !== socket) {
+      return;
+    }
+    stopHeartbeat();
+    if (stopped) {
+      return;
+    }
+    if (!failureOwned) {
+      failureOwned = true;
+      report(new Error("Slack socket missed a pong"), "slack.socket.heartbeat", "network");
+    }
+    if (socket.readyState === WebSocket.CLOSED) {
+      return;
+    }
+    socket.terminate();
+  }
 
   async function handleFrame(
     connection: OpenSlackSocketResult,

@@ -116,6 +116,43 @@ describe("Slack Socket Mode source", () => {
     await source.stop();
   });
 
+  it("stays connected while Slack answers pings", async () => {
+    const slack = await startSlackSocketFixture();
+    closers.push(() => slack.close());
+    const source = socketSource(slack, accepted, "xapp-fixture-secret", {
+      pingIntervalMs: 30,
+      pongTimeoutMs: 80,
+    });
+
+    await source.start(ignoreTrigger);
+    await waitFor(() => source.status().state === "connected");
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    assert.equal(slack.openCount, 1);
+    assert.equal(source.status().state, "connected");
+    await source.stop();
+  });
+
+  it("reconnects once when a ping goes unanswered", async () => {
+    const slack = await startSlackSocketFixture();
+    closers.push(() => slack.close());
+    const stream = new FailureLogStream();
+    const source = socketSource(slack, accepted, "xapp-fixture-secret", {
+      pingIntervalMs: 40,
+      pongTimeoutMs: 50,
+    });
+
+    await runWithFailureTracking(() => source.start(ignoreTrigger), createLogger(stream));
+    await waitFor(() => source.status().state === "connected");
+    slack.silencePongs();
+    await waitFor(() => slack.openCount === 2 && source.status().state === "connected");
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    assert.equal(slack.openCount, 2);
+    assertSlackFailure(stream, "slack.socket.heartbeat", "network", "xapp-fixture-secret");
+    await source.stop();
+  });
+
   it("reconnects cleanly for refresh and reports one abnormal close", async () => {
     const slack = await startSlackSocketFixture();
     closers.push(() => slack.close());
@@ -171,10 +208,16 @@ function socketSource(
   slack: { openUrl: string },
   accept: Parameters<typeof createSlackEventSource>[0]["accept"],
   appToken = "xapp-fixture-secret",
+  heartbeat?: { pingIntervalMs: number; pongTimeoutMs: number },
 ) {
   return createSlackEventSource({
     configuration: { provider: "slack", transport: "socket", appId: "A123", appToken },
-    socket: { apiUrl: slack.openUrl, random: () => 0, timeoutMs: 250 },
+    socket: {
+      apiUrl: slack.openUrl,
+      random: () => 0,
+      timeoutMs: 250,
+      ...heartbeat,
+    },
     accept,
   });
 }

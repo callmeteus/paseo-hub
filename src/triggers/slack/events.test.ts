@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "vitest";
-import { normalizeSlackEvent } from "./events.js";
+import { describeDroppedSlackEvent, normalizeSlackEvent } from "./events.js";
 
 const envelope = {
   type: "event_callback" as const,
@@ -42,10 +42,18 @@ describe("normalizeSlackEvent", () => {
     };
 
     assert.equal(normalizeSlackEvent({ ...envelope, event: { ...base, bot_id: "B1" } }), undefined);
+    assert.equal(describeDroppedSlackEvent({ ...base, bot_id: "B1" })?.reason, "bot");
     assert.equal(
       normalizeSlackEvent({ ...envelope, event: { ...base, subtype: "message_changed" } }),
       undefined,
     );
+    assert.deepEqual(describeDroppedSlackEvent({ ...base, subtype: "message_changed" }), {
+      reason: "subtype",
+      eventType: "message",
+      subtype: "message_changed",
+      channelType: "channel",
+      channelId: "C1",
+    });
     assert.equal(
       normalizeSlackEvent({
         ...envelope,
@@ -53,6 +61,12 @@ describe("normalizeSlackEvent", () => {
       }),
       undefined,
     );
+    assert.equal(
+      describeDroppedSlackEvent({ ...base, thread_ts: "1700000000.000001" })?.reason,
+      "thread_reply",
+    );
+    assert.equal(describeDroppedSlackEvent({ type: "reaction_added" }), undefined);
+    assert.equal(describeDroppedSlackEvent({ ...base, text: "hello" }), undefined);
   });
 
   it("keeps an app mention", () => {

@@ -21,6 +21,8 @@ export class SlackSocketConnectionError extends Error {
 
 export interface OpenSlackSocketResult {
   appId: string;
+  /** How many Socket Mode connections Slack counted, including this one. */
+  connectionCount: number | undefined;
   socket: WebSocket;
   closed: Promise<number>;
   close(timeoutMs: number, reason: string): Promise<void>;
@@ -136,6 +138,7 @@ function waitForHello(
       const connection = { appId: hello.data.connection_info.app_id, socket, closed };
       resolve({
         ...connection,
+        connectionCount: hello.data.num_connections,
         close: (timeout, reason) => closeSlackSocket(connection, timeout, reason),
       });
     };

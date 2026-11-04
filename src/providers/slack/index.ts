@@ -58,7 +58,10 @@ export interface CreateSlackRegistrationOptions {
   connectionClient?: SlackConnectionClient;
   botClient?: SlackBotClient;
   fetch?: typeof fetch;
-  socket?: Pick<SlackSocketSourceOptions, "apiUrl" | "random" | "timeoutMs">;
+  socket?: Pick<
+    SlackSocketSourceOptions,
+    "apiUrl" | "random" | "timeoutMs" | "pingIntervalMs" | "pongTimeoutMs"
+  >;
   configurationVersion?: number;
   expectedConfigurationVersion?: number;
   activateConfiguration?: boolean;

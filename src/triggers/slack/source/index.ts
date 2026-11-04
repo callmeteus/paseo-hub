@@ -17,7 +17,10 @@ export interface SlackEventSource extends TriggerSource {
 export interface CreateSlackEventSourceOptions {
   configuration: SlackProviderApplicationConfiguration;
   accept: SlackEventIntakeOptions["accept"];
-  socket?: Pick<SlackSocketSourceOptions, "apiUrl" | "random" | "timeoutMs">;
+  socket?: Pick<
+    SlackSocketSourceOptions,
+    "apiUrl" | "random" | "timeoutMs" | "pingIntervalMs" | "pongTimeoutMs"
+  >;
 }
 
 export function createSlackEventSource(options: CreateSlackEventSourceOptions): SlackEventSource {

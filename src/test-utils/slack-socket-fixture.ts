@@ -143,6 +143,11 @@ export async function startSlackSocketFixture(
     terminateCurrent() {
       clients.at(-1)?.terminate();
     },
+    silencePongs() {
+      for (const client of clients) {
+        client.pong = () => undefined;
+      }
+    },
     resumePeers() {
       for (const socket of sockets.clients) peerTransport(socket)?.resume();
     },
