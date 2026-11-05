@@ -16,7 +16,7 @@ import { Outlet } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useCallback } from "react";
-import { usePageContext } from "../navigation/index.js";
+import { organizationHomePath, usePageContext } from "../navigation/index.js";
 import { Page } from "../components/app/page.js";
 import { FailureAlert } from "../components/app/failure-alert.js";
 import { PanelSkeleton } from "../components/app/loading.js";
@@ -49,6 +49,7 @@ import { NavigationGroup, type NavigationItem } from "./navigation-group.js";
 import { SidebarIdentity } from "./sidebar-switcher.js";
 import {
   AccountMenu,
+  INSTANCE_ENTRY,
   OrganizationSwitcher,
   ProjectSwitcher,
   type RouteTenant,
@@ -149,6 +150,12 @@ function DashboardContent({
 }) {
   const tenant = useOptionalRouteTenant() ?? undefined;
   const instance = useInstanceScope(account.isInstanceOperator);
+  const organization = tenant?.organization ?? account.organization;
+  // The name on the left is the scope. An organization already lands on its home; Instance
+  // already starts at Apps, the same entry the account menu uses.
+  const scope = instance
+    ? { label: "Instance", to: INSTANCE_ENTRY }
+    : { label: organization.name, to: organizationHomePath(organization.slug) };
   return (
     <>
       <ConnectionHandoffWatcher />
@@ -164,7 +171,8 @@ function DashboardContent({
       <SiteHeaderActionsProvider>
         <SidebarInset>
           <SiteHeader
-            scope={instance ? "Instance" : (tenant?.organization.name ?? account.organization.name)}
+            scope={scope.label}
+            scopeTo={scope.to}
             {...(instance || tenant?.project == null ? {} : { project: tenant.project.name })}
           />
           {/* The app's one content inset. Screens never pad themselves. */}
@@ -374,8 +382,8 @@ function destinations(base: string, sections: readonly SectionDestination[]): Na
 const ORGANIZATION_SECTIONS: readonly SectionDestination[] = [
   { section: "home", label: "Home", icon: House },
   { section: "triggers", label: "Triggers", icon: Zap, subtree: true },
-  { section: "activity", label: "Activity", icon: History },
-  { section: "daemons", label: "Daemons", icon: Cpu },
+  { section: "activity", label: "Activity", icon: History, subtree: true },
+  { section: "daemons", label: "Daemons", icon: Cpu, subtree: true },
   { section: "connections", label: "Connections", icon: Cable },
   { section: "settings", label: "Settings", icon: Settings, subtree: true },
 ];

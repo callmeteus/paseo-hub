@@ -9,13 +9,41 @@ declare module "@tanstack/react-router" {
   }
 }
 
+/** One step the route tree already named, and the pathname that step is. */
+export interface PageBreadcrumb {
+  label: string;
+  to: string;
+}
+
+/**
+ * Crumbs in the order the router is presenting them. A route that does not name a step is
+ * skipped, so layout and index routes do not invent a label. The pathname is the one TanStack
+ * already matched, params filled in, so a later page can link back to it.
+ */
+export function breadcrumbsFromMatches(
+  matches: readonly { staticData: { breadcrumb?: string }; pathname: string }[],
+): PageBreadcrumb[] {
+  return matches.flatMap((match) => {
+    const label = match.staticData.breadcrumb;
+
+    if (label === undefined) {
+      return [];
+    }
+
+    return [{ label, to: trimPathRight(match.pathname) }];
+  });
+}
+
+/** Where the Hub already opens an organization: the home route, not a new one. */
+export function organizationHomePath(organizationSlug: string): string {
+  return `/o/${organizationSlug}/home`;
+}
+
 /** Shared layout context comes from the routes TanStack is presenting, including pending UI. */
 export function usePageContext() {
   return useMatches({
     select: (matches) => ({
-      breadcrumbs: matches.flatMap(({ staticData }) =>
-        staticData.breadcrumb === undefined ? [] : [staticData.breadcrumb],
-      ),
+      breadcrumbs: breadcrumbsFromMatches(matches),
       instance: matches.some(({ staticData }) => staticData.instance === true),
       tabs: matches.some(({ staticData }) => staticData.tabs === true),
       projectSection:

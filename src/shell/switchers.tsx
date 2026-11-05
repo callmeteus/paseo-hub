@@ -22,7 +22,7 @@ import { SidebarSwitcher } from "./sidebar-switcher.js";
 export type RouteTenant = NonNullable<ReturnType<typeof useOptionalRouteTenant>>;
 
 /** Where the instance surfaces begin, for the one link into them that is not in a nav group. */
-const INSTANCE_ENTRY = "/apps";
+export const INSTANCE_ENTRY = "/apps";
 
 const ORGANIZATION_MARK = <PaseoGlyph />;
 const PROJECT_MARK = <FolderKanban aria-hidden="true" />;
