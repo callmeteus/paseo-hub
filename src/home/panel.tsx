@@ -3,7 +3,6 @@
 import { useSnapshotQuery } from "../queries/index.js";
 import { Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { Cpu, History, Sparkles } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { useActiveAccount } from "../auth/active-account.js";
@@ -20,13 +19,21 @@ import { StatGrid, StatTile } from "../components/app/stat-tile.js";
 import { StatusPill, statusLabel, type StatusTone } from "../components/app/status-pill.js";
 import { TwoLine } from "../components/app/two-line.js";
 import { Button } from "../components/ui/button.js";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "../components/ui/dialog.js";
 import { daemonLoginCommand, GRANT_EXECUTE_COMMAND } from "../daemons/handoff.js";
+import { daemonDetailPath, runDetailPath } from "../navigation/detail-paths.js";
 import { queryState } from "../projects/panel-state.js";
 import { useRouteTenant } from "../projects/context.js";
 import { deriveChecklist, type Checklist, type ChecklistStep } from "./checklist.js";
 import { homeSnapshot, type HomeSnapshot } from "./functions.js";
+import { UnroutedEventList, unroutedProviderName } from "./unrouted-events.js";
 
-const HOME_DESCRIPTION = "What to do next, and what has run.";
 const RECENT_RUNS_SHOWN = 5;
 
 export function HomePanel() {
@@ -34,6 +41,7 @@ export function HomePanel() {
   const account = useActiveAccount();
   const scope = { organizationSlug: tenant.organization.slug };
   const load = useServerFn(homeSnapshot);
+  const [reviewingUnrouted, setReviewingUnrouted] = useState(false);
   const snapshot = useSnapshotQuery({
     queryKey: ["home", tenant.account.id, tenant.organization.id],
     queryFn: () => load({ data: scope }),
@@ -46,7 +54,7 @@ export function HomePanel() {
   const unroutedCount = data.unrouted.reduce((total, { count }) => total + count, 0);
   return (
     <>
-      <PageHeader title="Home" description={HOME_DESCRIPTION} />
+      <PageHeader title="Home" />
       {/* Completing the last step is what collapses the list: the key remounts it with the
           collapsed default, and every toggle before or after that is the reader's own. */}
       <GetStarted
@@ -57,35 +65,41 @@ export function HomePanel() {
         operator={account.isInstanceOperator}
       />
       {unroutedCount === 0 ? null : (
-        <WarningAlert
-          standalone
-          title="Events are arriving with no trigger listening"
-          action={
-            <Button asChild variant="outline" size="sm">
-              <Link to={`${base}/triggers/new` as never}>Create a trigger</Link>
-            </Button>
-          }
-        >
-          <p>{unroutedSentence(data.unrouted, data.windowDays)}</p>
-        </WarningAlert>
+        <>
+          <WarningAlert
+            standalone
+            title="Events are arriving with no trigger listening"
+            action={
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setReviewingUnrouted(true)}
+              >
+                Review events
+              </Button>
+            }
+          >
+            <p>{unroutedSentence(data.unrouted, data.windowDays)}</p>
+          </WarningAlert>
+          <UnroutedEventsDialog
+            open={reviewingUnrouted}
+            events={data.unroutedEvents}
+            windowDays={data.windowDays}
+            onOpenChange={setReviewingUnrouted}
+          />
+        </>
       )}
       <Section title="Overview" description={`The last ${String(data.windowDays)} days.`}>
         <StatGrid>
-          <StatTile
-            label="Runs"
-            icon={History}
-            value={String(data.runs.length)}
-            detail={runOutcomes(data.runs)}
-          />
+          <StatTile label="Runs" value={String(data.runs.length)} detail={runOutcomes(data.runs)} />
           <StatTile
             label="Daemons connected"
-            icon={Cpu}
             value={String(data.daemons.filter(({ presence }) => presence === "connected").length)}
             detail={daemonDetail(data.daemons)}
           />
           <StatTile
             label="Agents used"
-            icon={Sparkles}
             value={String(agentsUsed(data.runs).length)}
             detail={agentDetail(agentsUsed(data.runs))}
           />
@@ -109,6 +123,7 @@ export function HomePanel() {
             {data.runs.slice(0, RECENT_RUNS_SHOWN).map((run) => (
               <RecordRow
                 key={run.id}
+                href={runDetailPath(data.organization.slug, run.id)}
                 status={
                   <StatusPill tone={runTone(run.status)}>{statusLabel(run.status)}</StatusPill>
                 }
@@ -144,6 +159,7 @@ export function HomePanel() {
             {data.daemons.map((daemon) => (
               <RecordRow
                 key={daemon.id}
+                href={daemonDetailPath(data.organization.slug, daemon.id)}
                 status={
                   <StatusPill tone={daemon.presence === "connected" ? "success" : "neutral"}>
                     {daemon.presence === "connected" ? "Connected" : "Offline"}
@@ -166,7 +182,7 @@ export function HomePanel() {
 function HomeLoading() {
   return (
     <div aria-busy="true" aria-label="Loading overview">
-      <PageHeaderSkeleton description={HOME_DESCRIPTION} />
+      <PageHeaderSkeleton />
       <div className="grid gap-6">
         <CardSkeleton lines={4} />
         <CardSkeleton lines={2} />
@@ -417,20 +433,59 @@ function runHint(triggers: HomeSnapshot["triggers"]): string {
   return [...hints].join(" ");
 }
 
+/**
+ * The events the warning counted. Opening it does not create a trigger: it shows what arrived
+ * with nobody listening, and only the parts the receipt actually stored.
+ */
+function UnroutedEventsDialog({
+  open,
+  events,
+  windowDays,
+  onOpenChange,
+}: {
+  open: boolean;
+  events: HomeSnapshot["unroutedEvents"];
+  windowDays: number;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const [openId, setOpenId] = useState<string | null>(null);
+  const period = `the last ${String(windowDays)} days`;
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) setOpenId(null);
+        onOpenChange(next);
+      }}
+    >
+      <DialogContent className="sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle>Events with no trigger</DialogTitle>
+          <DialogDescription>Received in {period} with no trigger listening.</DialogDescription>
+        </DialogHeader>
+        {events.length === 0 ? (
+          <EmptyState
+            title="No events without a trigger"
+            description={`None arrived in ${period}.`}
+          />
+        ) : (
+          <UnroutedEventList
+            events={events}
+            openId={openId}
+            onOpen={(id) => setOpenId((current) => (current === id ? null : id))}
+          />
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function unroutedSentence(unrouted: HomeSnapshot["unrouted"], windowDays: number): string {
   const total = unrouted.reduce((sum, { count }) => sum + count, 0);
   const sources = unrouted
-    .map(({ provider, count }) => `${String(count)} from ${providerName(provider)}`)
+    .map(({ provider, count }) => `${String(count)} from ${unroutedProviderName(provider)}`)
     .join(", ");
   return `${String(total)} ${total === 1 ? "event" : "events"} in the last ${String(windowDays)} days were dropped because no trigger handles them: ${sources}.`;
-}
-
-function providerName(provider: HomeSnapshot["unrouted"][number]["provider"]): string {
-  if (provider === "github") return "GitHub";
-  if (provider === "slack") return "Slack";
-  if (provider === "discord") return "Discord";
-  if (provider === "linear") return "Linear";
-  return statusLabel(provider);
 }
 
 function runOutcomes(runs: HomeSnapshot["runs"]): string {

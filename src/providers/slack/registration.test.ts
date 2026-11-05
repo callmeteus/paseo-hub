@@ -27,6 +27,7 @@ describe("Slack registration", () => {
       attempt = input;
       return Promise.resolve();
     };
+    const bot = new SlackBotFake();
     const registration = createSlackRegistration({
       database,
       auth: new RegistrationAuth(),
@@ -37,10 +38,11 @@ describe("Slack registration", () => {
       expectedConfigurationVersion: 2,
       activateConfiguration: true,
       connectionClient: new SlackConnectionFake(),
-      botClient: new SlackBotFake(),
+      botClient: bot,
     });
 
     assert.equal(registration.connection.name, "slack");
+    assert.equal(registration.slackNames, bot);
     assert.equal(registration.sources.length, 1);
     assert.equal(registration.triggerProviders.length, 1);
     assert.deepEqual(

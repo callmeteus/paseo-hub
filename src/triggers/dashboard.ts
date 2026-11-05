@@ -7,6 +7,7 @@ import { parseCompiledHubConfig } from "../config/compiler.js";
 import type { DaemonAgentConfigurationValidator } from "../configuration/store.js";
 import { listSlackMemberChannels } from "../providers/slack/channels.js";
 import { projectTriggerForm } from "./configuration/editor.js";
+import { presentRunDetail } from "./run-detail.js";
 import { OrganizationTriggerStore } from "./store.js";
 
 export class TriggerDashboard {
@@ -83,6 +84,51 @@ export class TriggerDashboard {
         })),
       ],
     };
+  }
+
+  /**
+   * The one run detail. Home's recent runs and the activity table both ask for it by run id;
+   * the trigger name is the one those lists already show, including a run that still lives on
+   * the project the trigger was migrated from.
+   */
+  async activityRun(request: Request, organizationSlug: string, runId: string) {
+    const { tenant } = await resolveRouteTenant(this.auth, this.database, request, {
+      organizationSlug,
+    });
+    const activity = await this.database.findOrganizationActivityRun(tenant.organization.id, runId);
+    if (activity === undefined) throw new ProjectCommandError("not_found");
+    const executions = await Promise.all(
+      activity.steps.map((step) =>
+        step.agentExecutionId === null
+          ? Promise.resolve(undefined)
+          : this.database.findAgentExecutionById(step.agentExecutionId),
+      ),
+    );
+    return presentRunDetail(
+      activity,
+      executions,
+      await this.triggerNameFor(
+        tenant.organization.id,
+        activity.run.projectId,
+        activity.run.configuredTriggerName,
+      ),
+    );
+  }
+
+  private async triggerNameFor(
+    organizationId: string,
+    projectId: string,
+    configuredTriggerName: string,
+  ): Promise<string> {
+    const triggers = await this.database.listOrganizationTriggers(organizationId);
+    const current = triggers.find((trigger) => trigger.runtimeProjectId === projectId);
+    if (current !== undefined) return current.name;
+    for (const trigger of triggers) {
+      const revision = await this.database.findOrganizationTriggerMigrationRevision(trigger.id);
+      const evidence = record(revision?.sourceEvidence);
+      if (string(evidence?.["legacyProjectId"]) === projectId) return trigger.name;
+    }
+    return configuredTriggerName;
   }
 
   private async activityForTrigger(trigger: OrganizationTriggerRecord) {

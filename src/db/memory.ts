@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AgentExecutionStatus, MachineStatus } from "./schema.js";
 import { parseCompiledHubConfig, type JsonValue } from "../config/compiler.js";
 import type { LaunchMachineIntent } from "../dispatcher/launch-machine-intent.js";
+import { terminalHubAction } from "../daemons/terminal-hub-action.js";
 import { linearConnectionRequiresReauthorization } from "../providers/linear/client.js";
 import { launchedAgent } from "./mappers.js";
 import type {
@@ -67,6 +68,7 @@ import type {
   GitHubRepositorySnapshot,
   OrganizationConnectionUsage,
   OrganizationRunRecord,
+  UnroutedProviderEvent,
   UnroutedProviderEventCount,
   ProjectTriggerRoute,
   MigrateProjectTriggersInput,
@@ -109,6 +111,7 @@ import {
   mergeOverrides,
 } from "../entitlements/catalog.js";
 import { toProviderEventReceiptRecordSummary } from "./mappers.js";
+import { projectUnroutedProviderEvent } from "./unrouted-event-preview.js";
 import {
   isProviderEventDropReasonCode,
   type ProviderEventDropReasonCode,
@@ -713,10 +716,7 @@ class MemoryDatabase implements Database {
       return { execution, transitioned: false };
     }
     const failureReason = deadlineKind === "step_idle" ? "step_idle_timeout" : "step_hard_timeout";
-    let hubAction: "interrupt" | "archive" | null = null;
-    if (execution.daemonId !== null) {
-      hubAction = execution.launchIntent?.autoArchive === true ? "archive" : "interrupt";
-    }
+    const hubAction = terminalHubAction(execution, "failed");
     const updatedExecution: AgentExecutionRecord = {
       ...execution,
       status: "failed",
@@ -782,10 +782,7 @@ class MemoryDatabase implements Database {
           execution !== undefined &&
           (execution.status === "spawning" || execution.status === "running")
         ) {
-          let hubAction: AgentExecutionRecord["hubAction"] = null;
-          if (execution.daemonId !== null) {
-            hubAction = execution.launchIntent?.autoArchive === true ? "archive" : "interrupt";
-          }
+          const hubAction = terminalHubAction(execution, "failed");
           const updatedExecution: AgentExecutionRecord = {
             ...execution,
             status: "failed",
@@ -1888,6 +1885,14 @@ class MemoryDatabase implements Database {
     if (run === undefined || run.projectId !== projectId) return undefined;
     const receipt = this.providerEventReceipts.get(run.providerEventReceiptId);
     if (receipt === undefined) return undefined;
+    return { run, receipt, steps: this.listSteps(run.id) };
+  }
+
+  async findOrganizationActivityRun(organizationId: string, runId: string) {
+    const run = this.triggerRuns.get(runId);
+    if (run === undefined || run.organizationId !== organizationId) return undefined;
+    const receipt = this.providerEventReceipts.get(run.providerEventReceiptId);
+    if (receipt === undefined || receipt.organizationId !== organizationId) return undefined;
     return { run, receipt, steps: this.listSteps(run.id) };
   }
 
@@ -3273,20 +3278,8 @@ class MemoryDatabase implements Database {
     organizationId: string,
     since: Date,
   ): Promise<UnroutedProviderEventCount[]> {
-    const routedReceiptIds = new Set(
-      [...this.triggerRuns.values()].map((run) => run.providerEventReceiptId),
-    );
     const counts = new Map<ProviderEventReceiptRecord["provider"], number>();
-    for (const receipt of this.providerEventReceipts.values()) {
-      if (
-        receipt.organizationId !== organizationId ||
-        receipt.receivedAt < since ||
-        routedReceiptIds.has(receipt.id) ||
-        (receipt.droppedReason !== "no_project_route" &&
-          receipt.droppedReason !== "no_trigger_for_source")
-      ) {
-        continue;
-      }
+    for (const receipt of this.countedUnroutedReceipts(organizationId, since)) {
       counts.set(receipt.provider, (counts.get(receipt.provider) ?? 0) + 1);
     }
     return [...counts.entries()]
@@ -3294,6 +3287,45 @@ class MemoryDatabase implements Database {
       .sort(
         (left, right) => right.count - left.count || left.provider.localeCompare(right.provider),
       );
+  }
+
+  async listUnroutedProviderEventsSince(
+    organizationId: string,
+    since: Date,
+  ): Promise<UnroutedProviderEvent[]> {
+    return this.countedUnroutedReceipts(organizationId, since)
+      .sort(
+        (left, right) =>
+          right.receivedAt.getTime() - left.receivedAt.getTime() || right.id.localeCompare(left.id),
+      )
+      .map((receipt) =>
+        projectUnroutedProviderEvent({
+          id: receipt.id,
+          provider: receipt.provider,
+          source: receipt.source,
+          repo: receipt.repo,
+          receivedAt: receipt.receivedAt,
+          payload: receipt.payload,
+        }),
+      );
+  }
+
+  /** The receipts `countUnroutedProviderEventsSince` and the review both read. */
+  private countedUnroutedReceipts(
+    organizationId: string,
+    since: Date,
+  ): ProviderEventReceiptRecord[] {
+    const routedReceiptIds = new Set(
+      [...this.triggerRuns.values()].map((run) => run.providerEventReceiptId),
+    );
+    return [...this.providerEventReceipts.values()].filter(
+      (receipt) =>
+        receipt.organizationId === organizationId &&
+        receipt.receivedAt >= since &&
+        !routedReceiptIds.has(receipt.id) &&
+        (receipt.droppedReason === "no_project_route" ||
+          receipt.droppedReason === "no_trigger_for_source"),
+    );
   }
 
   async isOrganizationMember(): Promise<boolean> {

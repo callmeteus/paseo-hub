@@ -1,7 +1,6 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { TriggerActivityPanel } from "../../../../triggers/activity-panel.js";
+import { createFileRoute, Outlet } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/_shell/o/$organizationSlug/activity")({
   staticData: { breadcrumb: "Activity", projectSection: "activity" },
-  component: TriggerActivityPanel,
+  component: Outlet,
 });

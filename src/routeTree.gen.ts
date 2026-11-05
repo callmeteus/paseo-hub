@@ -52,11 +52,15 @@ import { Route as ShellOOrganizationSlugConnectionsRouteImport } from './routes/
 import { Route as ShellOOrganizationSlugActivityRouteImport } from './routes/_shell/o/$organizationSlug/activity'
 import { Route as ShellOOrganizationSlugTriggersIndexRouteImport } from './routes/_shell/o/$organizationSlug/triggers/index'
 import { Route as ShellOOrganizationSlugSettingsIndexRouteImport } from './routes/_shell/o/$organizationSlug/settings/index'
+import { Route as ShellOOrganizationSlugDaemonsIndexRouteImport } from './routes/_shell/o/$organizationSlug/daemons/index'
+import { Route as ShellOOrganizationSlugActivityIndexRouteImport } from './routes/_shell/o/$organizationSlug/activity/index'
 import { Route as ShellOOrganizationSlugTriggersTriggerIdRouteImport } from './routes/_shell/o/$organizationSlug/triggers/$triggerId'
 import { Route as ShellOOrganizationSlugSettingsUsageRouteImport } from './routes/_shell/o/$organizationSlug/settings/usage'
 import { Route as ShellOOrganizationSlugSettingsTeamRouteImport } from './routes/_shell/o/$organizationSlug/settings/team'
 import { Route as ShellOOrganizationSlugSettingsBillingRouteImport } from './routes/_shell/o/$organizationSlug/settings/billing'
 import { Route as ShellOOrganizationSlugSettingsApiKeysRouteImport } from './routes/_shell/o/$organizationSlug/settings/api-keys'
+import { Route as ShellOOrganizationSlugDaemonsDaemonIdRouteImport } from './routes/_shell/o/$organizationSlug/daemons/$daemonId'
+import { Route as ShellOOrganizationSlugActivityRunIdRouteImport } from './routes/_shell/o/$organizationSlug/activity/$runId'
 
 const WebhookRoute = WebhookRouteImport.update({
   id: '/webhook',
@@ -292,6 +296,18 @@ const ShellOOrganizationSlugSettingsIndexRoute =
     path: '/',
     getParentRoute: () => ShellOOrganizationSlugSettingsRoute,
   } as any)
+const ShellOOrganizationSlugDaemonsIndexRoute =
+  ShellOOrganizationSlugDaemonsIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => ShellOOrganizationSlugDaemonsRoute,
+  } as any)
+const ShellOOrganizationSlugActivityIndexRoute =
+  ShellOOrganizationSlugActivityIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => ShellOOrganizationSlugActivityRoute,
+  } as any)
 const ShellOOrganizationSlugTriggersTriggerIdRoute =
   ShellOOrganizationSlugTriggersTriggerIdRouteImport.update({
     id: '/$triggerId',
@@ -322,6 +338,18 @@ const ShellOOrganizationSlugSettingsApiKeysRoute =
     path: '/api-keys',
     getParentRoute: () => ShellOOrganizationSlugSettingsRoute,
   } as any)
+const ShellOOrganizationSlugDaemonsDaemonIdRoute =
+  ShellOOrganizationSlugDaemonsDaemonIdRouteImport.update({
+    id: '/$daemonId',
+    path: '/$daemonId',
+    getParentRoute: () => ShellOOrganizationSlugDaemonsRoute,
+  } as any)
+const ShellOOrganizationSlugActivityRunIdRoute =
+  ShellOOrganizationSlugActivityRunIdRouteImport.update({
+    id: '/$runId',
+    path: '/$runId',
+    getParentRoute: () => ShellOOrganizationSlugActivityRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof ShellIndexRoute
@@ -348,9 +376,9 @@ export interface FileRoutesByFullPath {
   '/api/daemons/enroll': typeof ApiDaemonsEnrollRoute
   '/api/v1/$': typeof ApiV1SplatRoute
   '/api/v1/cli-authorizations': typeof ApiV1CliAuthorizationsRouteWithChildren
-  '/o/$organizationSlug/activity': typeof ShellOOrganizationSlugActivityRoute
+  '/o/$organizationSlug/activity': typeof ShellOOrganizationSlugActivityRouteWithChildren
   '/o/$organizationSlug/connections': typeof ShellOOrganizationSlugConnectionsRoute
-  '/o/$organizationSlug/daemons': typeof ShellOOrganizationSlugDaemonsRoute
+  '/o/$organizationSlug/daemons': typeof ShellOOrganizationSlugDaemonsRouteWithChildren
   '/o/$organizationSlug/home': typeof ShellOOrganizationSlugHomeRoute
   '/o/$organizationSlug/settings': typeof ShellOOrganizationSlugSettingsRouteWithChildren
   '/o/$organizationSlug/triggers': typeof ShellOOrganizationSlugTriggersRouteWithChildren
@@ -364,11 +392,15 @@ export interface FileRoutesByFullPath {
   '/api/integrations/slack/callback': typeof ApiIntegrationsSlackCallbackRoute
   '/api/integrations/slack/events': typeof ApiIntegrationsSlackEventsRoute
   '/api/v1/cli-authorizations/poll': typeof ApiV1CliAuthorizationsPollRoute
+  '/o/$organizationSlug/activity/$runId': typeof ShellOOrganizationSlugActivityRunIdRoute
+  '/o/$organizationSlug/daemons/$daemonId': typeof ShellOOrganizationSlugDaemonsDaemonIdRoute
   '/o/$organizationSlug/settings/api-keys': typeof ShellOOrganizationSlugSettingsApiKeysRoute
   '/o/$organizationSlug/settings/billing': typeof ShellOOrganizationSlugSettingsBillingRoute
   '/o/$organizationSlug/settings/team': typeof ShellOOrganizationSlugSettingsTeamRoute
   '/o/$organizationSlug/settings/usage': typeof ShellOOrganizationSlugSettingsUsageRoute
   '/o/$organizationSlug/triggers/$triggerId': typeof ShellOOrganizationSlugTriggersTriggerIdRoute
+  '/o/$organizationSlug/activity/': typeof ShellOOrganizationSlugActivityIndexRoute
+  '/o/$organizationSlug/daemons/': typeof ShellOOrganizationSlugDaemonsIndexRoute
   '/o/$organizationSlug/settings/': typeof ShellOOrganizationSlugSettingsIndexRoute
   '/o/$organizationSlug/triggers/': typeof ShellOOrganizationSlugTriggersIndexRoute
 }
@@ -397,9 +429,7 @@ export interface FileRoutesByTo {
   '/api/daemons/enroll': typeof ApiDaemonsEnrollRoute
   '/api/v1/$': typeof ApiV1SplatRoute
   '/api/v1/cli-authorizations': typeof ApiV1CliAuthorizationsRouteWithChildren
-  '/o/$organizationSlug/activity': typeof ShellOOrganizationSlugActivityRoute
   '/o/$organizationSlug/connections': typeof ShellOOrganizationSlugConnectionsRoute
-  '/o/$organizationSlug/daemons': typeof ShellOOrganizationSlugDaemonsRoute
   '/o/$organizationSlug/home': typeof ShellOOrganizationSlugHomeRoute
   '/agent-executions/$executionId/attachments/$attachmentId': typeof AgentExecutionsExecutionIdAttachmentsAttachmentIdRoute
   '/api/automations/hooks/$secret': typeof ApiAutomationsHooksSecretRoute
@@ -411,11 +441,15 @@ export interface FileRoutesByTo {
   '/api/integrations/slack/callback': typeof ApiIntegrationsSlackCallbackRoute
   '/api/integrations/slack/events': typeof ApiIntegrationsSlackEventsRoute
   '/api/v1/cli-authorizations/poll': typeof ApiV1CliAuthorizationsPollRoute
+  '/o/$organizationSlug/activity/$runId': typeof ShellOOrganizationSlugActivityRunIdRoute
+  '/o/$organizationSlug/daemons/$daemonId': typeof ShellOOrganizationSlugDaemonsDaemonIdRoute
   '/o/$organizationSlug/settings/api-keys': typeof ShellOOrganizationSlugSettingsApiKeysRoute
   '/o/$organizationSlug/settings/billing': typeof ShellOOrganizationSlugSettingsBillingRoute
   '/o/$organizationSlug/settings/team': typeof ShellOOrganizationSlugSettingsTeamRoute
   '/o/$organizationSlug/settings/usage': typeof ShellOOrganizationSlugSettingsUsageRoute
   '/o/$organizationSlug/triggers/$triggerId': typeof ShellOOrganizationSlugTriggersTriggerIdRoute
+  '/o/$organizationSlug/activity': typeof ShellOOrganizationSlugActivityIndexRoute
+  '/o/$organizationSlug/daemons': typeof ShellOOrganizationSlugDaemonsIndexRoute
   '/o/$organizationSlug/settings': typeof ShellOOrganizationSlugSettingsIndexRoute
   '/o/$organizationSlug/triggers': typeof ShellOOrganizationSlugTriggersIndexRoute
 }
@@ -446,9 +480,9 @@ export interface FileRoutesById {
   '/api/daemons/enroll': typeof ApiDaemonsEnrollRoute
   '/api/v1/$': typeof ApiV1SplatRoute
   '/api/v1/cli-authorizations': typeof ApiV1CliAuthorizationsRouteWithChildren
-  '/_shell/o/$organizationSlug/activity': typeof ShellOOrganizationSlugActivityRoute
+  '/_shell/o/$organizationSlug/activity': typeof ShellOOrganizationSlugActivityRouteWithChildren
   '/_shell/o/$organizationSlug/connections': typeof ShellOOrganizationSlugConnectionsRoute
-  '/_shell/o/$organizationSlug/daemons': typeof ShellOOrganizationSlugDaemonsRoute
+  '/_shell/o/$organizationSlug/daemons': typeof ShellOOrganizationSlugDaemonsRouteWithChildren
   '/_shell/o/$organizationSlug/home': typeof ShellOOrganizationSlugHomeRoute
   '/_shell/o/$organizationSlug/settings': typeof ShellOOrganizationSlugSettingsRouteWithChildren
   '/_shell/o/$organizationSlug/triggers': typeof ShellOOrganizationSlugTriggersRouteWithChildren
@@ -462,11 +496,15 @@ export interface FileRoutesById {
   '/api/integrations/slack/callback': typeof ApiIntegrationsSlackCallbackRoute
   '/api/integrations/slack/events': typeof ApiIntegrationsSlackEventsRoute
   '/api/v1/cli-authorizations/poll': typeof ApiV1CliAuthorizationsPollRoute
+  '/_shell/o/$organizationSlug/activity/$runId': typeof ShellOOrganizationSlugActivityRunIdRoute
+  '/_shell/o/$organizationSlug/daemons/$daemonId': typeof ShellOOrganizationSlugDaemonsDaemonIdRoute
   '/_shell/o/$organizationSlug/settings/api-keys': typeof ShellOOrganizationSlugSettingsApiKeysRoute
   '/_shell/o/$organizationSlug/settings/billing': typeof ShellOOrganizationSlugSettingsBillingRoute
   '/_shell/o/$organizationSlug/settings/team': typeof ShellOOrganizationSlugSettingsTeamRoute
   '/_shell/o/$organizationSlug/settings/usage': typeof ShellOOrganizationSlugSettingsUsageRoute
   '/_shell/o/$organizationSlug/triggers/$triggerId': typeof ShellOOrganizationSlugTriggersTriggerIdRoute
+  '/_shell/o/$organizationSlug/activity/': typeof ShellOOrganizationSlugActivityIndexRoute
+  '/_shell/o/$organizationSlug/daemons/': typeof ShellOOrganizationSlugDaemonsIndexRoute
   '/_shell/o/$organizationSlug/settings/': typeof ShellOOrganizationSlugSettingsIndexRoute
   '/_shell/o/$organizationSlug/triggers/': typeof ShellOOrganizationSlugTriggersIndexRoute
 }
@@ -513,11 +551,15 @@ export interface FileRouteTypes {
     | '/api/integrations/slack/callback'
     | '/api/integrations/slack/events'
     | '/api/v1/cli-authorizations/poll'
+    | '/o/$organizationSlug/activity/$runId'
+    | '/o/$organizationSlug/daemons/$daemonId'
     | '/o/$organizationSlug/settings/api-keys'
     | '/o/$organizationSlug/settings/billing'
     | '/o/$organizationSlug/settings/team'
     | '/o/$organizationSlug/settings/usage'
     | '/o/$organizationSlug/triggers/$triggerId'
+    | '/o/$organizationSlug/activity/'
+    | '/o/$organizationSlug/daemons/'
     | '/o/$organizationSlug/settings/'
     | '/o/$organizationSlug/triggers/'
   fileRoutesByTo: FileRoutesByTo
@@ -546,9 +588,7 @@ export interface FileRouteTypes {
     | '/api/daemons/enroll'
     | '/api/v1/$'
     | '/api/v1/cli-authorizations'
-    | '/o/$organizationSlug/activity'
     | '/o/$organizationSlug/connections'
-    | '/o/$organizationSlug/daemons'
     | '/o/$organizationSlug/home'
     | '/agent-executions/$executionId/attachments/$attachmentId'
     | '/api/automations/hooks/$secret'
@@ -560,11 +600,15 @@ export interface FileRouteTypes {
     | '/api/integrations/slack/callback'
     | '/api/integrations/slack/events'
     | '/api/v1/cli-authorizations/poll'
+    | '/o/$organizationSlug/activity/$runId'
+    | '/o/$organizationSlug/daemons/$daemonId'
     | '/o/$organizationSlug/settings/api-keys'
     | '/o/$organizationSlug/settings/billing'
     | '/o/$organizationSlug/settings/team'
     | '/o/$organizationSlug/settings/usage'
     | '/o/$organizationSlug/triggers/$triggerId'
+    | '/o/$organizationSlug/activity'
+    | '/o/$organizationSlug/daemons'
     | '/o/$organizationSlug/settings'
     | '/o/$organizationSlug/triggers'
   id:
@@ -610,11 +654,15 @@ export interface FileRouteTypes {
     | '/api/integrations/slack/callback'
     | '/api/integrations/slack/events'
     | '/api/v1/cli-authorizations/poll'
+    | '/_shell/o/$organizationSlug/activity/$runId'
+    | '/_shell/o/$organizationSlug/daemons/$daemonId'
     | '/_shell/o/$organizationSlug/settings/api-keys'
     | '/_shell/o/$organizationSlug/settings/billing'
     | '/_shell/o/$organizationSlug/settings/team'
     | '/_shell/o/$organizationSlug/settings/usage'
     | '/_shell/o/$organizationSlug/triggers/$triggerId'
+    | '/_shell/o/$organizationSlug/activity/'
+    | '/_shell/o/$organizationSlug/daemons/'
     | '/_shell/o/$organizationSlug/settings/'
     | '/_shell/o/$organizationSlug/triggers/'
   fileRoutesById: FileRoutesById
@@ -953,6 +1001,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShellOOrganizationSlugSettingsIndexRouteImport
       parentRoute: typeof ShellOOrganizationSlugSettingsRoute
     }
+    '/_shell/o/$organizationSlug/daemons/': {
+      id: '/_shell/o/$organizationSlug/daemons/'
+      path: '/'
+      fullPath: '/o/$organizationSlug/daemons/'
+      preLoaderRoute: typeof ShellOOrganizationSlugDaemonsIndexRouteImport
+      parentRoute: typeof ShellOOrganizationSlugDaemonsRoute
+    }
+    '/_shell/o/$organizationSlug/activity/': {
+      id: '/_shell/o/$organizationSlug/activity/'
+      path: '/'
+      fullPath: '/o/$organizationSlug/activity/'
+      preLoaderRoute: typeof ShellOOrganizationSlugActivityIndexRouteImport
+      parentRoute: typeof ShellOOrganizationSlugActivityRoute
+    }
     '/_shell/o/$organizationSlug/triggers/$triggerId': {
       id: '/_shell/o/$organizationSlug/triggers/$triggerId'
       path: '/$triggerId'
@@ -988,8 +1050,58 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShellOOrganizationSlugSettingsApiKeysRouteImport
       parentRoute: typeof ShellOOrganizationSlugSettingsRoute
     }
+    '/_shell/o/$organizationSlug/daemons/$daemonId': {
+      id: '/_shell/o/$organizationSlug/daemons/$daemonId'
+      path: '/$daemonId'
+      fullPath: '/o/$organizationSlug/daemons/$daemonId'
+      preLoaderRoute: typeof ShellOOrganizationSlugDaemonsDaemonIdRouteImport
+      parentRoute: typeof ShellOOrganizationSlugDaemonsRoute
+    }
+    '/_shell/o/$organizationSlug/activity/$runId': {
+      id: '/_shell/o/$organizationSlug/activity/$runId'
+      path: '/$runId'
+      fullPath: '/o/$organizationSlug/activity/$runId'
+      preLoaderRoute: typeof ShellOOrganizationSlugActivityRunIdRouteImport
+      parentRoute: typeof ShellOOrganizationSlugActivityRoute
+    }
   }
 }
+
+interface ShellOOrganizationSlugActivityRouteChildren {
+  ShellOOrganizationSlugActivityRunIdRoute: typeof ShellOOrganizationSlugActivityRunIdRoute
+  ShellOOrganizationSlugActivityIndexRoute: typeof ShellOOrganizationSlugActivityIndexRoute
+}
+
+const ShellOOrganizationSlugActivityRouteChildren: ShellOOrganizationSlugActivityRouteChildren =
+  {
+    ShellOOrganizationSlugActivityRunIdRoute:
+      ShellOOrganizationSlugActivityRunIdRoute,
+    ShellOOrganizationSlugActivityIndexRoute:
+      ShellOOrganizationSlugActivityIndexRoute,
+  }
+
+const ShellOOrganizationSlugActivityRouteWithChildren =
+  ShellOOrganizationSlugActivityRoute._addFileChildren(
+    ShellOOrganizationSlugActivityRouteChildren,
+  )
+
+interface ShellOOrganizationSlugDaemonsRouteChildren {
+  ShellOOrganizationSlugDaemonsDaemonIdRoute: typeof ShellOOrganizationSlugDaemonsDaemonIdRoute
+  ShellOOrganizationSlugDaemonsIndexRoute: typeof ShellOOrganizationSlugDaemonsIndexRoute
+}
+
+const ShellOOrganizationSlugDaemonsRouteChildren: ShellOOrganizationSlugDaemonsRouteChildren =
+  {
+    ShellOOrganizationSlugDaemonsDaemonIdRoute:
+      ShellOOrganizationSlugDaemonsDaemonIdRoute,
+    ShellOOrganizationSlugDaemonsIndexRoute:
+      ShellOOrganizationSlugDaemonsIndexRoute,
+  }
+
+const ShellOOrganizationSlugDaemonsRouteWithChildren =
+  ShellOOrganizationSlugDaemonsRoute._addFileChildren(
+    ShellOOrganizationSlugDaemonsRouteChildren,
+  )
 
 interface ShellOOrganizationSlugSettingsRouteChildren {
   ShellOOrganizationSlugSettingsApiKeysRoute: typeof ShellOOrganizationSlugSettingsApiKeysRoute
@@ -1043,9 +1155,9 @@ interface ShellRouteChildren {
   ShellOperatorRoute: typeof ShellOperatorRoute
   ShellTriggersRoute: typeof ShellTriggersRoute
   ShellIndexRoute: typeof ShellIndexRoute
-  ShellOOrganizationSlugActivityRoute: typeof ShellOOrganizationSlugActivityRoute
+  ShellOOrganizationSlugActivityRoute: typeof ShellOOrganizationSlugActivityRouteWithChildren
   ShellOOrganizationSlugConnectionsRoute: typeof ShellOOrganizationSlugConnectionsRoute
-  ShellOOrganizationSlugDaemonsRoute: typeof ShellOOrganizationSlugDaemonsRoute
+  ShellOOrganizationSlugDaemonsRoute: typeof ShellOOrganizationSlugDaemonsRouteWithChildren
   ShellOOrganizationSlugHomeRoute: typeof ShellOOrganizationSlugHomeRoute
   ShellOOrganizationSlugSettingsRoute: typeof ShellOOrganizationSlugSettingsRouteWithChildren
   ShellOOrganizationSlugTriggersRoute: typeof ShellOOrganizationSlugTriggersRouteWithChildren
@@ -1058,10 +1170,12 @@ const ShellRouteChildren: ShellRouteChildren = {
   ShellOperatorRoute: ShellOperatorRoute,
   ShellTriggersRoute: ShellTriggersRoute,
   ShellIndexRoute: ShellIndexRoute,
-  ShellOOrganizationSlugActivityRoute: ShellOOrganizationSlugActivityRoute,
+  ShellOOrganizationSlugActivityRoute:
+    ShellOOrganizationSlugActivityRouteWithChildren,
   ShellOOrganizationSlugConnectionsRoute:
     ShellOOrganizationSlugConnectionsRoute,
-  ShellOOrganizationSlugDaemonsRoute: ShellOOrganizationSlugDaemonsRoute,
+  ShellOOrganizationSlugDaemonsRoute:
+    ShellOOrganizationSlugDaemonsRouteWithChildren,
   ShellOOrganizationSlugHomeRoute: ShellOOrganizationSlugHomeRoute,
   ShellOOrganizationSlugSettingsRoute:
     ShellOOrganizationSlugSettingsRouteWithChildren,

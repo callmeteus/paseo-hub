@@ -8,6 +8,7 @@ import type {
   AttachmentProvider,
   AttachmentResolver,
 } from "../attachments/capabilities.js";
+import type { SlackBotClient } from "../triggers/slack/client.js";
 import type { SlackDeliveryStatus } from "../triggers/slack/source/index.js";
 
 export interface TriggerProviderResources {
@@ -78,4 +79,9 @@ export interface ProviderRegistration {
   requests: readonly ProviderRequestRegistration[];
   attachment?: ProviderAttachmentRegistration;
   slackDelivery?: { status(): SlackDeliveryStatus; retry(): Promise<void> };
+  /**
+   * The Slack bot this registration already uses. Home asks it for display names.
+   * Absent when Slack is not configured.
+   */
+  slackNames?: SlackBotClient;
 }

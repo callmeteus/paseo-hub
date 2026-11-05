@@ -15,6 +15,7 @@ import { toDatabaseError } from "./errors.js";
 import { withApiKeySerialization } from "./api-key-serialization.js";
 import { ConnectionRepository } from "./connections.js";
 import { ProviderEventAcceptanceRepository } from "./trigger-acceptance.js";
+import { projectUnroutedProviderEvent } from "./unrouted-event-preview.js";
 import {
   toAgentExecutionRecord,
   toAttachmentRecord,
@@ -47,6 +48,7 @@ import type {
   ProviderEventReceiptRecord,
   ProviderEventReceiptSummary,
   OrganizationRunRecord,
+  UnroutedProviderEvent,
   UnroutedProviderEventCount,
   EnrollDaemonInput,
   EnrollmentTokenRecord,
@@ -2060,6 +2062,26 @@ class PgDatabase implements Database {
        where runs.project_id = $1 and runs.id = $2
        limit 1`,
       [projectId, runId],
+    );
+    const row = rows.rows[0];
+    return row === undefined ? undefined : this.toProjectActivityRun(row);
+  }
+
+  async findOrganizationActivityRun(organizationId: string, runId: string) {
+    const rows = await query<ProjectActivityRunRow>(
+      this.pool,
+      `select runs.*, receipts.provider, receipts.connection_id, receipts.resource_id,
+              receipts.delivery_id, receipts.signature_hash, receipts.provider_application_id,
+              receipts.provider_configuration_version, receipts.source, receipts.repo,
+              receipts.payload, receipts.received_at, receipts.dropped_reason,
+              receipts.accepted_routes
+       from trigger_runs runs
+       join provider_event_receipts receipts
+         on receipts.id = runs.provider_event_receipt_id
+        and receipts.organization_id = runs.organization_id
+       where runs.organization_id = $1 and runs.id = $2
+       limit 1`,
+      [organizationId, runId],
     );
     const row = rows.rows[0];
     return row === undefined ? undefined : this.toProjectActivityRun(row);
@@ -4272,6 +4294,39 @@ class PgDatabase implements Database {
     return rows.rows.map((row) => ({ provider: row.provider, count: row.count }));
   }
 
+  async listUnroutedProviderEventsSince(
+    organizationId: string,
+    since: Date,
+  ): Promise<UnroutedProviderEvent[]> {
+    // Same rows as countUnroutedProviderEventsSince. The payload is reduced to the readable
+    // message and who it came from, so a review never receives the rest of the receipt.
+    const rows = await query<UnroutedProviderEventRow>(
+      this.pool,
+      `select receipts.id, receipts.provider, receipts.source, receipts.repo,
+              receipts.received_at, receipts.payload
+       from provider_event_receipts receipts
+       where receipts.organization_id = $1
+         and receipts.received_at >= $2
+         and receipts.dropped_reason in ('no_project_route', 'no_trigger_for_source')
+         and not exists (
+           select 1 from trigger_runs runs
+           where runs.provider_event_receipt_id = receipts.id
+         )
+       order by receipts.received_at desc, receipts.id desc`,
+      [organizationId, since],
+    );
+    return rows.rows.map((row) =>
+      projectUnroutedProviderEvent({
+        id: row.id,
+        provider: row.provider,
+        source: row.source,
+        repo: row.repo,
+        receivedAt: row.received_at,
+        payload: row.payload,
+      }),
+    );
+  }
+
   async isOrganizationMember(userId: string, organizationId: string): Promise<boolean> {
     const rows = await query(
       this.pool,
@@ -4567,6 +4622,15 @@ async function insertAgentExecutionOnClient(
 
 function isTerminalAgentExecutionStatus(status: AgentExecutionStatus): boolean {
   return status === "succeeded" || status === "failed";
+}
+
+interface UnroutedProviderEventRow extends QueryRow {
+  id: string;
+  provider: ProviderEventReceiptRecord["provider"];
+  source: string;
+  repo: string | null;
+  received_at: Date;
+  payload: unknown;
 }
 
 export interface ProviderEventReceiptRow extends QueryRow {
@@ -5341,6 +5405,19 @@ function workflowDeadlineKind(
   return undefined;
 }
 
+/**
+ * Terminal daemon action. Keep this predicate aligned with `terminalHubAction`:
+ * a launch intent that names a worktree archives, so the daemon can remove the
+ * worktree that run created. Otherwise archive follows autoArchive, and a
+ * failure without it interrupts.
+ */
+const TERMINAL_HUB_ACTION_SQL = `case
+  when daemon_id is null then null
+  when jsonb_typeof(launch_intent -> 'environment' -> 'worktree') = 'object'
+    or coalesce((launch_intent ->> 'autoArchive')::boolean, false) then 'archive'
+  else 'interrupt'
+end`;
+
 async function timeoutWorkflowStepOnClient(
   client: QueryHandle,
   execution: AgentExecutionRow,
@@ -5355,11 +5432,7 @@ async function timeoutWorkflowStepOnClient(
      set status = 'failed', completed_at = $2,
          result = jsonb_build_object('status', 'failed', 'reason', $3::text),
          idle_deadline_at = null,
-         hub_action = case
-           when daemon_id is null then null
-           when coalesce((launch_intent ->> 'autoArchive')::boolean, false) then 'archive'
-           else 'interrupt'
-         end,
+         hub_action = ${TERMINAL_HUB_ACTION_SQL},
          hub_action_completed_at = null::timestamptz
      where id = $1 and status in ('spawning', 'running')
      returning *`,
@@ -5396,11 +5469,7 @@ async function timeoutWorkflowRunOnClient(
      set status = 'failed', completed_at = $2,
          result = jsonb_build_object('status', 'failed', 'reason', 'whole_run_timeout'),
          idle_deadline_at = null,
-         hub_action = case
-           when daemon_id is null then null
-           when coalesce((launch_intent ->> 'autoArchive')::boolean, false) then 'archive'
-           else 'interrupt'
-         end,
+         hub_action = ${TERMINAL_HUB_ACTION_SQL},
          hub_action_completed_at = null::timestamptz
      where workflow_step_run_id in (
        select id from workflow_step_runs where trigger_run_id = $1

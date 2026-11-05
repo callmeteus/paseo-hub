@@ -3,10 +3,13 @@ import type {
   Database,
   OrganizationConnectionUsage,
   OrganizationRunRecord,
+  UnroutedProviderEvent,
   UnroutedProviderEventCount,
 } from "../db/types.js";
 import { resolveRouteTenant } from "../projects/access.js";
+import type { SlackNameDirectory } from "../triggers/slack/client.js";
 import { projectTriggerForm } from "../triggers/configuration/editor.js";
+import { resolveUnroutedEventNames } from "./slack-names.js";
 
 /** How far back the overview looks. One week is long enough to hold a first run and short enough that a nudge fades once a trigger listens. */
 export const HOME_WINDOW_DAYS = 7;
@@ -31,6 +34,10 @@ export interface HomeSnapshot {
   triggers: readonly { id: string; name: string; event: string; enabled: boolean }[];
   runs: readonly (Omit<OrganizationRunRecord, "receivedAt"> & { receivedAt: string })[];
   unrouted: readonly UnroutedProviderEventCount[];
+  /** The events `unrouted` counts, newest first, without the stored payload or the workspace id. */
+  unroutedEvents: readonly (Omit<UnroutedProviderEvent, "receivedAt" | "teamId"> & {
+    receivedAt: string;
+  })[];
   windowDays: number;
 }
 
@@ -49,6 +56,7 @@ export class HomeDashboard {
      */
     private readonly providerAppsConfigured: (bindings: OrganizationConnectionUsage) => boolean,
     private readonly now: () => Date = () => new Date(),
+    private readonly slackNames?: SlackNameDirectory,
   ) {}
 
   async snapshot(request: Request, organizationSlug: string): Promise<HomeSnapshot> {
@@ -58,7 +66,7 @@ export class HomeDashboard {
     const organizationId = tenant.organization.id;
     const since = new Date(this.now().getTime() - HOME_WINDOW_DAYS * 86_400_000);
     const triggers = await this.database.listOrganizationTriggers(organizationId);
-    const [connections, daemons, revisions, runs, unrouted] = await Promise.all([
+    const [connections, daemons, revisions, runs, unrouted, unroutedEvents] = await Promise.all([
       this.database.organizationConnectionUsage(organizationId),
       this.database.listDaemonsForOrganization(organizationId),
       Promise.all(
@@ -68,6 +76,7 @@ export class HomeDashboard {
       ),
       this.database.listOrganizationRunsSince(organizationId, since, RUNS_SHOWN),
       this.database.countUnroutedProviderEventsSince(organizationId, since),
+      this.database.listUnroutedProviderEventsSince(organizationId, since),
     ]);
     return {
       organization: tenant.organization,
@@ -118,9 +127,28 @@ export class HomeDashboard {
         agent: run.agent,
       })),
       unrouted,
+      unroutedEvents: (
+        await resolveUnroutedEventNames(unroutedEvents, this.slackNames, organizationId)
+      ).map(presentUnroutedEvent),
       windowDays: HOME_WINDOW_DAYS,
     };
   }
+}
+
+function presentUnroutedEvent(
+  event: UnroutedProviderEvent,
+): HomeSnapshot["unroutedEvents"][number] {
+  return {
+    id: event.id,
+    provider: event.provider,
+    source: event.source,
+    receivedAt: event.receivedAt.toISOString(),
+    ...(event.channel === undefined ? {} : { channel: event.channel }),
+    ...(event.author === undefined ? {} : { author: event.author }),
+    ...(event.text === undefined ? {} : { text: event.text }),
+    ...(event.body === undefined ? {} : { body: event.body }),
+    ...(event.repository === undefined ? {} : { repository: event.repository }),
+  };
 }
 
 /** The one event a self-contained trigger listens for; a legacy document has none to name. */

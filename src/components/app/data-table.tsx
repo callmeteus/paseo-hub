@@ -1,5 +1,12 @@
 /* oxlint-disable eslint-plugin-jsx-a11y/prefer-tag-over-role, eslint-plugin-react-perf/jsx-no-new-function-as-prop -- a table row cannot itself be a <button>, and its onKeyDown handler is scoped per rendered row */
-import { Children, createContext, isValidElement, useContext, type ReactNode } from "react";
+import {
+  Children,
+  createContext,
+  isValidElement,
+  useContext,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 
 import { cn } from "../../lib/utils.js";
 import { Skeleton } from "../ui/skeleton.js";
@@ -163,9 +170,18 @@ function columnKey(column: DataColumn, index: number): string {
  * The row is a pointer shortcut, not a control: a row carrying `role="button"` and `tabIndex`
  * around a link and a kebab is two focusable things inside a third, which is the
  * `nested-interactive` failure. The keyboard and a screen reader use the link in the row, so
- * `onSelect` requires one.
+ * `onSelect` requires one. `navigates` is that same shortcut when the link is already the
+ * destination: the row click follows it, and Tab still lands on the link rather than the row.
  */
-export function DataRow({ children, onSelect }: { children: ReactNode; onSelect?: () => void }) {
+export function DataRow({
+  children,
+  onSelect,
+  navigates = false,
+}: {
+  children: ReactNode;
+  onSelect?: () => void;
+  navigates?: boolean;
+}) {
   // Each cell learns its column from its position, so a cell never restates how its column
   // reads. A cell left out with `cond ? <DataCell /> : null` drops out here too.
   const cells = Children.toArray(children).map((cell, index) => (
@@ -173,12 +189,24 @@ export function DataRow({ children, onSelect }: { children: ReactNode; onSelect?
       {cell}
     </CellIndex.Provider>
   ));
-  if (onSelect === undefined) return <TableRow>{cells}</TableRow>;
+  if (onSelect === undefined && !navigates) return <TableRow>{cells}</TableRow>;
   return (
-    <TableRow data-navigates="true" className="cursor-pointer" onClick={onSelect}>
+    <TableRow
+      data-navigates="true"
+      className="cursor-pointer focus-within:bg-accent"
+      onClick={onSelect ?? followRowLink}
+    >
       {cells}
     </TableRow>
   );
+}
+
+/** Pointer shortcut for a row whose keyboard control is the link already in it. */
+function followRowLink(event: MouseEvent<HTMLTableRowElement>) {
+  if (!(event.target instanceof Element)) return;
+  if (event.target.closest("a, button") !== null) return;
+  const link = event.currentTarget.querySelector("a");
+  if (link instanceof HTMLAnchorElement) link.click();
 }
 
 /** A value in a row. Its alignment, visibility, and whether it truncates are its column's. */

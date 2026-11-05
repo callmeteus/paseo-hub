@@ -6,8 +6,10 @@ import { respondWithFailure } from "../failures/index.js";
 import { SlackChannelListError, type SlackChannelChoice } from "../providers/slack/channels.js";
 import { getApplication } from "../server/runtime.js";
 import type { TriggerDashboard } from "./dashboard.js";
+import type { RunDetail } from "./run-detail.js";
 
 const scopeSchema = z.object({ organizationSlug: z.string().trim().min(1).max(100) });
+const runScopeSchema = scopeSchema.extend({ runId: z.string().uuid() });
 const slackChannelsSchema = scopeSchema.extend({
   connectionSlug: z.string().trim().min(1).max(100),
 });
@@ -26,6 +28,24 @@ export const triggerSnapshot = createServerFn({ method: "GET" })
     } catch (error) {
       return respondWithFailure(error, triggerContext("trigger.list", data.organizationSlug), {
         fallback: "Hub couldn't load this organization's triggers. Reload the page.",
+      });
+    }
+  });
+
+export const triggerRunSnapshot = createServerFn({ method: "GET" })
+  .validator(runScopeSchema)
+  .handler(async ({ data }): Promise<Result<RunDetail>> => {
+    try {
+      const dashboard = (await getApplication()).triggerDashboard;
+      if (dashboard == null) throw new Error("trigger dashboard unavailable");
+      return respondOk(
+        await dashboard.activityRun(getRequest(), data.organizationSlug, data.runId),
+      );
+    } catch (error) {
+      return respondWithFailure(error, triggerContext("trigger.run", data.organizationSlug), {
+        fallback: "Hub couldn't load this run.",
+        notFound: "This run is not in this organization.",
+        forbidden: "You don't have permission to view this run.",
       });
     }
   });

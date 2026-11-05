@@ -62,6 +62,35 @@ export interface UnroutedProviderEventCount {
   count: number;
 }
 
+/**
+ * One of those events, as the overview can show it. The payload stays on the receipt.
+ * A field is present only when that string was stored.
+ */
+export interface UnroutedProviderEvent {
+  id: string;
+  provider: ProviderEventReceiptRecord["provider"];
+  source: string;
+  receivedAt: Date;
+  /** A channel id or name, when the payload has one. */
+  channel?: string;
+  /** Who sent it, when the payload names them. */
+  author?: string;
+  /**
+   * A short line of the readable message. The overview resolves Slack names before showing it.
+   * Absent when the receipt has none.
+   */
+  text?: string;
+  /** The readable message, not cut, so the review can open it. Absent when the receipt has none. */
+  body?: string;
+  /**
+   * Slack workspace id copied from the payload. The overview uses it to ask Slack for names
+   * and does not show it.
+   */
+  teamId?: string;
+  /** A repository stored on the receipt or in the payload. */
+  repository?: string;
+}
+
 export interface ProviderEventRouteSnapshot {
   projectId: string;
   configurationRevisionId: string;
@@ -1241,6 +1270,15 @@ export interface Database {
     projectId: string,
     runId: string,
   ): Promise<ProjectActivityRunRecord | undefined>;
+  /**
+   * One run as Home and the organization activity page open it. Scoped to the organization so a
+   * run id from somewhere else does not resolve here. The runtime project stays an implementation
+   * detail of the trigger.
+   */
+  findOrganizationActivityRun(
+    organizationId: string,
+    runId: string,
+  ): Promise<ProjectActivityRunRecord | undefined>;
   updateTriggerRunValues(triggerRunId: string, values: unknown): Promise<TriggerRunRecord>;
   findWorkflowStepRunById(id: string): Promise<WorkflowStepRunRecord | undefined>;
   findWorkflowStepRunByTriggerRun(triggerRunId: string): Promise<WorkflowStepRunRecord | undefined>;
@@ -1643,6 +1681,14 @@ export interface Database {
     organizationId: string,
     since: Date,
   ): Promise<UnroutedProviderEventCount[]>;
+  /**
+   * The same events `countUnroutedProviderEventsSince` counts, newest first.
+   * A filter that declined an event is a trigger listening, so those drops are not listed.
+   */
+  listUnroutedProviderEventsSince(
+    organizationId: string,
+    since: Date,
+  ): Promise<UnroutedProviderEvent[]>;
   isOrganizationMember(userId: string, organizationId: string): Promise<boolean>;
   startConnectionAttempt(input: StartConnectionAttemptInput): Promise<void>;
   findConnectionAttemptConfiguration(

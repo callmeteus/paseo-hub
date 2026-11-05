@@ -1,5 +1,8 @@
+/* oxlint-disable typescript-eslint/no-unsafe-type-assertion -- generated routes cannot express server-resolved organization URLs */
+/* oxlint-disable eslint-plugin-react-perf/jsx-no-jsx-as-prop -- the daemon name is the link that opens this registration */
 import { useSnapshotQuery } from "../queries/index.js";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { BookOpen } from "lucide-react";
 import { useCallback, useState, type FormEvent } from "react";
@@ -32,6 +35,7 @@ import {
 import type { Result } from "../contract/respond.js";
 import { DAEMON_MUTATION_KEY } from "../auth/tenant-mutation.js";
 import { daemonLoginCommand, GRANT_EXECUTE_COMMAND } from "./handoff.js";
+import { daemonDetailPath } from "../navigation/detail-paths.js";
 import { daemonsQueryKey, refreshDaemons } from "./status.js";
 
 const DAEMON_COLUMNS: readonly DataColumn[] = [
@@ -176,6 +180,7 @@ export function DaemonsPanel({
           <DaemonRow
             key={daemon.id}
             daemon={daemon}
+            organizationSlug={organizationSlug}
             canManage={daemons.canManage}
             busy={busy}
             onRename={renameSelected}
@@ -189,12 +194,14 @@ export function DaemonsPanel({
 
 function DaemonRow({
   daemon,
+  organizationSlug,
   canManage,
   busy,
   onRename,
   onRevoke,
 }: {
   daemon: BrowserDaemon;
+  organizationSlug: string;
   canManage: boolean;
   busy: boolean;
   onRename: (daemonId: string, slug: string) => Promise<string | undefined>;
@@ -208,9 +215,18 @@ function DaemonRow({
   const revoke = useCallback(() => onRevoke(daemon.id), [daemon.id, onRevoke]);
 
   return (
-    <DataRow>
+    <DataRow navigates>
       <DataCell>
-        <TwoLine primary={daemon.slug} />
+        <TwoLine
+          primary={
+            <Link
+              to={daemonDetailPath(organizationSlug, daemon.id) as never}
+              className="text-inherit no-underline"
+            >
+              {daemon.slug}
+            </Link>
+          }
+        />
       </DataCell>
       <DataCell muted>
         <span className="font-mono text-xs">{daemon.id.slice(0, 8)}</span>

@@ -31,6 +31,7 @@ import { TriggerDashboard } from "./triggers/dashboard.js";
 import type { ProviderApplications } from "./provider-applications/index.js";
 import { DaemonProviderCatalog } from "./daemons/provider-catalog.js";
 import { HomeDashboard } from "./home/dashboard.js";
+import { slackNameDirectory, type SlackNameDirectory } from "./triggers/slack/client.js";
 import type { ProviderConnectionRegistration } from "./providers/registration.js";
 import { EmbeddedConnectionHandoff } from "./connections/app-handoff.js";
 import { ProductRequestError } from "./auth/organization-access.js";
@@ -152,7 +153,7 @@ async function createOwnedApplicationRuntime(
         : new ProjectDashboard(options.database, options.auth),
     triggerDashboard: triggerDashboardFor(options, application.hub),
     daemonProviderCatalog: daemonProviderCatalogFor(options, application.hub),
-    homeDashboard: homeDashboardFor(options, connections),
+    homeDashboard: homeDashboardFor(options, connections, slackNamesFor(registrations)),
     ...entitlementSurfaces(options),
     testTriggerRoutes: options.testTriggerRoutes ?? false,
     auth: (request) => {
@@ -378,13 +379,28 @@ function triggerDashboardFor(
 function homeDashboardFor(
   options: ApplicationCompositionOptions,
   connections: ReadonlyMap<string, ProviderConnectionRegistration>,
+  slackNames: SlackNameDirectory | undefined,
 ): HomeDashboard | null {
   if (options.database === null || options.auth === null) return null;
   // The same registrations `connectionStatus` answers from: a provider whose status is anything
   // but "not configured" has an app behind it.
-  return new HomeDashboard(options.database, options.auth, (bindings) =>
-    [...connections.values()].some((connection) => isConfigured(connection.status(bindings))),
+  return new HomeDashboard(
+    options.database,
+    options.auth,
+    (bindings) =>
+      [...connections.values()].some((connection) => isConfigured(connection.status(bindings))),
+    () => new Date(),
+    slackNames,
   );
+}
+
+function slackNamesFor(
+  registrations: readonly ProviderRegistration[],
+): SlackNameDirectory | undefined {
+  const names = registrations.find(
+    (registration) => registration.slackNames !== undefined,
+  )?.slackNames;
+  return names === undefined ? undefined : slackNameDirectory(names);
 }
 
 function isConfigured(status: unknown): boolean {
