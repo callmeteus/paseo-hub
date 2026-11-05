@@ -14,6 +14,7 @@ import {
   isCompiledStaticStep,
   isCompiledWaitStep,
   parseCompiledHubConfig,
+  staticPromptText,
 } from "../../config/compiler.js";
 import type { TriggerDocument } from "./schema.js";
 import { compileTriggerDocument, serializeTriggerDocument } from "./index.js";
@@ -159,9 +160,7 @@ function singleRunDocument(
       },
       agent: authoredAgent(step.agent),
       ...(step.title === undefined ? {} : { title: step.title }),
-      prompt: step.prompt
-        .map((block) => (block.kind === "text" ? block.value : block.content))
-        .join("\n"),
+      prompt: step.prompt.map((block) => staticPromptText(block)).join("\n"),
       max_runtime: duration(step.maxRuntimeMs),
       idle_timeout: duration(step.idleTimeoutMs),
       ...(step.startupTimeoutMs === undefined

@@ -18,6 +18,11 @@ import {
   type ResolvedPromptPartials,
 } from "./prompt-partials.js";
 import {
+  assertInstructionRoot,
+  compileRuntimePromptInclude,
+  validatePromptInstructionPath,
+} from "../workflows/prompt-instruction-path.js";
+import {
   AuthoredGitHubAuthoritySchema,
   CompiledGitHubAuthoritySchema,
   compileGitHubAuthority,
@@ -26,6 +31,12 @@ import {
   type CompiledGitHubAuthority,
 } from "./github-authority.js";
 import { validateConnectionTemplate } from "./connection-template.js";
+import {
+  migrateSlackTextFilter,
+  SlackMessageRegexSchema,
+  SlackMessageTextSchema,
+} from "../triggers/slack/text-filter.js";
+import { GuardrailsSchema, type Guardrail } from "../workflows/guardrails.js";
 
 const IDENTIFIER = /^[a-z][a-z0-9_-]*$/u;
 const EVENT_NAME = /^[a-z][a-z0-9_-]*\.[a-z][a-z0-9_-]*$/u;
@@ -59,9 +70,18 @@ const AgentSchema = z
   })
   .strict();
 
+const PromptIncludeTargetSchema = z.union([
+  z.string().min(1),
+  z
+    .object({
+      path: z.string().min(1),
+      root: z.string().min(1).optional(),
+    })
+    .strict(),
+]);
 const PromptBlockSchema = z.union([
   z.object({ text: z.string() }).strict(),
-  z.object({ include: z.string().min(1) }).strict(),
+  z.object({ include: PromptIncludeTargetSchema }).strict(),
 ]);
 const JsonSchemaSchema = z.record(z.string(), z.unknown());
 
@@ -90,12 +110,29 @@ const AuthoredTriggerFilterSchema = z
     pattern: z.string().optional(),
     contains: z.string().optional(),
     /**
-     * Substrings that must all appear. Slack matching ignores case and requires a
-     * letter or number boundary, so a short token does not hit the middle of another word.
+     * Legacy Slack terms that must all appear. Slack compiles each term into `regex`
+     * and matches that list instead. GitHub does not read this field.
      */
     contains_all: z.array(z.string().min(1)).min(1).optional(),
-    /** Substrings of which at least one must appear, with the same Slack boundary rule. */
+    /**
+     * Legacy Slack terms of which one must appear. Slack compiles them into one
+     * alternation inside `regex`. GitHub does not read this field.
+     */
     contains_any: z.array(z.string().min(1)).min(1).optional(),
+    /**
+     * Literal text and regular expressions that must all match the raw Slack message.
+     * A string is case-insensitive literal text with a letter or number boundary.
+     * `{ regex }` is a regular expression. Omit the field for no literal filter.
+     * When `regex` is also set, every clause from both lists has to match.
+     * GitHub does not read this field.
+     */
+    text: SlackMessageTextSchema.optional(),
+    /**
+     * Expressions that must all match the raw Slack message. Each string is a regular expression.
+     * Omit the field for no expression filter. The author writes anchors when the match must be a prefix.
+     * GitHub does not read this field.
+     */
+    regex: SlackMessageRegexSchema.optional(),
     /** GitHub text which makes an event ineligible, such as a command another trigger owns. */
     exclude_contains: z.string().optional(),
     label: z.string().min(1).optional(),
@@ -287,7 +324,22 @@ export type AuthoredInput = z.infer<typeof AuthoredInputSchema>;
 
 export type CompiledPromptBlock =
   | { kind: "text"; value: string }
-  | { kind: "partial"; path: string; content: string; contentHash: string };
+  | { kind: "partial"; path: string; content: string; contentHash: string }
+  | { kind: "include"; path: string; root?: string | undefined };
+
+/**
+ * Text already stored on a compiled prompt block.
+ *
+ * An include has no text until the run reads the file, so migration cannot inline it.
+ *
+ * @param block - One compiled prompt block
+ * @returns The stored text
+ */
+export function staticPromptText(block: CompiledPromptBlock): string {
+  if (block.kind === "text") return block.value;
+  if (block.kind === "partial") return block.content;
+  throw new Error(`prompt include ${block.path} is read when the run starts`);
+}
 
 export interface CompiledAgent {
   provider: string;
@@ -409,6 +461,8 @@ export interface CompiledTrigger {
   inputs: Readonly<Record<string, CompiledInput>>;
   values: Readonly<Record<string, Expression>>;
   filters?: CompiledTriggerFilter | undefined;
+  /** Rails enforced when this run sends a message. Absent means no extra restriction. */
+  guardrails?: readonly Guardrail[] | undefined;
 }
 
 export interface CompiledHubConfig {
@@ -420,6 +474,11 @@ export interface CompileHubConfigOptions {
   resolvedPromptPartials?: ResolvedPromptPartials;
   namedAgents?: Readonly<Record<string, CompiledAgent>>;
   sourceFiles?: Readonly<Record<string, string>>;
+  /**
+   * Automation documents name instruction files that are read when the run
+   * starts. Workflow bundles still resolve `include` from the partial bundle.
+   */
+  deferUnbundledIncludes?: boolean;
 }
 
 /** A compiler failure located in the conceptual authored configuration tree. */
@@ -442,6 +501,13 @@ const CompiledPromptBlockSchema: z.ZodType<CompiledPromptBlock> = z.union([
       path: z.string().min(1),
       content: z.string(),
       contentHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("include"),
+      path: z.string().min(1),
+      root: z.string().min(1).optional(),
     })
     .strict(),
 ]);
@@ -566,6 +632,7 @@ const CompiledTriggerSchema: z.ZodType<CompiledTrigger> = z
     inputs: z.record(z.string(), CompiledInputSchema),
     values: z.record(z.string(), z.custom<Expression>(isExpression)),
     filters: CompiledTriggerFilterSchema.optional(),
+    guardrails: GuardrailsSchema.optional(),
   })
   .strict();
 
@@ -596,6 +663,7 @@ export function compileHubConfig(
       options.resolvedPromptPartials,
       options.namedAgents ?? {},
       options.sourceFiles?.[trigger.name],
+      options.deferUnbundledIncludes === true,
     ),
   );
   const compiled = { environments: authored.environments, triggers } satisfies CompiledHubConfig;
@@ -619,7 +687,12 @@ export function parseCompiledHubConfig(value: unknown): CompiledHubConfig {
   } catch {
     throw new Error("active configuration contains an invalid compiled workflow contract");
   }
-  return deepFreeze(parsed.data);
+  // A configuration saved before `regex` still has the old Slack text fields. Migrate on load
+  // so matching does not skip those triggers. Install stores the compiled list after this.
+  return deepFreeze({
+    ...parsed.data,
+    triggers: parsed.data.triggers.map((trigger) => migrateSlackTextFilter(trigger)),
+  });
 }
 
 export function compiledConfigurationHash(configuration: CompiledHubConfig): string {
@@ -656,6 +729,7 @@ function compileTrigger(
   resolvedPromptPartials: ResolvedPromptPartials | undefined,
   namedAgents: Readonly<Record<string, CompiledAgent>>,
   sourceFile: string | undefined,
+  deferUnbundledIncludes: boolean,
 ): CompiledTrigger {
   const triggerPath = ["triggers", trigger.name] as const;
   compileAt([...triggerPath, "on"], () => {
@@ -667,7 +741,15 @@ function compileTrigger(
     validateEnvironmentInputChoices(trigger, inputs, environmentNames, environments),
   );
   const steps = trigger.steps.map((step) =>
-    compileStep(trigger, step, environmentNames, environments, resolvedPromptPartials, namedAgents),
+    compileStep(
+      trigger,
+      step,
+      environmentNames,
+      environments,
+      resolvedPromptPartials,
+      namedAgents,
+      deferUnbundledIncludes,
+    ),
   );
   const values = compileValues(trigger);
   const compiled = {
@@ -680,7 +762,9 @@ function compileTrigger(
     steps,
     inputs,
     values,
-    ...(trigger.filters === undefined ? {} : { filters: trigger.filters }),
+    ...(trigger.filters === undefined
+      ? {}
+      : { filters: migrateSlackTextFilter({ on: trigger.on, filters: trigger.filters }).filters }),
   };
   validateExpressionContract(trigger.name, compiled, environments);
   return compiled;
@@ -802,6 +886,7 @@ function compileStep(
   environments: ReadonlyMap<string, AuthoredEnvironment>,
   resolvedPromptPartials: ResolvedPromptPartials | undefined,
   namedAgents: Readonly<Record<string, CompiledAgent>>,
+  deferUnbundledIncludes: boolean,
 ): CompiledStep {
   const stepPath = ["triggers", trigger.name, "steps", step.id] as const;
   if ("wait" in step || isAuthoredEnvStep(step) || "http" in step || "notice" in step) {
@@ -862,7 +947,13 @@ function compileStep(
         }),
     agent,
     ...(step.title === undefined ? {} : { title: step.title }),
-    prompt: compilePromptBlocks(trigger.name, step.id, step.prompt, resolvedPromptPartials),
+    prompt: compilePromptBlocks(
+      trigger.name,
+      step.id,
+      step.prompt,
+      resolvedPromptPartials,
+      deferUnbundledIncludes,
+    ),
     ...(env === undefined ? {} : { env }),
     ...(github === undefined ? {} : { github }),
     ...(condition === undefined ? {} : { condition }),
@@ -930,9 +1021,27 @@ function compilePromptBlocks(
   stepId: string,
   blocks: Extract<AuthoredStep, { prompt: unknown }>["prompt"],
   resolvedPromptPartials: ResolvedPromptPartials | undefined,
+  deferUnbundledIncludes: boolean,
 ): readonly CompiledPromptBlock[] {
   return blocks.map((block, index) => {
     if ("text" in block) return { kind: "text" as const, value: block.text };
+    if (deferUnbundledIncludes) {
+      try {
+        return compileRuntimePromptInclude(block.include);
+      } catch (error) {
+        throw new Error(
+          `trigger ${triggerName} step ${stepId} prompt[${index}].include: ${
+            error instanceof Error ? error.message : "invalid instruction"
+          }`,
+          { cause: error },
+        );
+      }
+    }
+    if (typeof block.include !== "string") {
+      throw new Error(
+        `trigger ${triggerName} step ${stepId} prompt[${index}].include: a workflow include is a path under .paseo/workflows`,
+      );
+    }
     if (resolvedPromptPartials === undefined) {
       throw new Error(
         `trigger ${triggerName} step ${stepId} prompt[${index}].include: this configuration was compiled without a prompt partial bundle, so no include can be resolved`,
@@ -1141,6 +1250,7 @@ function validateExpressionContract(
       });
     }
     for (const [index, block] of step.prompt.entries()) {
+      if (block.kind === "include") continue;
       compileAt(["triggers", triggerName, "steps", step.id, "prompt", index], () =>
         validateTemplate(
           block.kind === "text" ? block.value : block.content,
@@ -1542,6 +1652,20 @@ function validateStepEnvironmentContract(
 
 function validateCompiledPromptBlocks(step: CompiledAgentStep): void {
   for (const block of step.prompt) {
+    if (block.kind === "include") {
+      try {
+        validatePromptInstructionPath(block.path);
+        if (block.root !== undefined) assertInstructionRoot(block.root);
+      } catch (error) {
+        throw new Error(
+          `step ${step.id} contains an unsafe prompt instruction: ${
+            error instanceof Error ? error.message : "invalid instruction"
+          }`,
+          { cause: error },
+        );
+      }
+      continue;
+    }
     if (block.kind !== "partial") continue;
     try {
       validateResolvedPromptPartialPath(block.path);

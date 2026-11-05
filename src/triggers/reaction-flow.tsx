@@ -12,6 +12,7 @@ import { Combobox, type ComboboxOption } from "../components/app/combobox.js";
 import { FormField } from "../components/app/form-field.js";
 import { SegmentedControl } from "../components/app/segmented-control.js";
 import type { TriggerFieldErrors } from "./configuration/editor.js";
+import { InstructionsEditor } from "./instructions-editor.js";
 import { ReactionFlow } from "./configuration/reaction-form.js";
 import { trueBranch } from "./configuration/schema.js";
 import { supportsUnattendedRuns } from "./configuration/unattended.js";
@@ -373,14 +374,10 @@ function AgentReactionFields({
           )}
         </FormField>
       )}
-      <FormField
+      <InstructionsEditor
         id={`reaction-${reaction.id}-prompt`}
-        label="Instructions"
-        kind="multiline"
-        name={`reaction-${reaction.id}-prompt`}
         value={reaction.prompt}
         onChange={(prompt) => onChange({ prompt })}
-        required
         {...flowError(errors, reaction.id, "prompt")}
       />
       <SegmentedControl

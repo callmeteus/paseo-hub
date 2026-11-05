@@ -1,4 +1,11 @@
 import { parseExpression } from "../../workflows/expression.js";
+import {
+  instructionError,
+  instructionsDocument,
+  projectInstructions,
+  textInstructions,
+  type InstructionDraft,
+} from "./form-drafts.js";
 import { isEnvReaction, trueBranch, type TriggerReaction } from "./schema.js";
 
 const DURATION = /^([1-9][0-9]*)(ms|s|m|h)$/u;
@@ -25,7 +32,7 @@ export interface AgentFields {
   githubRepositories: string;
   githubPermissions: string;
   githubDuration: string;
-  prompt: string;
+  prompt: InstructionDraft[];
   maxRuntime: string;
   idleTimeout: string;
 }
@@ -372,7 +379,7 @@ function agentFieldsFromReaction(
         ? ""
         : JSON.stringify(reaction.github.permissions, null, 2),
     githubDuration: reaction.github?.duration ?? "",
-    prompt: reaction.prompt,
+    prompt: projectInstructions(reaction.prompt),
     maxRuntime: reaction.max_runtime,
     idleTimeout: reaction.idle_timeout,
   };
@@ -391,7 +398,7 @@ function blankAgentFields(): AgentFields {
     githubRepositories: "",
     githubPermissions: "",
     githubDuration: "",
-    prompt: "",
+    prompt: textInstructions(""),
     maxRuntime: "2h",
     idleTimeout: "10m",
   };
@@ -425,7 +432,7 @@ function blankAgent(existing: readonly ReactionFlow.Reaction[]): ReactionFlow.Ag
     ...previous,
     type: "agent",
     id: nextId("agent", existing),
-    prompt: "${{ paseo.prompt }}",
+    prompt: textInstructions("${{ paseo.prompt }}"),
     githubConnection: "",
     githubRepositories: "",
     githubPermissions: "",
@@ -469,9 +476,8 @@ function agentErrors(reaction: ReactionFlow.Agent): Record<string, string> {
   if (reaction.agent.trim().length === 0) found[`flow.${reaction.id}.agent`] = "Agent is required.";
   if (reaction.mode.trim().length === 0)
     found[`flow.${reaction.id}.mode`] = "Execution mode is required.";
-  if (reaction.prompt.trim().length === 0) {
-    found[`flow.${reaction.id}.prompt`] = "Instructions are required.";
-  }
+  const instructions = instructionError(reaction.prompt);
+  if (instructions !== undefined) found[`flow.${reaction.id}.prompt`] = instructions;
   if (reaction.continuationMode === "key" && reaction.continuationKey.trim().length === 0) {
     found[`flow.${reaction.id}.continuationKey`] = "Enter a continuation key or expression.";
   }
@@ -569,7 +575,7 @@ function yamlReaction(
       reaction.continuationMode === "key"
         ? { mode: "key", key: reaction.continuationKey.trim() }
         : { mode: reaction.continuationMode === "new" ? "new" : "conversation" },
-    prompt: reaction.prompt,
+    prompt: instructionsDocument(reaction.prompt),
     max_runtime: shared.maxRuntime.trim(),
     idle_timeout: shared.idleTimeout.trim(),
     ...(github === undefined ? {} : { github }),
@@ -617,6 +623,8 @@ function applyPatch(
     };
   }
   const next = { ...reaction };
+  const prompt = readInstructionPatch(patch);
+  if (prompt !== undefined) next.prompt = prompt;
   for (const field of [
     "agent",
     "mode",
@@ -629,12 +637,34 @@ function applyPatch(
     "githubRepositories",
     "githubPermissions",
     "githubDuration",
-    "prompt",
   ] as const) {
     const value = readPatchString(patch, field);
     if (value !== undefined) next[field] = value;
   }
   return next;
+}
+
+function readInstructionPatch(patch: object): InstructionDraft[] | undefined {
+  const value = ownValue(patch, "prompt");
+  if (!Array.isArray(value)) return undefined;
+  const parts: InstructionDraft[] = [];
+  for (const item of value) {
+    if (!isInstructionDraft(item)) return undefined;
+    parts.push(item);
+  }
+  return parts;
+}
+
+function isInstructionDraft(value: unknown): value is InstructionDraft {
+  if (typeof value !== "object" || value === null || !("kind" in value)) return false;
+  if (value.kind === "text") return "text" in value && typeof value.text === "string";
+  if (value.kind !== "include") return false;
+  return (
+    "path" in value &&
+    typeof value.path === "string" &&
+    "root" in value &&
+    typeof value.root === "string"
+  );
 }
 
 function readPatchString(patch: object, key: string): string | undefined {

@@ -13,7 +13,8 @@ import {
   splitAgentId,
   triggerFormErrors,
 } from "./editor.js";
-import { setEventAudience, setEventTerms, toggleTriggerEvent } from "./form-events.js";
+import { emptyWorktree, textInstructions } from "./form-drafts.js";
+import { setEventAudience, setEventRegex, toggleTriggerEvent } from "./form-events.js";
 
 import {
   GITHUB_SEMANTIC_TRIGGER_EVENT_NAMES,
@@ -131,7 +132,10 @@ describe("trigger form YAML bridge", () => {
   test("keeps advanced YAML added before a new trigger's first save", () => {
     const projection = projectTriggerForm(ADVANCED);
     if (projection.status !== "editable") throw new Error(projection.reason);
-    const merged = mergeTriggerForm(ADVANCED, { ...projection.value, prompt: "Changed." });
+    const merged = mergeTriggerForm(ADVANCED, {
+      ...projection.value,
+      prompt: textInstructions("Changed."),
+    });
     if (merged.status !== "ok") throw new Error(merged.reason);
     expect(merged.yaml).toContain("# keep this heading");
     const value = TriggerDocumentSchema.parse(parseDocument(merged.yaml).toJS());
@@ -139,6 +143,28 @@ describe("trigger form YAML bridge", () => {
     expect(run.prompt).toBe("Changed.");
     expect(run.target.worktree).toBeDefined();
     expect(run.outputs).toBeDefined();
+  });
+
+  test("keeps run.guardrails when the form saves another field", () => {
+    const yaml = ADVANCED.replace(
+      "  auto_archive: false\n",
+      "  auto_archive: false\n  guardrails:\n    - id: slack.same_channel\n    - id: slack.same_thread\n      options: {}\n",
+    );
+    const projection = projectTriggerForm(yaml);
+    expect(projection.status).toBe("editable");
+    if (projection.status !== "editable") throw new Error(projection.reason);
+    expect(patchTriggerYaml(yaml, projection.value)).toBe(yaml);
+    const saved = patchTriggerYaml(yaml, {
+      ...projection.value,
+      prompt: textInstructions("Changed."),
+    });
+    const value = TriggerDocumentSchema.parse(parseDocument(saved).toJS());
+    const run = singleAgentRun(value.run);
+    expect(run.guardrails).toEqual([
+      { id: "slack.same_channel" },
+      { id: "slack.same_thread", options: {} },
+    ]);
+    expect(run.prompt).toBe("Changed.");
   });
 
   test("edits two Slack events, bot messages, and Cursor Fast in the form", () => {
@@ -218,17 +244,9 @@ on:
       channels:
         - C096V21TE0K
       include_bots: true
-      contains_all:
-        - "ALERTA:"
-      contains_any:
-        - CPU
-        - RAM
-        - "Memória"
-        - firewall
-        - WAF
-        - ataque
-        - DDoS
-        - flood
+      regex:
+        - '(?i:(?<![\\p{L}\\p{N}])ALERTA:(?![\\p{L}\\p{N}]))'
+        - '(?i:(?<![\\p{L}\\p{N}])(?:CPU|RAM|Memória)(?![\\p{L}\\p{N}]))'
   slack.mention:
     connection: slack-office
     filters:
@@ -256,8 +274,8 @@ run:
     if (projection.status !== "editable") return;
     expect(projection.value.eventUsers?.["slack.message"]).toBe("U09FFH54LM9");
     expect(projection.value.eventUsers?.["slack.mention"]).toBe("*");
-    expect(projection.value.containsAll?.["slack.message"]).toBe("ALERTA:");
-    expect(projection.value.containsAny?.["slack.message"]).toContain("Memória");
+    expect(projection.value.regex?.["slack.message"]).toContain("ALERTA:");
+    expect(projection.value.regex?.["slack.message"]).toContain("Memória");
     expect(patchTriggerYaml(yaml, projection.value)).toBe(yaml);
 
     const widened = patchTriggerYaml(
@@ -267,16 +285,241 @@ run:
     const parsed = TriggerDocumentSchema.parse(parseDocument(widened).toJS());
     expect(parsed.on["slack.mention"]?.filters?.from_users).toEqual(["U123"]);
     expect(parsed.on["slack.message"]?.filters?.from_users).toEqual(["U09FFH54LM9"]);
-    expect(parsed.on["slack.message"]?.filters?.contains_any).toContain("Memória");
+    expect(parsed.on["slack.message"]?.filters?.regex?.[1]).toContain("Memória");
 
     const narrowed = patchTriggerYaml(
       yaml,
-      setEventTerms(projection.value, "slack.message", "containsAll", "ALERTA:, disco"),
+      setEventRegex(projection.value, "slack.message", "regex: (?i:a{1,3})\nregex: CPU"),
     );
     const terms = TriggerDocumentSchema.parse(parseDocument(narrowed).toJS());
-    expect(terms.on["slack.message"]?.filters?.contains_all).toEqual(["ALERTA:", "disco"]);
-    expect(terms.on["slack.message"]?.filters?.contains_any).toContain("flood");
+    expect(terms.on["slack.message"]?.filters?.regex).toEqual(["(?i:a{1,3})", "CPU"]);
+    expect(terms.on["slack.message"]?.filters?.text).toBeUndefined();
     expect(terms.on["slack.mention"]?.filters?.from_users).toEqual(["*"]);
+  });
+
+  test("writes a literal line and a regex line as text", () => {
+    const yaml = `
+name: diagnostico-monitoramento
+enabled: true
+on:
+  slack.message:
+    connection: slack-office
+    filters:
+      from_users: ["U09FFH54LM9"]
+      include_bots: true
+      regex:
+        - '(?i:(?<![\\p{L}\\p{N}])ALERTA:(?![\\p{L}\\p{N}]))'
+run:
+  target:
+    daemon: office
+    cwd: /workspace
+  agent:
+    provider: cursor
+    mode: agent
+  prompt: Reply.
+`;
+    const projection = projectTriggerForm(yaml);
+    if (projection.status !== "editable") throw new Error(projection.reason);
+    expect(patchTriggerYaml(yaml, projection.value)).toBe(yaml);
+    const edited = patchTriggerYaml(
+      yaml,
+      setEventRegex(projection.value, "slack.message", "ALERTA:\nregex: (?i:CPU|RAM)"),
+    );
+    const parsed = TriggerDocumentSchema.parse(parseDocument(edited).toJS());
+    expect(parsed.on["slack.message"]?.filters?.text).toEqual([
+      "ALERTA:",
+      { regex: "(?i:CPU|RAM)" },
+    ]);
+    expect(parsed.on["slack.message"]?.filters?.regex).toBeUndefined();
+    expect(parsed.on["slack.message"]?.filters?.include_bots).toBe(true);
+    expect(parsed.on["slack.message"]?.filters?.from_users).toEqual(["U09FFH54LM9"]);
+  });
+
+  test("keeps a text list byte for byte when the form saves", () => {
+    const yaml = `
+name: diagnostico-monitoramento
+enabled: true
+on:
+  slack.message:
+    connection: slack-office
+    filters:
+      from_users: ["U09FFH54LM9"]
+      text:
+        - "ALERTA:"
+        - regex: "(?i:CPU|RAM)"
+      regex:
+        - disk
+run:
+  target:
+    daemon: office
+    cwd: /workspace
+  agent:
+    provider: cursor
+    mode: agent
+  prompt: Reply.
+`;
+    const projection = projectTriggerForm(yaml);
+    if (projection.status !== "editable") throw new Error(projection.reason);
+    expect(projection.value.regex?.["slack.message"]).toContain("ALERTA:");
+    expect(projection.value.regex?.["slack.message"]).toContain("regex: (?i:CPU|RAM)");
+    expect(projection.value.regex?.["slack.message"]).toContain("regex: disk");
+    expect(patchTriggerYaml(yaml, projection.value)).toBe(yaml);
+    const widened = patchTriggerYaml(
+      yaml,
+      setEventAudience(projection.value, "slack.message", "U123"),
+    );
+    expect(widened).toContain('regex: "(?i:CPU|RAM)"');
+    expect(widened).toContain("- disk");
+    const parsed = TriggerDocumentSchema.parse(parseDocument(widened).toJS());
+    expect(parsed.on["slack.message"]?.filters?.from_users).toEqual(["U123"]);
+    expect(parsed.on["slack.message"]?.filters?.text).toEqual([
+      "ALERTA:",
+      { regex: "(?i:CPU|RAM)" },
+    ]);
+    expect(parsed.on["slack.message"]?.filters?.regex).toEqual(["disk"]);
+  });
+
+  test("keeps a literal the form cannot show in YAML", () => {
+    const yaml = `
+name: wrapped
+enabled: true
+on:
+  slack.message:
+    connection: slack-office
+    filters:
+      from_users: ["*"]
+      text:
+        - "regex: not a literal the form can show"
+run:
+  target:
+    daemon: office
+    cwd: /workspace
+  agent:
+    provider: cursor
+    mode: agent
+  prompt: Reply.
+`;
+    const projection = projectTriggerForm(yaml);
+    expect(projection).toEqual({
+      status: "yaml_only",
+      reason: "A message pattern cannot be edited in the form.",
+    });
+  });
+
+  test("removes regex when the pattern field is cleared", () => {
+    const yaml = `
+name: diagnostico-monitoramento
+enabled: true
+on:
+  slack.message:
+    connection: slack-office
+    filters:
+      from_users: ["U09FFH54LM9"]
+      regex: ["ALERTA:", "CPU"]
+run:
+  target:
+    daemon: office
+    cwd: /workspace
+  agent:
+    provider: cursor
+    mode: agent
+  prompt: Reply.
+`;
+    const projection = projectTriggerForm(yaml);
+    if (projection.status !== "editable") throw new Error(projection.reason);
+    const cleared = patchTriggerYaml(yaml, setEventRegex(projection.value, "slack.message", ""));
+    const parsed = TriggerDocumentSchema.parse(parseDocument(cleared).toJS());
+    expect(parsed.on["slack.message"]?.filters?.regex).toBeUndefined();
+    expect(parsed.on["slack.message"]?.filters?.from_users).toEqual(["U09FFH54LM9"]);
+  });
+
+  test("keeps legacy Slack term lists when the form saves", () => {
+    const yaml = `
+name: diagnostico-monitoramento
+enabled: true
+on:
+  slack.message:
+    connection: slack-office
+    filters:
+      from_users: ["U09FFH54LM9"]
+      include_bots: true
+      contains_all: ["ALERTA:"]
+      contains_any: ["CPU", "flood"]
+run:
+  target:
+    daemon: office
+    cwd: /workspace
+  agent:
+    provider: cursor
+    mode: agent
+  prompt: Reply.
+`;
+    const projection = projectTriggerForm(yaml);
+    expect(projection.status).toBe("editable");
+    if (projection.status !== "editable") return;
+    expect(projection.value.regex?.["slack.message"]).toBe("");
+    expect(patchTriggerYaml(yaml, projection.value)).toBe(yaml);
+  });
+
+  test("keeps a pattern the form cannot show in YAML", () => {
+    const yaml = `
+name: wrapped
+enabled: true
+on:
+  slack.message:
+    connection: slack-office
+    filters:
+      from_users: ["*"]
+      regex:
+        - "a\\nb"
+run:
+  target:
+    daemon: office
+    cwd: /workspace
+  agent:
+    provider: cursor
+    mode: agent
+  prompt: Reply.
+`;
+    const projection = projectTriggerForm(yaml);
+    expect(projection).toEqual({
+      status: "yaml_only",
+      reason: "A message pattern cannot be edited in the form.",
+    });
+    const merged = mergeTriggerForm(yaml, {
+      name: "wrapped",
+      enabled: true,
+      event: "slack.message",
+      events: ["slack.message"],
+      includeBots: false,
+      connection: "slack-office",
+      allowedUsers: "*",
+      qualifiers: {},
+      daemon: "office",
+      cwd: "/workspace",
+      agent: "cursor",
+      mode: "agent",
+      thinkingOptionId: "",
+      cursorFast: "",
+      providerOptions: "",
+      continuationMode: "conversation",
+      continuationKey: "",
+      maxRuntime: "2h",
+      idleTimeout: "10m",
+      githubConnection: "",
+      githubRepositories: "",
+      githubPermissions: "",
+      githubDuration: "1h",
+      prompt: textInstructions("Reply."),
+      guardrails: [],
+      worktree: emptyWorktree(),
+      channels: "",
+      webhookSecret: "",
+    });
+    expect(merged).toEqual({
+      status: "incomplete",
+      reason: "A message pattern cannot be edited in the form.",
+    });
   });
 
   test("adds a second Slack event without dropping the first", () => {
@@ -360,7 +603,9 @@ run:
       githubRepositories: "",
       githubPermissions: "",
       githubDuration: "1h",
-      prompt: "Handle it.",
+      prompt: textInstructions("Handle it."),
+      guardrails: [],
+      worktree: emptyWorktree(),
       channels: "",
       webhookSecret: "",
     });
@@ -404,7 +649,9 @@ run:
       githubRepositories: "",
       githubPermissions: "",
       githubDuration: "1h",
-      prompt: "${{ paseo.prompt }}",
+      prompt: textInstructions("${{ paseo.prompt }}"),
+      guardrails: [],
+      worktree: emptyWorktree(),
       channels: "",
       webhookSecret: "",
     });
@@ -475,7 +722,7 @@ describe("what the form still needs", () => {
     expect(triggerFormErrors({ ...editable(), providerOptions: "{" })).toEqual({
       providerOptions: "Provider options must be valid JSON.",
     });
-    expect(triggerFormErrors({ ...editable(), prompt: "  " })).toEqual({
+    expect(triggerFormErrors({ ...editable(), prompt: textInstructions("  ") })).toEqual({
       prompt: "Instructions are required.",
     });
   });
@@ -726,6 +973,29 @@ test("projects a wait and a condition, then patches the wait", () => {
   expect(wait.wait.for).toBe("10m");
 });
 
+test("keeps guardrails when a reaction flow is saved from the form", () => {
+  const yaml = reactionYaml.replace(
+    "  reactions:",
+    "  guardrails:\n    - id: slack.same_channel\n    - id: slack.same_thread\n      options: {}\n  reactions:",
+  );
+  const projection = projectTriggerForm(yaml);
+  expect(projection.status).toBe("editable");
+  if (projection.status !== "editable") throw new Error(projection.reason);
+  const flow = projection.value.flow;
+  const pause = flow?.[0];
+  if (flow === undefined || pause?.type !== "wait") throw new Error("expected a wait");
+  const saved = patchTriggerYaml(yaml, {
+    ...projection.value,
+    flow: ReactionFlow.update(flow, pause.id, { duration: "10m" }),
+  });
+  const value = TriggerDocumentSchema.parse(parseDocument(saved).toJS());
+  if (!("reactions" in value.run)) throw new Error("expected reactions");
+  expect(value.run.guardrails).toEqual([
+    { id: "slack.same_channel" },
+    { id: "slack.same_thread", options: {} },
+  ]);
+});
+
 test("rejects a wait duration the form cannot store", () => {
   const projection = projectTriggerForm(reactionYaml);
   if (projection.status !== "editable") throw new Error(projection.reason);
@@ -737,4 +1007,175 @@ test("rejects a wait duration the form cannot store", () => {
     flow: ReactionFlow.update(flow, pause.id, { duration: "soon" }),
   });
   expect(errors["flow.pause.duration"]).toBe("Use a duration such as 30s, 5m, or 2h.");
+});
+
+const CONFIGURED = `
+name: answer
+enabled: true
+on:
+  manual.run: {}
+run:
+  target:
+    daemon: office
+    cwd: /workspace
+    worktree:
+      mode: branch-off
+      newBranch: hub-work
+      base: main
+  guardrails:
+    - id: slack.same_channel
+    - id: slack.same_thread
+      options: {}
+  agent:
+    provider: codex
+    mode: agent
+  prompt:
+    - text: Handle it.
+    - include: partials/safety.md
+    - include:
+        path: notes.md
+        root: /workspace/rules
+`;
+
+test("edits guardrails, the worktree, and prompt includes in the form", () => {
+  const projection = projectTriggerForm(CONFIGURED);
+  expect(projection.status).toBe("editable");
+  if (projection.status !== "editable") throw new Error(projection.reason);
+  expect(projection.value.guardrails).toEqual([
+    { id: "slack.same_channel", options: "" },
+    { id: "slack.same_thread", options: "{}" },
+  ]);
+  expect(projection.value.worktree).toEqual({
+    mode: "branch-off",
+    newBranch: "hub-work",
+    base: "main",
+    branch: "",
+    prNumber: "",
+  });
+  expect(projection.value.prompt).toEqual([
+    { kind: "text", text: "Handle it." },
+    { kind: "include", path: "partials/safety.md", root: "" },
+    { kind: "include", path: "notes.md", root: "/workspace/rules" },
+  ]);
+  expect(patchTriggerYaml(CONFIGURED, projection.value)).toBe(CONFIGURED);
+
+  const moved = patchTriggerYaml(CONFIGURED, { ...projection.value, cwd: "/srv/app" });
+  expect(moved).toContain("include: partials/safety.md");
+  expect(moved).toContain("root: /workspace/rules");
+  expect(moved).toContain("id: slack.same_channel");
+  expect(moved).toContain("newBranch: hub-work");
+  const movedRun = singleAgentRun(TriggerDocumentSchema.parse(parseDocument(moved).toJS()).run);
+  expect(movedRun.target.cwd).toBe("/srv/app");
+  expect(movedRun.target.worktree).toEqual({
+    mode: "branch-off",
+    newBranch: "hub-work",
+    base: "main",
+  });
+  expect(movedRun.prompt).toEqual([
+    { text: "Handle it." },
+    { include: "partials/safety.md" },
+    { include: { path: "notes.md", root: "/workspace/rules" } },
+  ]);
+
+  const rails = patchTriggerYaml(CONFIGURED, {
+    ...projection.value,
+    guardrails: [{ id: "slack.same_thread", options: "" }],
+  });
+  expect(
+    singleAgentRun(TriggerDocumentSchema.parse(parseDocument(rails).toJS()).run).guardrails,
+  ).toEqual([{ id: "slack.same_thread" }]);
+
+  const clearedRails = patchTriggerYaml(CONFIGURED, { ...projection.value, guardrails: [] });
+  expect(
+    singleAgentRun(TriggerDocumentSchema.parse(parseDocument(clearedRails).toJS()).run).guardrails,
+  ).toBeUndefined();
+
+  const checkedOut = patchTriggerYaml(CONFIGURED, {
+    ...projection.value,
+    worktree: { ...projection.value.worktree, mode: "checkout-pr", prNumber: "848" },
+  });
+  expect(
+    singleAgentRun(TriggerDocumentSchema.parse(parseDocument(checkedOut).toJS()).run).target
+      .worktree,
+  ).toEqual({ mode: "checkout-pr", prNumber: 848 });
+
+  const noTree = patchTriggerYaml(CONFIGURED, {
+    ...projection.value,
+    worktree: emptyWorktree(),
+  });
+  expect(
+    singleAgentRun(TriggerDocumentSchema.parse(parseDocument(noTree).toJS()).run).target.worktree,
+  ).toBeUndefined();
+
+  const nextPrompt = patchTriggerYaml(CONFIGURED, {
+    ...projection.value,
+    prompt: [
+      { kind: "text", text: "Handle it." },
+      { kind: "include", path: "partials/review.md", root: "" },
+    ],
+  });
+  expect(
+    singleAgentRun(TriggerDocumentSchema.parse(parseDocument(nextPrompt).toJS()).run).prompt,
+  ).toEqual([{ text: "Handle it." }, { include: "partials/review.md" }]);
+});
+
+test("rejects a guardrail option and an incomplete worktree in the form", () => {
+  const projection = projectTriggerForm(CONFIGURED);
+  if (projection.status !== "editable") throw new Error(projection.reason);
+  expect(
+    triggerFormErrors({
+      ...projection.value,
+      guardrails: [{ id: "slack.same_channel", options: '{"extra":true}' }],
+    }).guardrails,
+  ).toBe("This guardrail does not take those options.");
+  expect(
+    triggerFormErrors({
+      ...projection.value,
+      guardrails: [{ id: "slack.somewhere", options: "" }],
+    }).guardrails,
+  ).toBe("Choose a guardrail.");
+  expect(
+    triggerFormErrors({
+      ...projection.value,
+      worktree: { ...emptyWorktree(), mode: "branch-off" },
+    }).worktree,
+  ).toBe("New branch is required.");
+  expect(
+    mergeTriggerForm(CONFIGURED, {
+      ...projection.value,
+      guardrails: [{ id: "slack.same_channel", options: '{"extra":true}' }],
+    }),
+  ).toEqual({ status: "incomplete", reason: "This guardrail does not take those options." });
+});
+
+test("edits an included instruction on a reaction without a second flow", () => {
+  const yaml = reactionYaml.replace(
+    "            prompt: Reply.",
+    "            prompt:\n              - text: Reply.\n              - include: partials/safety.md",
+  );
+  const projection = projectTriggerForm(yaml);
+  expect(projection.status).toBe("editable");
+  if (projection.status !== "editable") throw new Error(projection.reason);
+  const flow = projection.value.flow;
+  const agent = flow?.[1];
+  if (flow === undefined || agent?.type !== "if") throw new Error("expected a condition");
+  const reply = agent.then[0];
+  if (reply?.type !== "agent") throw new Error("expected an agent");
+  expect(reply.prompt).toEqual([
+    { kind: "text", text: "Reply." },
+    { kind: "include", path: "partials/safety.md", root: "" },
+  ]);
+  const saved = patchTriggerYaml(yaml, {
+    ...projection.value,
+    flow: ReactionFlow.update(flow, reply.id, {
+      prompt: [{ kind: "text", text: "Reply carefully." }, ...reply.prompt.slice(1)],
+    }),
+  });
+  const value = TriggerDocumentSchema.parse(parseDocument(saved).toJS());
+  if (!("reactions" in value.run)) throw new Error("expected reactions");
+  const check = value.run.reactions[1];
+  if (check === undefined || !("if" in check)) throw new Error("expected a condition");
+  expect(check.if.then[0]).toMatchObject({
+    prompt: [{ text: "Reply carefully." }, { include: "partials/safety.md" }],
+  });
 });

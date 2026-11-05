@@ -3,7 +3,11 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, it } from "vitest";
 import { compileHubBundle, type HubBundleFile } from "../../config/bundle.js";
-import type { CompiledHubConfig, CompiledTrigger } from "../../config/compiler.js";
+import {
+  staticPromptText,
+  type CompiledHubConfig,
+  type CompiledTrigger,
+} from "../../config/compiler.js";
 import { migrateLegacyBundle } from "./index.js";
 
 const exhaustiveHub = `
@@ -113,9 +117,16 @@ describe("legacy migration compatibility matrix", () => {
     assert.equal(trigger?.format, "single_run");
     if (trigger?.format !== "single_run") return;
 
+    const migratedSemantics = executionSemantics(
+      trigger.compiled.events[0]!,
+      trigger.compiled.environment,
+    );
+    const beforeSemantics = executionSemantics(before.triggers[0]!, before.environments[0]!);
+    // Compiling a Slack mention grants slack.react. The legacy bundle does not store that grant.
+    assert.deepEqual(withoutAutomaticSlackReact(migratedSemantics), beforeSemantics);
     assert.deepEqual(
-      executionSemantics(trigger.compiled.events[0]!, trigger.compiled.environment),
-      executionSemantics(before.triggers[0]!, before.environments[0]!),
+      migratedSemantics.step.allowOutputs.filter((output) => output.type === "slack.react"),
+      [{ type: "slack.react", required: false }],
     );
     assert.match(trigger.yaml, /max_runtime: 2h/u);
     assert.match(trigger.yaml, /background: true/u);
@@ -171,6 +182,22 @@ describe("legacy migration compatibility matrix", () => {
   });
 });
 
+function withoutAutomaticSlackReact<
+  Semantics extends {
+    step: {
+      allowOutputs: readonly { type: string; max?: number | undefined; required: boolean }[];
+    };
+  },
+>(semantics: Semantics): Semantics {
+  return {
+    ...semantics,
+    step: {
+      ...semantics.step,
+      allowOutputs: semantics.step.allowOutputs.filter((output) => output.type !== "slack.react"),
+    },
+  };
+}
+
 function executionSemantics(
   trigger: CompiledTrigger,
   environment: CompiledHubConfig["environments"][number],
@@ -190,9 +217,7 @@ function executionSemantics(
       continuation: step.continuation ?? { mode: "new" },
       id: undefined,
       environment: undefined,
-      prompt: step.prompt
-        .map((block) => (block.kind === "text" ? block.value : block.content))
-        .join("\n"),
+      prompt: step.prompt.map((block) => staticPromptText(block)).join("\n"),
     },
   };
 }

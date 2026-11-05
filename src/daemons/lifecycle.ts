@@ -52,6 +52,7 @@ import type { JsonValue } from "../config/compiler.js";
 import { compileJsonSchema, formatJsonSchemaErrors } from "../workflows/json-schema.js";
 import type { Logger } from "pino";
 import { isHubFinishExecutionToolName } from "../hub/protocol.js";
+import { terminalHubAction } from "./terminal-hub-action.js";
 
 export interface DaemonDispatchResult {
   execution: AgentExecutionRecord;
@@ -1890,9 +1891,7 @@ function deriveHubAction(
   execution: AgentExecutionRecord,
   status: "succeeded" | "failed",
 ): HubAction | null {
-  if (execution.daemonId === null) return null;
-  if (execution.launchIntent?.autoArchive === true) return "archive";
-  return status === "failed" ? "interrupt" : null;
+  return terminalHubAction(execution, status);
 }
 
 function isInterruptedAgentState(state: { status: AgentStatus }): boolean {

@@ -12,7 +12,12 @@ import {
 import type { Continuation } from "../continuation.js";
 import { appendSlackReactGrant } from "../slack/react.js";
 import { flattenTriggerReactions, type FlattenedReactions } from "./reactions.js";
-import { isFlowRun, TriggerDocumentSchema, type TriggerDocument } from "./schema.js";
+import {
+  authoredPromptBlocks,
+  isFlowRun,
+  TriggerDocumentSchema,
+  type TriggerDocument,
+} from "./schema.js";
 
 export { TriggerDocumentSchema, type TriggerDocument } from "./schema.js";
 export {
@@ -88,7 +93,10 @@ export function compileTriggerDocument(yaml: string): CompiledTriggerDocument {
         environments: [environment],
         triggers,
       },
-      namedAgents === undefined ? {} : { namedAgents },
+      {
+        deferUnbundledIncludes: true,
+        ...(namedAgents === undefined ? {} : { namedAgents }),
+      },
     );
   } catch (error) {
     throw new TriggerDocumentError([
@@ -103,16 +111,27 @@ export function compileTriggerDocument(yaml: string): CompiledTriggerDocument {
     authored,
     environment: compiledEnvironment,
     events: compiled.triggers.map((trigger) =>
-      withAutomaticReply({
-        ...trigger,
-        steps: trigger.steps.map((step) => {
-          if (isCompiledStaticStep(step)) return step;
-          return { ...step, continuation: continuationFor(authored, flattened, step.id) };
+      withGuardrails(
+        withAutomaticReply({
+          ...trigger,
+          steps: trigger.steps.map((step) => {
+            if (isCompiledStaticStep(step)) return step;
+            return { ...step, continuation: continuationFor(authored, flattened, step.id) };
+          }),
         }),
-      }),
+        authored.run.guardrails,
+      ),
     ),
     authoredHash: createHash("sha256").update(yaml).digest("hex"),
   };
+}
+
+function withGuardrails(
+  trigger: CompiledTrigger,
+  guardrails: CompiledTrigger["guardrails"],
+): CompiledTrigger {
+  if (guardrails === undefined) return trigger;
+  return { ...trigger, guardrails: [...guardrails] };
 }
 
 function withAutomaticReply(trigger: CompiledTrigger): CompiledTrigger {
@@ -243,7 +262,7 @@ function legacyAgentStep(
       : { startup_timeout: authored.run.startup_timeout }),
     agent,
     ...(authored.run.title === undefined ? {} : { title: authored.run.title }),
-    prompt: [{ text: authored.run.prompt }],
+    prompt: authoredPromptBlocks(authored.run.prompt),
     ...(authored.run.env === undefined ? {} : { env: authored.run.env }),
     ...(authored.run.github === undefined ? {} : { github: authored.run.github }),
     ...(authored.run.output === undefined ? {} : { output: authored.run.output }),

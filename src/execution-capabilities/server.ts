@@ -18,6 +18,7 @@ import {
   type OutputExecutorRegistry,
   type OutputToolSchema,
 } from "./outputs.js";
+import { GuardrailRefusal } from "../workflows/guardrails.js";
 
 type JsonSchema = OutputToolSchema;
 
@@ -342,6 +343,10 @@ async function executeOutputCall(
       toolType: output.declaration.type,
       args,
       outputContext: execution.outputContext,
+      triggerContext: execution.triggerContext,
+      ...(execution.launchIntent?.guardrails === undefined
+        ? {}
+        : { guardrails: execution.launchIntent.guardrails }),
     });
     const recorded = await options.database.completeAgentExecutionOutput(
       execution.id,
@@ -351,6 +356,22 @@ async function executeOutputCall(
     if (recorded === undefined) throw new Error("output emission could not be recorded");
     return toolSuccess("Output sent");
   } catch (error) {
+    if (error instanceof GuardrailRefusal) {
+      try {
+        await options.database.failAgentExecutionOutput(
+          execution.id,
+          attempt.id,
+          options.now?.() ?? new Date(),
+        );
+      } catch (recordError) {
+        reportFailure(recordError, {
+          operation: "execution_capability.output.record_failure",
+          component: "execution_capabilities",
+          executionId: execution.id,
+        });
+      }
+      return toolFailure(error.message);
+    }
     const failure = reportFailure(error, {
       operation: "execution_capability.output.deliver",
       component: "execution_capabilities",

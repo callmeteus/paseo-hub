@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { parseCompiledHubConfig } from "../../config/compiler.js";
 import { parseProjectConfiguration } from "../../configuration/store.js";
 import type { ProjectConfigurationRevisionRecord } from "../../db/types.js";
 import { describe, it } from "vitest";
@@ -9,6 +10,15 @@ import {
   TriggerDocumentError,
 } from "./index.js";
 import { singleAgentRun } from "./schema.js";
+
+function unknownGuardrail(error: unknown): boolean {
+  assert.ok(error instanceof TriggerDocumentError);
+  const mentionsGuardrails = error.issues.some((issue) =>
+    issue.path.join(".").startsWith("run.guardrails"),
+  );
+  assert.equal(mentionsGuardrails, true);
+  return true;
+}
 
 function reportsMissingEvent(error: unknown): boolean {
   return (
@@ -180,6 +190,70 @@ describe("self-contained trigger documents", () => {
       { type: "slack.reply", max: 5, required: false },
       { type: "github.reply", required: false },
     ]);
+    assert.equal(compiled.events[0]?.guardrails, undefined);
+  });
+
+  it("compiles guardrails onto every event and leaves the prompt alone", () => {
+    const rails = [{ id: "slack.same_channel" }, { id: "slack.same_thread", options: {} }];
+    const yaml = trigger.replace(
+      "  outputs:\n",
+      "  guardrails:\n    - id: slack.same_channel\n    - id: slack.same_thread\n      options: {}\n  outputs:\n",
+    );
+    const compiled = compileTriggerDocument(yaml);
+    assert.deepEqual(compiled.events[0]?.guardrails, rails);
+    assert.deepEqual(compiled.events[1]?.guardrails, rails);
+    const prompt = compiled.events[0]?.steps[0]?.prompt[0];
+    assert.equal(prompt?.kind, "text");
+    if (prompt?.kind === "text") {
+      assert.match(prompt.value, /Use Paseo/);
+      assert.doesNotMatch(prompt.value, /same_channel/);
+    }
+    const stored = parseCompiledHubConfig({
+      environments: [compiled.environment],
+      triggers: compiled.events,
+    });
+    assert.deepEqual(stored.triggers[0]?.guardrails, rails);
+    assert.deepEqual(
+      singleAgentRun(parseTriggerDocument(serializeTriggerDocument(compiled.authored)).run)
+        .guardrails,
+      rails,
+    );
+  });
+
+  it("rejects an unknown guardrail id", () => {
+    assert.throws(
+      () =>
+        parseTriggerDocument(
+          trigger.replace(
+            "  outputs:\n",
+            "  guardrails:\n    - id: slack.somewhere_else\n  outputs:\n",
+          ),
+        ),
+      unknownGuardrail,
+    );
+  });
+
+  it("rejects a bare guardrail string", () => {
+    assert.throws(
+      () =>
+        parseTriggerDocument(
+          trigger.replace("  outputs:\n", "  guardrails:\n    - slack.same_channel\n  outputs:\n"),
+        ),
+      unknownGuardrail,
+    );
+  });
+
+  it("rejects an unknown guardrail option", () => {
+    assert.throws(
+      () =>
+        parseTriggerDocument(
+          trigger.replace(
+            "  outputs:\n",
+            "  guardrails:\n    - id: slack.same_channel\n      options:\n        extra: true\n  outputs:\n",
+          ),
+        ),
+      unknownGuardrail,
+    );
   });
 
   it("round-trips the semantic document through canonical YAML", () => {
@@ -393,6 +467,16 @@ run:
             wait:
               for: 1h
 `;
+
+it("keeps guardrails on a reaction flow", () => {
+  const compiled = compileTriggerDocument(
+    reactionFlow.replace(
+      "  reactions:",
+      "  guardrails:\n    - id: slack.same_thread\n  reactions:",
+    ),
+  );
+  assert.deepEqual(compiled.events[0]?.guardrails, [{ id: "slack.same_thread" }]);
+});
 
 it("compiles a wait and a condition into ordered steps", () => {
   const compiled = compileTriggerDocument(reactionFlow);

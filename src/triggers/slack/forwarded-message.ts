@@ -31,17 +31,22 @@ export function readSlackMessageText(message: unknown): string {
   }
 
   const own = readString(message, "text") ?? readBlocks(message["blocks"]);
+  const ack = readAckNotice(message["blocks"]);
+  let withAck = own;
+  if (ack !== undefined && !own.includes("Ack dado por")) {
+    withAck = own.length === 0 ? ack : `${own}\n\n${ack}`;
+  }
   const forwarded = readForwardList(message["attachments"], 0, new WeakSet());
 
-  if (own.length === 0) {
+  if (withAck.length === 0) {
     return forwarded;
   }
 
   if (forwarded.length === 0) {
-    return own;
+    return withAck;
   }
 
-  return `${own}\n\n${forwarded}`;
+  return `${withAck}\n\n${forwarded}`;
 }
 
 /**
@@ -484,6 +489,66 @@ function isForward(attachment: Record<string, unknown>): boolean {
  * @param blocks - Slack `blocks` array
  * @returns The visible text
  */
+const ACK_NOTICE = /Ack dado por/u;
+
+/**
+ * The acknowledgement line lives in the card blocks, not in the notification text.
+ *
+ * @param blocks - Slack `blocks` array
+ * @returns The visible ACK line, when the card has one
+ */
+function readAckNotice(blocks: unknown): string | undefined {
+  return findAckNotice(blocks, 0);
+}
+
+/**
+ * Walks Block Kit until it finds the acknowledgement line.
+ *
+ * @param node - A block, element, or string
+ * @param depth - How many layers are already open
+ * @returns The ACK line, when this node contains one
+ */
+function findAckNotice(node: unknown, depth: number): string | undefined {
+  if (depth > 8) {
+    return undefined;
+  }
+
+  if (typeof node === "string") {
+    const trimmed = node.replace(/\s+/gu, " ").trim();
+    return ACK_NOTICE.test(trimmed) ? trimmed : undefined;
+  }
+
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      const found = findAckNotice(item, depth + 1);
+
+      if (found !== undefined) {
+        return found;
+      }
+    }
+
+    return undefined;
+  }
+
+  if (!isRecord(node)) {
+    return undefined;
+  }
+
+  const text = findAckNotice(node["text"], depth + 1);
+
+  if (text !== undefined) {
+    return text;
+  }
+
+  const elements = findAckNotice(node["elements"], depth + 1);
+
+  if (elements !== undefined) {
+    return elements;
+  }
+
+  return findAckNotice(node["fields"], depth + 1);
+}
+
 function readBlocks(blocks: unknown): string {
   if (!Array.isArray(blocks)) {
     return "";

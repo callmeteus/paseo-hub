@@ -1,6 +1,7 @@
 import type { AuthoredStep, CompiledAgent } from "../../config/compiler.js";
 import type { Continuation } from "../continuation.js";
 import {
+  authoredPromptBlocks,
   isEnvReaction,
   isFlowRun,
   type AgentReaction,
@@ -124,7 +125,7 @@ function agentStep(
       : { startup_timeout: reaction.startup_timeout }),
     agent,
     ...(reaction.title === undefined ? {} : { title: reaction.title }),
-    prompt: [{ text: reaction.prompt }],
+    prompt: authoredPromptBlocks(reaction.prompt),
     ...(reaction.env === undefined ? {} : { env: reaction.env }),
     ...(reaction.github === undefined ? {} : { github: reaction.github }),
     ...(condition === undefined ? {} : { if: condition }),

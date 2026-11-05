@@ -1,5 +1,10 @@
 import type { Document } from "yaml";
 import { DEFAULT_RECURRENCE } from "../schedule/recurrence.js";
+import {
+  parseSlackMessageField,
+  slackFiltersFromField,
+  slackMessageFieldText,
+} from "../slack/text-filter.js";
 import type { TriggerDocument } from "./schema.js";
 import {
   eventDefinition,
@@ -75,6 +80,18 @@ export function projectEditorEvents(
     if (JSON.stringify(readQualifiers(event, definition.filters)) !== qualifiers) {
       return { status: "yaml_only", reason: "These events use different filters." };
     }
+    if (
+      eventDefinition(event).provider === "slack" &&
+      slackMessageFieldText({
+        text: definition.filters?.text,
+        regex: definition.filters?.regex,
+      }) === undefined
+    ) {
+      return {
+        status: "yaml_only",
+        reason: "A message pattern cannot be edited in the form.",
+      };
+    }
   }
   return {
     status: "editable",
@@ -92,17 +109,19 @@ export function projectEditorEvents(
  */
 function readProjectedEventFields(
   entries: [string, TriggerDocument["on"][string]][],
-): Pick<ProjectedEvents, "eventUsers" | "containsAll" | "containsAny"> {
+): Pick<ProjectedEvents, "eventUsers" | "regex"> {
   const eventUsers: Partial<Record<EditorEvent, string>> = {};
-  const containsAll: Partial<Record<EditorEvent, string>> = {};
-  const containsAny: Partial<Record<EditorEvent, string>> = {};
+  const regex: Partial<Record<EditorEvent, string>> = {};
   for (const [event, definition] of entries) {
     if (!isEditorEvent(event)) continue;
     eventUsers[event] = definition.filters?.from_users?.join(", ") ?? "*";
-    containsAll[event] = definition.filters?.contains_all?.join(", ") ?? "";
-    containsAny[event] = definition.filters?.contains_any?.join(", ") ?? "";
+    regex[event] =
+      slackMessageFieldText({
+        text: definition.filters?.text,
+        regex: definition.filters?.regex,
+      }) ?? "";
   }
-  return { eventUsers, containsAll, containsAny };
+  return { eventUsers, regex };
 }
 
 /** People and message text the form keeps per event. */
@@ -110,8 +129,11 @@ export interface ProjectedEvents {
   events: EditorEvent[];
   includeBots: boolean;
   eventUsers: Partial<Record<EditorEvent, string>>;
-  containsAll: Partial<Record<EditorEvent, string>>;
-  containsAny: Partial<Record<EditorEvent, string>>;
+  /**
+   * One message item per line. A line that starts with `regex:` is an expression.
+   * Any other line is literal text. Empty when that event does not filter on text.
+   */
+  regex: Partial<Record<EditorEvent, string>>;
 }
 
 /**
@@ -154,7 +176,7 @@ export function formEventDefinition(
     filters: {
       from_users: users(eventAudience(value, event)),
       ...authoredQualifiers(value, event),
-      ...textFilters(value, event),
+      ...slackMessageFilters(value, event),
       ...(channels.length === 0 ? {} : { channels }),
       ...(event === "slack.message" && value.includeBots ? { include_bots: true } : {}),
     },
@@ -214,10 +236,11 @@ export function writeEvent(
     ["on", event, "filters", "webhook_secret"],
     event === "webhook.received" ? value.webhookSecret.trim() : undefined,
   );
-  if (event !== "schedule.tick" && eventDefinition(event).origin !== "hub") {
-    const text = textFilters(value, event);
-    setOptional(document, ["on", event, "filters", "contains_all"], text.contains_all);
-    setOptional(document, ["on", event, "filters", "contains_any"], text.contains_any);
+  if (eventDefinition(event).provider === "slack") {
+    writeSlackMessageField(document, event, value.regex?.[event]);
+  } else {
+    deleteIfPresent(document, ["on", event, "filters", "regex"]);
+    deleteIfPresent(document, ["on", event, "filters", "text"]);
   }
   const qualifiers = authoredQualifiers(value, event);
   const qualifierKeys = new Set<QualifierKey>([
@@ -261,14 +284,12 @@ export function toggleTriggerEvent(
   const events = next.length === 0 ? [value.event] : next;
   const primary = events[0] ?? value.event;
   const eventUsers = { ...value.eventUsers };
-  const containsAll = { ...value.containsAll };
-  const containsAny = { ...value.containsAny };
-  // A newly checked event starts with the primary audience. Text filters stay empty.
+  const regex = { ...value.regex };
+  // A newly checked event starts with the primary audience. Its text filter stays empty.
   if (selected && !current.includes(event)) eventUsers[event] = value.allowedUsers;
   if (!selected) {
     delete eventUsers[event];
-    delete containsAll[event];
-    delete containsAny[event];
+    delete regex[event];
   }
   // The primary audience is `allowedUsers`. Promote the next event's own list when it takes over.
   const allowedUsers =
@@ -280,8 +301,7 @@ export function toggleTriggerEvent(
     events,
     allowedUsers,
     eventUsers,
-    containsAll,
-    containsAny,
+    regex,
   };
 }
 
@@ -330,21 +350,20 @@ export function setSharedAudience(value: TriggerFormValue, audience: string): Tr
 }
 
 /**
- * Sets the message text one event must match.
+ * Sets the message items one Slack event must match.
  *
  * @param value - Current form
  * @param event - Event whose text filter changes
- * @param key - Which list to replace
- * @param terms - Comma-separated terms, or empty when the event does not filter on them
+ * @param expressions - One item per line. A line that starts with `regex:` is an expression.
+ * Any other line is literal text. Empty when the event does not filter on text.
  * @returns The form with that list stored
  */
-export function setEventTerms(
+export function setEventRegex(
   value: TriggerFormValue,
   event: EditorEvent,
-  key: "containsAll" | "containsAny",
-  terms: string,
+  expressions: string,
 ): TriggerFormValue {
-  return { ...value, [key]: { ...value[key], [event]: terms } };
+  return { ...value, regex: { ...value.regex, [event]: expressions } };
 }
 
 /**
@@ -410,34 +429,76 @@ export function commaSeparated(value: string): string[] {
 }
 
 /**
- * Message text one event requires. An empty field removes that filter.
+ * Message items one Slack event requires. An empty field removes `text` and `regex`.
  *
  * @param value - Current form
  * @param event - Event being written
- * @returns The `contains_all` and `contains_any` lists that event should store
+ * @returns The filter keys that event should store, or nothing for other providers
  */
-function textFilters(
+function slackMessageFilters(
   value: TriggerFormValue,
   event: EditorEvent,
-): { contains_all?: string[]; contains_any?: string[] } {
-  const containsAll = termList(value.containsAll?.[event]);
-  const containsAny = termList(value.containsAny?.[event]);
-  return {
-    ...(containsAll === undefined ? {} : { contains_all: containsAll }),
-    ...(containsAny === undefined ? {} : { contains_any: containsAny }),
-  };
+): ReturnType<typeof slackFiltersFromField> {
+  if (eventDefinition(event).provider !== "slack") return {};
+  return slackFiltersFromField(value.regex?.[event]);
 }
 
 /**
- * Splits a term field. Blank means the filter is absent.
+ * Writes `text` and `regex` for one Slack event.
  *
- * @param value - Comma-separated terms, when the form has the field
- * @returns Terms to store, or undefined when the field is empty
+ * A field that still describes the stored clauses is left alone, so a save that did not edit
+ * the message keeps the document's `regex` or `text` bytes. A changed field writes expressions
+ * back to `regex` when every line is an expression, and writes `text` when any line is literal.
+ *
+ * @param document - YAML document being patched
+ * @param event - Slack event to write
+ * @param field - One item per line, when the form has it
+ * @returns Nothing.
  */
-function termList(value: string | undefined): string[] | undefined {
+function writeSlackMessageField(
+  document: Document,
+  event: EditorEvent,
+  field: string | undefined,
+): void {
+  const textPath = ["on", event, "filters", "text"] as const;
+  const regexPath = ["on", event, "filters", "regex"] as const;
+  const projected = slackMessageFieldText({
+    text: storedFilterValue(document.getIn(textPath)),
+    regex: storedFilterValue(document.getIn(regexPath)),
+  });
+  if (projected === undefined) return;
+  if (sameSlackMessageField(field, projected)) return;
+  const filters = slackFiltersFromField(field);
+  setOptional(document, textPath, filters.text);
+  setOptional(document, regexPath, filters.regex);
+}
+
+/**
+ * A YAML node as plain JSON. `getIn` returns a YAML sequence, which is not a JavaScript array.
+ *
+ * @param value - Node from the document, or undefined when the path is missing
+ * @returns The JSON value, or undefined when the node is missing
+ */
+function storedFilterValue(value: unknown): unknown {
   if (value === undefined) return undefined;
-  const terms = commaSeparated(value);
-  return terms.length === 0 ? undefined : terms;
+  const encoded = JSON.stringify(value);
+  if (encoded === undefined) return undefined;
+  const parsed: unknown = JSON.parse(encoded);
+  return parsed;
+}
+
+/**
+ * Whether the message field still describes the clauses the document already stores.
+ *
+ * @param field - Current field text
+ * @param projected - Field text read from the document
+ * @returns True when a save should leave `text` and `regex` untouched
+ */
+function sameSlackMessageField(field: string | undefined, projected: string): boolean {
+  return (
+    JSON.stringify(parseSlackMessageField(field ?? "")) ===
+    JSON.stringify(parseSlackMessageField(projected))
+  );
 }
 
 /**

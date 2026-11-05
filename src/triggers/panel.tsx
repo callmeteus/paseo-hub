@@ -5,7 +5,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { ArrowLeft, Braces, FileText, LockKeyhole, Plus } from "lucide-react";
-import { useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 
 import { Card } from "../components/app/card.js";
 import { Combobox, type ComboboxOption } from "../components/app/combobox.js";
@@ -25,7 +25,10 @@ import { StatusPill, statusLabel } from "../components/app/status-pill.js";
 import { TwoLine } from "../components/app/two-line.js";
 import { Button } from "../components/ui/button.js";
 import { Input } from "../components/ui/input.js";
-import { Textarea } from "../components/ui/textarea.js";
+import { GuardrailFields } from "./guardrail-fields.js";
+import { InstructionsEditor } from "./instructions-editor.js";
+import { WorktreeFields } from "./worktree-fields.js";
+import { emptyWorktree, textInstructions } from "./configuration/form-drafts.js";
 import { SiteHeaderActions } from "../shell/site-header-actions.js";
 import { ProviderGlyph } from "../connections/provider-glyph.js";
 import { CodeEditor } from "../projects/configuration/code-editor.js";
@@ -850,6 +853,11 @@ function TriggerForm({
                     required
                     {...fieldError(errors, "idleTimeout")}
                   />
+                  <WorktreeFields
+                    value={form.worktree}
+                    onChange={(worktree) => update("worktree", worktree)}
+                    {...fieldError(errors, "worktree")}
+                  />
                 </div>
               )}
             </>
@@ -933,10 +941,11 @@ function TriggerForm({
                   {...fieldError(errors, "continuationKey")}
                 />
               ) : null}
-              <PromptEditor
+              <InstructionsEditor
+                id="trigger-prompt"
                 value={form.prompt}
-                {...fieldError(errors, "prompt")}
                 onChange={(prompt) => update("prompt", prompt)}
+                {...fieldError(errors, "prompt")}
               />
               <Disclosure
                 id="trigger-provider-options"
@@ -1046,6 +1055,13 @@ function TriggerForm({
               />
             </>
           ) : null}
+          {selectedDaemon === undefined ? null : (
+            <GuardrailFields
+              value={form.guardrails}
+              onChange={(guardrails) => update("guardrails", guardrails)}
+              {...fieldError(errors, "guardrails")}
+            />
+          )}
         </Card>
       </Steps>
 
@@ -1183,74 +1199,6 @@ const NO_DAEMON_DESCRIPTION =
   "No daemon is connected to this organization yet, and a trigger runs on a daemon.";
 const NO_AGENT_DESCRIPTION =
   "Choose a daemon first. The agents you can run are the ones it reports.";
-
-function PromptEditor({
-  value,
-  error,
-  onChange,
-}: {
-  value: string;
-  error?: string;
-  onChange: (value: string) => void;
-}) {
-  const textarea = useRef<HTMLTextAreaElement>(null);
-  useLayoutEffect(() => {
-    const element = textarea.current;
-    if (element === null) return;
-    element.style.height = "0px";
-    element.style.height = `${String(element.scrollHeight)}px`;
-  }, [value]);
-  const insert = (mergeTag: string) => {
-    const element = textarea.current;
-    if (element === null) return;
-    const start = element.selectionStart;
-    const end = element.selectionEnd;
-    onChange(`${value.slice(0, start)}${mergeTag}${value.slice(end)}`);
-    requestAnimationFrame(() => {
-      element.focus();
-      element.setSelectionRange(start + mergeTag.length, start + mergeTag.length);
-    });
-  };
-  return (
-    <div className="grid gap-2">
-      <FormField
-        id="trigger-prompt"
-        label="Instructions"
-        required
-        {...(error === undefined ? {} : { error })}
-      >
-        {(control) => (
-          <Textarea
-            {...control}
-            ref={textarea}
-            value={value}
-            onChange={(event) => onChange(event.target.value)}
-            rows={8}
-            spellCheck={false}
-            className="min-h-48 resize-none overflow-hidden font-mono text-xs"
-          />
-        )}
-      </FormField>
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs text-muted-foreground">Insert merge tag:</span>
-        {MERGE_TAGS.map((mergeTag) => (
-          <Button
-            key={mergeTag}
-            type="button"
-            variant="outline"
-            size="xs"
-            className="font-mono"
-            onClick={() => insert(mergeTag)}
-          >
-            {mergeTag}
-          </Button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-const MERGE_TAGS = ["${{ paseo.prompt }}", "${{ paseo.context }}"] as const;
 
 function ProviderCatalogFields({
   form,
@@ -1442,7 +1390,10 @@ function defaultForm(snapshot: TriggerSnapshot): TriggerFormValue {
     githubDuration: "1h",
     channels: "",
     webhookSecret: "",
-    prompt:
+    guardrails: [],
+    worktree: emptyWorktree(),
+    prompt: textInstructions(
       "Handle this request in the originating conversation.\n\nWhen hub.reply is available, use it for useful progress updates and your final user-facing response. Call hub.finish_execution once the request is complete.\n\nRequest:\n${{ paseo.prompt }}",
+    ),
   };
 }

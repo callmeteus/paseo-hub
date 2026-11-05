@@ -8,6 +8,21 @@ import { ContinuationSchema } from "../continuation.js";
 import { parseDocument, stringify, type Document } from "yaml";
 import { z } from "zod";
 import {
+  guardrailError,
+  guardrailsDocument,
+  instructionError,
+  instructionsDocument,
+  projectGuardrails,
+  projectInstructions,
+  projectWorktree,
+  textInstructions,
+  worktreeDocument,
+  worktreeError,
+  type GuardrailDraft,
+  type InstructionDraft,
+  type WorktreeDraft,
+} from "./form-drafts.js";
+import {
   IDENTIFIER,
   isFlowRun,
   trueBranch,
@@ -52,10 +67,11 @@ export interface TriggerFormValue {
   allowedUsers: string;
   /** People each event listens to. The primary event also uses `allowedUsers`. */
   eventUsers?: Partial<Record<EditorEvent, string>>;
-  /** Comma-separated substrings that must all appear in that event's text. */
-  containsAll?: Partial<Record<EditorEvent, string>>;
-  /** Comma-separated substrings of which one must appear in that event's text. */
-  containsAny?: Partial<Record<EditorEvent, string>>;
+  /**
+   * One Slack message item per line. A line that starts with `regex:` is an expression.
+   * Any other line is literal text. Every line has to match that event's message.
+   */
+  regex?: Partial<Record<EditorEvent, string>>;
   qualifiers: QualifierValues;
   recurrence?: Recurrence;
   daemon: string;
@@ -74,7 +90,12 @@ export interface TriggerFormValue {
   githubRepositories: string;
   githubPermissions: string;
   githubDuration: string;
-  prompt: string;
+  /** Ordered text and included instruction files. One text block is stored as a string. */
+  prompt: InstructionDraft[];
+  /** `run.guardrails`. Empty omits the field. */
+  guardrails: GuardrailDraft[];
+  /** `run.target.worktree`. An empty mode omits the field. */
+  worktree: WorktreeDraft;
   channels: string;
   webhookSecret: string;
   /** Ordered reactions. Absent while the trigger is still the single agent above. */
@@ -132,11 +153,12 @@ function projectFlowForm(
       events: projected.events,
       includeBots: projected.includeBots,
       eventUsers: projected.eventUsers,
-      containsAll: projected.containsAll,
-      containsAny: projected.containsAny,
+      regex: projected.regex,
       ...eventFormFields(event, definition),
       daemon: trigger.run.target.daemon,
       cwd: trigger.run.target.cwd,
+      worktree: projectWorktree(trigger.run.target.worktree),
+      guardrails: projectGuardrails(trigger.run.guardrails),
       ...flow.agent,
       maxRuntime: flow.maxRuntime,
       idleTimeout: flow.idleTimeout,
@@ -166,8 +188,7 @@ function toFormValue(
     events: projected.events,
     includeBots: projected.includeBots,
     eventUsers: projected.eventUsers,
-    containsAll: projected.containsAll,
-    containsAny: projected.containsAny,
+    regex: projected.regex,
     ...eventFormFields(event, definition),
     ...runFormFields(run, agent),
   };
@@ -213,6 +234,8 @@ function runFormFields(
   | "githubPermissions"
   | "githubDuration"
   | "prompt"
+  | "guardrails"
+  | "worktree"
 > {
   return {
     daemon: run.target.daemon,
@@ -231,7 +254,9 @@ function runFormFields(
     githubPermissions:
       run.github?.permissions === undefined ? "" : JSON.stringify(run.github.permissions, null, 2),
     githubDuration: run.github?.duration ?? "",
-    prompt: run.prompt,
+    prompt: projectInstructions(run.prompt),
+    guardrails: projectGuardrails(run.guardrails),
+    worktree: projectWorktree(run.target.worktree),
   };
 }
 
@@ -273,6 +298,20 @@ export function patchTriggerYaml(yaml: string, value: TriggerFormValue): string 
 
   setIfChanged(document, ["run", "target", "daemon"], value.daemon);
   setIfChanged(document, ["run", "target", "cwd"], value.cwd);
+  writeWhenChanged(
+    document,
+    ["run", "target", "worktree"],
+    projection.value.worktree,
+    value.worktree,
+    worktreeDocument(value.worktree),
+  );
+  writeWhenChanged(
+    document,
+    ["run", "guardrails"],
+    projection.value.guardrails,
+    value.guardrails,
+    guardrailsDocument(value.guardrails),
+  );
   if (value.flow !== undefined) {
     writeReactionFlow(document, value);
     return document.toString({ lineWidth: 0 });
@@ -299,8 +338,38 @@ export function patchTriggerYaml(yaml: string, value: TriggerFormValue): string 
   setIfChanged(document, ["run", "max_runtime"], value.maxRuntime.trim());
   setIfChanged(document, ["run", "idle_timeout"], value.idleTimeout.trim());
   setOptional(document, ["run", "github"], githubAuthority(value));
-  setIfChanged(document, ["run", "prompt"], value.prompt);
+  writeWhenChanged(
+    document,
+    ["run", "prompt"],
+    projection.value.prompt,
+    value.prompt,
+    instructionsDocument(value.prompt),
+  );
   return document.toString({ lineWidth: 0 });
+}
+
+/**
+ * Writes a node the form owns only when that field changed.
+ *
+ * An equal field is left alone, so a save that edited something else keeps the
+ * YAML bytes of a worktree, a guardrail list, or a prompt include.
+ *
+ * @param document - YAML document being patched
+ * @param path - Node path
+ * @param previous - Field value loaded from the document
+ * @param next - Field value the form is saving
+ * @param value - YAML value for `next`, or undefined to remove the node
+ * @returns Nothing.
+ */
+function writeWhenChanged(
+  document: Document,
+  path: readonly string[],
+  previous: unknown,
+  next: unknown,
+  value: unknown,
+): void {
+  if (JSON.stringify(previous) === JSON.stringify(next)) return;
+  setOptional(document, path, value);
 }
 
 export type TriggerYamlResult =
@@ -318,12 +387,15 @@ export type TriggerYamlResult =
  */
 export function mergeTriggerForm(yaml: string, value: TriggerFormValue): TriggerYamlResult {
   try {
+    const projection = projectTriggerForm(yaml);
+    // Rebuilding a document the form cannot show would drop fields it did not load, including text and regex.
+    if (projection.status === "yaml_only" && yaml.trim().length > 0) {
+      return { status: "incomplete", reason: projection.reason };
+    }
     return {
       status: "ok",
       yaml:
-        projectTriggerForm(yaml).status === "editable"
-          ? patchTriggerYaml(yaml, value)
-          : createTriggerYaml(value),
+        projection.status === "editable" ? patchTriggerYaml(yaml, value) : createTriggerYaml(value),
     };
   } catch (cause) {
     return { status: "incomplete", reason: incompleteReason(cause) };
@@ -355,8 +427,14 @@ function legacyRun(value: TriggerFormValue) {
   const agent = splitAgentId(value.agent);
   const providerOptions = parseProviderOptions(value.providerOptions);
   const github = githubAuthority(value);
+  const worktree = worktreeDocument(value.worktree);
+  const guardrails = guardrailsDocument(value.guardrails);
   return {
-    target: { daemon: value.daemon, cwd: value.cwd },
+    target: {
+      daemon: value.daemon,
+      cwd: value.cwd,
+      ...(worktree === undefined ? {} : { worktree }),
+    },
     agent: {
       provider: agent.provider,
       ...(agent.model === undefined ? {} : { model: agent.model }),
@@ -373,17 +451,25 @@ function legacyRun(value: TriggerFormValue) {
     max_runtime: value.maxRuntime.trim(),
     idle_timeout: value.idleTimeout.trim(),
     ...(github === undefined ? {} : { github }),
-    prompt: value.prompt,
+    ...(guardrails === undefined ? {} : { guardrails }),
+    prompt: instructionsDocument(value.prompt),
   };
 }
 
 function flowRun(value: TriggerFormValue) {
+  const worktree = worktreeDocument(value.worktree);
+  const guardrails = guardrailsDocument(value.guardrails);
   return {
-    target: { daemon: value.daemon, cwd: value.cwd },
+    target: {
+      daemon: value.daemon,
+      cwd: value.cwd,
+      ...(worktree === undefined ? {} : { worktree }),
+    },
     reactions: ReactionFlow.toYaml(value.flow ?? [], {
       maxRuntime: value.maxRuntime,
       idleTimeout: value.idleTimeout,
     }),
+    ...(guardrails === undefined ? {} : { guardrails }),
   };
 }
 
@@ -589,9 +675,7 @@ export function triggerFormErrors(value: TriggerFormValue): TriggerFieldErrors {
   }
   Object.assign(errors, webhookErrors(value), recurrenceErrors(value));
   if (value.daemon.trim().length === 0) errors.daemon = "Daemon is required.";
-  Object.assign(errors, workingDirectoryErrors(value));
-  if (value.maxRuntime.trim().length === 0) errors.maxRuntime = "Maximum runtime is required.";
-  if (value.idleTimeout.trim().length === 0) errors.idleTimeout = "Idle timeout is required.";
+  Object.assign(errors, workingDirectoryErrors(value), runConstraintErrors(value));
   if (value.flow !== undefined) {
     Object.assign(errors, ReactionFlow.errors(value.flow));
     return errors;
@@ -606,7 +690,20 @@ export function triggerFormErrors(value: TriggerFormValue): TriggerFieldErrors {
     if (permissions !== undefined) errors.githubPermissions = permissions;
   }
   Object.assign(errors, continuationErrors(value));
-  if (value.prompt.trim().length === 0) errors.prompt = "Instructions are required.";
+  const instructions = instructionError(value.prompt);
+  if (instructions !== undefined) errors.prompt = instructions;
+  return errors;
+}
+
+/** Worktree, guardrails, and the two time limits. They sit together on the target and agent cards. */
+function runConstraintErrors(value: TriggerFormValue): TriggerFieldErrors {
+  const errors: TriggerFieldErrors = {};
+  const tree = worktreeError(value.worktree);
+  if (tree !== undefined) errors.worktree = tree;
+  const rails = guardrailError(value.guardrails);
+  if (rails !== undefined) errors.guardrails = rails;
+  if (value.maxRuntime.trim().length === 0) errors.maxRuntime = "Maximum runtime is required.";
+  if (value.idleTimeout.trim().length === 0) errors.idleTimeout = "Idle timeout is required.";
   return errors;
 }
 
@@ -717,15 +814,14 @@ export function changeTriggerEvent(value: TriggerFormValue, event: EditorEvent):
     event === "webhook.received" && value.webhookSecret.trim().length === 0
       ? createWebhookSecret()
       : value.webhookSecret;
-  // Message text belongs to the event that moved. A different provider does not keep it.
-  const carriedTerms = sameProvider && next.provider === "slack";
+  // Message patterns belong to the event that moved. A different provider does not keep them.
+  const carriedPatterns = sameProvider && next.provider === "slack";
   return {
     ...value,
     event,
     events: [event],
     eventUsers: { [event]: value.allowedUsers },
-    containsAll: carriedTerms ? { [event]: value.containsAll?.[value.event] ?? "" } : {},
-    containsAny: carriedTerms ? { [event]: value.containsAny?.[value.event] ?? "" } : {},
+    regex: carriedPatterns ? { [event]: value.regex?.[value.event] ?? "" } : {},
     qualifiers,
     connection: sameProvider ? value.connection : "",
     webhookSecret,
@@ -760,7 +856,7 @@ export function applyAutomationTemplate(
   return {
     ...next,
     name: AUTOMATION_TEMPLATE_NAMES[template],
-    prompt: AUTOMATION_TEMPLATE_PROMPTS[template],
+    prompt: textInstructions(AUTOMATION_TEMPLATE_PROMPTS[template]),
   };
 }
 

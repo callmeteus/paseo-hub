@@ -4,7 +4,7 @@ import { FormField } from "../components/app/form-field.js";
 import { CopyButton } from "../components/app/copy-field.js";
 import { eventDefinition, type QualifierKey } from "./configuration/events.js";
 import { type TriggerFieldErrors, type TriggerFormValue } from "./configuration/editor.js";
-import { selectedTriggerEvents, setEventTerms } from "./configuration/form-events.js";
+import { selectedTriggerEvents, setEventRegex } from "./configuration/form-events.js";
 import { ScheduleFields } from "./schedule/fields.js";
 import { SlackChannelPicker } from "./slack/channel-picker.js";
 
@@ -85,8 +85,7 @@ export function EventFields({
 }
 
 /**
- * Terms a Slack event looks for in the message. Hidden when none of the selected events use them,
- * so a trigger that matches every message stays as it was.
+ * Expressions a Slack event matches against the raw message. Empty means no text filter.
  */
 function MessageTextFields({
   value,
@@ -98,8 +97,7 @@ function MessageTextFields({
   const events = selectedTriggerEvents(value).filter(
     (event) => eventDefinition(event).provider === "slack",
   );
-  const visible = events.some((event) => hasTerms(value, event));
-  if (!visible) return null;
+  if (events.length === 0) return null;
   return (
     <div className="grid gap-4">
       {events.map((event) => (
@@ -108,40 +106,18 @@ function MessageTextFields({
             <p className="text-sm text-muted-foreground">{eventDefinition(event).label}</p>
           ) : null}
           <FormField
-            id={`trigger-contains-all-${event}`}
-            label="Must contain all"
-            description="Comma-separated. Every term has to appear."
-            kind="text"
-            name={`contains-all-${event}`}
-            value={value.containsAll?.[event] ?? ""}
-            onChange={(terms) => onChange(setEventTerms(value, event, "containsAll", terms))}
-          />
-          <FormField
-            id={`trigger-contains-any-${event}`}
-            label="Must contain one of"
-            description="Comma-separated. One term is enough."
-            kind="text"
-            name={`contains-any-${event}`}
-            value={value.containsAny?.[event] ?? ""}
-            onChange={(terms) => onChange(setEventTerms(value, event, "containsAny", terms))}
+            id={`trigger-regex-${event}`}
+            label="Patterns"
+            description="One item per line. A line is literal text. Start a line with regex: to use a regular expression. Every line has to match. Leave empty to match any message."
+            kind="multiline"
+            name={`regex-${event}`}
+            value={value.regex?.[event] ?? ""}
+            onChange={(expressions) => onChange(setEventRegex(value, event, expressions))}
           />
         </div>
       ))}
     </div>
   );
-}
-
-/**
- * Whether this event already filters on message text.
- *
- * @param value - Current form
- * @param event - Event to inspect
- * @returns True when either term list has text
- */
-function hasTerms(value: TriggerFormValue, event: TriggerFormValue["event"]): boolean {
-  const required = value.containsAll?.[event]?.trim() ?? "";
-  const accepted = value.containsAny?.[event]?.trim() ?? "";
-  return required.length > 0 || accepted.length > 0;
 }
 
 function WebhookFields({ value, errors }: { value: TriggerFormValue; errors: TriggerFieldErrors }) {

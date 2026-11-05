@@ -3,6 +3,7 @@ import type { TriggerAgentConfig } from "../triggers/index.js";
 import type { WorktreeTarget } from "../config/index.js";
 import type { JsonValue } from "../config/compiler.js";
 import type { CompiledGitHubAuthority } from "../config/github-authority.js";
+import type { Guardrail } from "../workflows/guardrails.js";
 
 export const DEFAULT_STARTUP_TIMEOUT_MS = 120_000;
 
@@ -44,6 +45,8 @@ export interface LaunchMachineIntent {
   configurationRevisionId: string;
   deadlineAt?: Date;
   hubConfig: unknown;
+  /** Rails copied from the run. Absent means this launch has no extra restriction. */
+  guardrails?: readonly Guardrail[] | undefined;
 }
 
 export function buildLaunchMachineIntent(input: {
@@ -68,6 +71,7 @@ export function buildLaunchMachineIntent(input: {
   triggerContext: unknown;
   outputContext: unknown;
   hubConfig: unknown;
+  guardrails?: readonly Guardrail[] | undefined;
 }): LaunchMachineIntent {
   return {
     kind: "launch_machine",
@@ -92,5 +96,6 @@ export function buildLaunchMachineIntent(input: {
     outputContext: input.outputContext,
     configurationRevisionId: input.configurationRevisionId,
     hubConfig: input.hubConfig,
+    ...(input.guardrails === undefined ? {} : { guardrails: input.guardrails }),
   };
 }

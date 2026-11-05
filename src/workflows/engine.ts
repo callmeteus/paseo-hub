@@ -57,6 +57,11 @@ import {
   type ExpressionContext,
 } from "./expression.js";
 import type { WorktreeTarget } from "../config/index.js";
+import {
+  composeLaunchPrompt,
+  PromptInstructionError,
+  type PromptInstructionReader,
+} from "./prompt-instructions.js";
 import type { Logger } from "pino";
 import { callDeployHttp, interpolateEnv, loadEnvFiles } from "./static-request.js";
 
@@ -99,6 +104,8 @@ export interface DurableWorkflowEngineOptions {
   onWorkflowRunTerminal?: (run: TriggerRunRecord) => Promise<JsonValue | null | void>;
   /** Posts a Slack reply without launching an agent. */
   postSlackMessage?: (outputContext: unknown, content: string) => Promise<void>;
+  /** Reads a prompt include. The default reads a file inside the automation directory. */
+  readPromptInstruction?: PromptInstructionReader;
   fetch?: typeof fetch;
   logger?: Pick<Logger, "warn" | "error">;
 }
@@ -710,7 +717,7 @@ export class DurableWorkflowEngine {
     const database = this.options.database;
     if (database === null) return undefined;
     try {
-      return buildStepIntent(
+      return await buildStepIntent(
         configuration,
         triggerName,
         trigger,
@@ -720,9 +727,15 @@ export class DurableWorkflowEngine {
         stepRunId,
         deadlineAt,
         executionId,
+        this.options.readPromptInstruction,
       );
     } catch (error) {
-      if (!(error instanceof ExpressionEvaluationError)) throw error;
+      if (
+        !(error instanceof ExpressionEvaluationError) &&
+        !(error instanceof PromptInstructionError)
+      ) {
+        throw error;
+      }
       this.report(error, "workflow.launch-expression.evaluate", {
         triggerRunId: run.id,
         stepId: step.id,
@@ -1100,7 +1113,7 @@ export class DurableWorkflowEngine {
   }
 }
 
-function buildStepIntent(
+async function buildStepIntent(
   configuration: CompiledProjectConfiguration,
   triggerName: string,
   trigger: CompiledProjectConfiguration["triggers"][number],
@@ -1110,7 +1123,8 @@ function buildStepIntent(
   stepRunId: string,
   deadlineAt: Date,
   executionId: string,
-): LaunchMachineIntent {
+  readPromptInstruction: PromptInstructionReader | undefined,
+): Promise<LaunchMachineIntent> {
   if (isCompiledStaticStep(step)) {
     throw new Error(`step ${step.id} does not launch an agent`);
   }
@@ -1129,6 +1143,12 @@ function buildStepIntent(
     throw new Error(`workflow environment ${environmentName} is unavailable`);
   }
   const agent = materializeAgent(step.agent, context);
+  const prompt = await composeLaunchPrompt({
+    blocks: step.prompt,
+    cwd: environment.cwd,
+    context,
+    ...(readPromptInstruction === undefined ? {} : { read: readPromptInstruction }),
+  });
   return {
     ...buildLaunchMachineIntent({
       organizationId: run.organizationId,
@@ -1150,11 +1170,7 @@ function buildStepIntent(
       ...(step.title === undefined
         ? {}
         : { title: renderExecutionTemplate(step.title, executionId) }),
-      prompt: step.prompt
-        .map((block) =>
-          renderExpressionTemplate(block.kind === "text" ? block.value : block.content, context),
-        )
-        .join("\n"),
+      prompt,
       agent,
       allowOutputs: slackReactGrant(step.allowOutputs, run.outputContext),
       timeoutMs: step.maxRuntimeMs,
@@ -1164,6 +1180,7 @@ function buildStepIntent(
       background: step.background,
       triggerContext: run.triggerContext,
       outputContext: run.outputContext,
+      ...(trigger.guardrails === undefined ? {} : { guardrails: trigger.guardrails }),
       configurationRevisionId: run.configurationRevisionId,
       hubConfig: configuration,
     }),
@@ -1254,11 +1271,13 @@ function stepUsesTriggerContext(
   step: CompiledProjectConfiguration["triggers"][number]["steps"][number],
 ): boolean {
   if (isCompiledStaticStep(step)) return false;
-  return step.prompt.some((block) =>
-    expressionPathsInTemplate(block.kind === "text" ? block.value : block.content).some(
+  return step.prompt.some((block) => {
+    if (block.kind === "include") return false;
+    const source = block.kind === "text" ? block.value : block.content;
+    return expressionPathsInTemplate(source).some(
       (path) => path.namespace === "paseo" && path.path === "context",
-    ),
-  );
+    );
+  });
 }
 
 function providerForTriggerContext(

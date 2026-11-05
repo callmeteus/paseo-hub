@@ -8,6 +8,33 @@ import {
 } from "./forwarded-message.js";
 
 describe("readSlackMessageText", () => {
+  it("keeps an acknowledgement that Slack stored only in the card blocks", () => {
+    const text = readSlackMessageText({
+      text: ":warning: ALERTA: [RDS] CPU do RDS acima de 90% (tsc-da-sorte)",
+      blocks: [
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: ":warning: *ALERTA:* CPU do RDS acima de 90%",
+          },
+        },
+        {
+          type: "context",
+          elements: [
+            {
+              type: "mrkdwn",
+              text: "✅ *Ack dado por <@U1>* (Leon) em 05/11 às 19:00",
+            },
+          ],
+        },
+      ],
+    });
+
+    assert.match(text, /ALERTA: \[RDS\] CPU do RDS acima de 90%/u);
+    assert.match(text, /Ack dado por <@U1>/u);
+  });
+
   it("reads a forward that only has Block Kit text", () => {
     const text = readSlackMessageText({
       text: "",

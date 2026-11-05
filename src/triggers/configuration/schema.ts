@@ -3,6 +3,8 @@ import { z } from "zod";
 import { ContinuationSchema } from "../continuation.js";
 import { eventDefinition, isEditorEvent } from "./events.js";
 import { AuthoredGitHubAuthoritySchema } from "../../config/github-authority.js";
+import { SlackMessageRegexSchema, SlackMessageTextSchema } from "../slack/text-filter.js";
+import { GuardrailsSchema } from "../../workflows/guardrails.js";
 
 type JsonPrimitive = string | number | boolean | null;
 type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
@@ -37,12 +39,29 @@ export const TriggerFilterSchema = z
     pattern: z.string().optional(),
     contains: z.string().optional(),
     /**
-     * Substrings that must all appear. Slack matching ignores case and requires a
-     * letter or number boundary, so a short token does not hit the middle of another word.
+     * Legacy Slack terms that must all appear. Slack compiles each term into `regex`
+     * and matches that list instead. GitHub does not read this field.
      */
     contains_all: z.array(z.string().min(1)).min(1).optional(),
-    /** Substrings of which at least one must appear, with the same Slack boundary rule. */
+    /**
+     * Legacy Slack terms of which one must appear. Slack compiles them into one
+     * alternation inside `regex`. GitHub does not read this field.
+     */
     contains_any: z.array(z.string().min(1)).min(1).optional(),
+    /**
+     * Literal text and regular expressions that must all match the raw Slack message.
+     * A string is case-insensitive literal text with a letter or number boundary.
+     * `{ regex }` is a regular expression. Omit the field for no literal filter.
+     * When `regex` is also set, every clause from both lists has to match.
+     * GitHub does not read this field.
+     */
+    text: SlackMessageTextSchema.optional(),
+    /**
+     * Expressions that must all match the raw Slack message. Each string is a regular expression.
+     * Omit the field for no expression filter. The author writes anchors when the match must be a prefix.
+     * GitHub does not read this field.
+     */
+    regex: SlackMessageRegexSchema.optional(),
     /** GitHub text which makes an event ineligible, such as a command another trigger owns. */
     exclude_contains: z.string().optional(),
     label: z.string().min(1).optional(),
@@ -108,12 +127,67 @@ export const TriggerOutputSchema = z
   })
   .strict();
 
+const PromptTextPartSchema = z.object({ text: z.string() }).strict();
+const PromptIncludeTargetSchema = z.union([
+  z.string().min(1),
+  z
+    .object({
+      path: z.string().min(1),
+      root: z.string().min(1).optional(),
+    })
+    .strict(),
+]);
+const PromptIncludePartSchema = z.object({ include: PromptIncludeTargetSchema }).strict();
+
+/**
+ * A prompt string, or an ordered list of text and included instruction files.
+ *
+ * An include is explicit. Omitting the list keeps the string prompt and does
+ * not read any rule file.
+ */
+export const TriggerPromptSchema = z
+  .union([
+    z.string().min(1),
+    z.array(z.union([PromptTextPartSchema, PromptIncludePartSchema])).min(1),
+  ])
+  .superRefine((prompt, context) => {
+    if (typeof prompt === "string") return;
+    const useful = prompt.some((part) => "include" in part || part.text.trim().length > 0);
+    if (!useful) {
+      context.addIssue({
+        code: "custom",
+        message: "Instructions are required.",
+      });
+    }
+  });
+
+export type TriggerPrompt = z.infer<typeof TriggerPromptSchema>;
+
+/**
+ * The prompt blocks the workflow compiler already accepts.
+ *
+ * @param prompt - String or list from the automation YAML
+ * @returns One text block, or the list in YAML order
+ */
+export function authoredPromptBlocks(
+  prompt: TriggerPrompt,
+): Array<{ text: string } | { include: string } | { include: { path: string; root?: string } }> {
+  if (typeof prompt === "string") return [{ text: prompt }];
+  return prompt.map((part) => {
+    if ("text" in part) return { text: part.text };
+    if (typeof part.include === "string") return { include: part.include };
+    const include: { path: string; root?: string } = { path: part.include.path };
+    if (part.include.root !== undefined) include.root = part.include.root;
+    return { include };
+  });
+}
+
 const AgentReactionFields = {
   agent: TriggerAgentSelectionSchema,
   continuation: ContinuationSchema.default({ mode: "conversation" }),
   /** Workspace title template: literal text plus `${{ paseo.execution.id }}`. */
   title: z.string().min(1).optional(),
-  prompt: z.string().min(1),
+  prompt: TriggerPromptSchema,
   max_runtime: z.string().min(1).default("2h"),
   idle_timeout: z.string().min(1).default("10m"),
   startup_timeout: z.string().min(1).optional(),
@@ -128,10 +202,18 @@ const AgentReactionFields = {
   background: z.boolean().default(false),
 };
 
+/**
+ * Rails Hub enforces when this run sends a message.
+ * Each entry is `{ id, options }`. `options` is optional and typed by `id`.
+ * Omitted means no extra restriction.
+ */
+const optionalGuardrails = GuardrailsSchema.optional();
+
 export const TriggerRunSchema = z
   .object({
     target: TriggerTargetSchema,
     ...AgentReactionFields,
+    guardrails: optionalGuardrails,
   })
   .strict();
 
@@ -299,6 +381,7 @@ export const FlowRunSchema = z
   .object({
     target: TriggerTargetSchema,
     reactions: z.array(TriggerReactionSchema).min(1),
+    guardrails: optionalGuardrails,
   })
   .strict();
 

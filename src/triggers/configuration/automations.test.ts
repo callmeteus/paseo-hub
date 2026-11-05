@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "vitest";
 import { compileTriggerDocument } from "./index.js";
+import { emptyWorktree, textInstructions } from "./form-drafts.js";
 import { applyAutomationTemplate, createWebhookSecret } from "./editor.js";
 import type { TriggerFormValue } from "./editor.js";
 
@@ -30,7 +31,9 @@ const form: TriggerFormValue = {
   githubDuration: "1h",
   channels: "",
   webhookSecret: "",
-  prompt: "Handle it.",
+  guardrails: [],
+  worktree: emptyWorktree(),
+  prompt: textInstructions("Handle it."),
 };
 
 describe("automation templates", () => {

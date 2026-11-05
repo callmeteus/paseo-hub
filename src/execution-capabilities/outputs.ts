@@ -1,5 +1,10 @@
 import type { JsonValue } from "../config/compiler.js";
 import { compileFinishExecutionArguments } from "../workflows/json-schema.js";
+import {
+  enforceSlackGuardrails,
+  slackGuardrailCheck,
+  type Guardrail,
+} from "../workflows/guardrails.js";
 
 export interface AllowedOutput {
   type: string;
@@ -30,6 +35,10 @@ export interface OutputExecutionInput {
   toolType: string;
   args: Record<string, unknown>;
   outputContext: unknown;
+  /** Rails copied from the run. Absent means this send has no extra restriction. */
+  guardrails?: readonly Guardrail[] | undefined;
+  /** Triggering event. Slack rails read the source channel and thread from it. */
+  triggerContext?: unknown;
 }
 
 export type OutputExecutor = (input: OutputExecutionInput) => Promise<void>;
@@ -146,6 +155,16 @@ export class OutputExecutorRegistry {
     if (capability === undefined) {
       throw new Error(`no output executor registered for ${input.toolType}`);
     }
+    // The model can describe another channel in its prompt. This is the check
+    // that actually stops the Slack post.
+    enforceSlackGuardrails(
+      slackGuardrailCheck({
+        guardrails: input.guardrails,
+        toolType: input.toolType,
+        triggerContext: input.triggerContext,
+        outputContext: input.outputContext,
+      }),
+    );
     await capability.execute(input);
   }
 }
