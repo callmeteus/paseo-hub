@@ -75,9 +75,18 @@ export class OrganizationHome {
     await expect(this.nudge()).toHaveCount(0);
   }
 
-  async followNudge() {
-    await this.nudge().getByRole("link", { name: "Create a trigger", exact: true }).click();
-    await expect(this.page).toHaveURL(/\/triggers\/new$/u);
+  unroutedReview(): Locator {
+    return this.page.getByRole("dialog", { name: "Events with no trigger" });
+  }
+
+  async openUnroutedReview() {
+    await this.nudge().getByRole("button", { name: "Review events", exact: true }).click();
+    await expect(this.unroutedReview()).toBeVisible();
+  }
+
+  async closeUnroutedReview() {
+    await this.unroutedReview().getByRole("button", { name: "Close", exact: true }).click();
+    await expect(this.unroutedReview()).toBeHidden();
   }
 
   async expectRuns(count: number, outcomes: string) {

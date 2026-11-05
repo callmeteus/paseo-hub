@@ -64,17 +64,25 @@ test("walks a hosted organization from sign-in to its first run", async ({ hub, 
     await home.expectProgress("2 of 4 done");
   });
 
-  await test.step("events arriving with no trigger listening are a nudge to create one", async () => {
+  await test.step("events arriving with no trigger listening can be reviewed", async () => {
     await hub.deliverUnroutedGitHubEvent("home-unrouted-1");
     await hub.deliverUnroutedGitHubEvent("home-unrouted-2");
     await home.reload();
     await expect(home.nudge()).toContainText("2 events in the last 7 days");
     await expect(home.nudge()).toContainText("2 from GitHub");
+    await expect(home.nudge().getByRole("link", { name: "Create a trigger" })).toHaveCount(0);
     await home.capture(`${SHOTS}/03-unrouted-nudge.png`);
-    await home.followNudge();
+    await home.openUnroutedReview();
+    await expect(home.unroutedReview()).toContainText("GitHub");
+    await expect(home.unroutedReview()).toContainText("@paseo run tenant dispatch");
+    await expect(home.unroutedReview().getByRole("link", { name: "Create a trigger" })).toHaveCount(
+      0,
+    );
+    await home.closeUnroutedReview();
   });
 
   await test.step("the editor starts from the connected daemon, and saving completes the third step", async () => {
+    await home.followStepAction("Create a trigger", "New trigger");
     await triggers.expectDaemonPreselected(daemon);
     await triggers.configureManual({
       name: "deploy",
