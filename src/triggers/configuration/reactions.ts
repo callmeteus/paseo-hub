@@ -1,6 +1,7 @@
 import type { AuthoredStep, CompiledAgent } from "../../config/compiler.js";
 import type { Continuation } from "../continuation.js";
 import {
+  isEnvReaction,
   isFlowRun,
   type AgentReaction,
   type TriggerDocument,
@@ -45,6 +46,16 @@ export function flattenTriggerReactions(authored: TriggerDocument): FlattenedRea
         });
         continue;
       }
+      if (isEnvReaction(reaction)) {
+        const id = allocateId(reaction.id, "env", used);
+        const condition = andExpression(parent, undefined);
+        steps.push({
+          id,
+          env: { files: [...reaction.env.files] },
+          ...(condition === undefined ? {} : { if: condition }),
+        });
+        continue;
+      }
       if ("http" in reaction) {
         const id = allocateId(reaction.id, "http", used);
         const condition = andExpression(parent, undefined);
@@ -85,7 +96,7 @@ export function flattenTriggerReactions(authored: TriggerDocument): FlattenedRea
   visit(authored.run.reactions, undefined);
   if (steps.length === 0) {
     throw new Error(
-      "a reaction flow needs at least one agent, wait, request, notice, or condition branch",
+      "a reaction flow needs at least one agent, wait, env, request, notice, or condition branch",
     );
   }
   return {

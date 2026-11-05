@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync, randomUUID } from "node:crypto";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it, vi } from "vitest";
 import {
   compileHubConfig,
@@ -1869,6 +1872,8 @@ async function deployGateHarness(options: {
   intents?: LaunchMachineIntent[];
   fetch: typeof fetch;
 }) {
+  const home = mkdtempSync(join(tmpdir(), "deploy-env-"));
+  writeFileSync(join(home, "api.env"), "TOKEN=test-key\n");
   const compiled = compileTriggerDocument(`
 name: deploy-gate
 enabled: true
@@ -1879,12 +1884,17 @@ run:
     daemon: office
     cwd: /workspace
   reactions:
+    - id: creds
+      env:
+        files:
+          - ${home}/api.env
     - id: gate
       http:
         method: GET
         url: https://e7bot.even7.dev/admin/api/deploys
-        auth: e7
         number_from_prompt: true
+        headers:
+          Authorization: "Bearer \${var:TOKEN}"
     - id: open
       if:
         condition: "\${{ steps.gate.outputs.open == true }}"
@@ -1893,9 +1903,10 @@ run:
             http:
               method: POST
               url: https://e7bot.even7.dev/admin/api/deploys
-              auth: e7
               number_from_prompt: true
               path: assign
+              headers:
+                Authorization: "Bearer \${var:TOKEN}"
           - id: claimed
             if:
               condition: "\${{ steps.claim.outputs.assigned == true }}"
@@ -1925,7 +1936,6 @@ run:
     database: fixture.database,
     entitlements: fixture.entitlements,
     providers: [providerMatch(fixture.configuration, fixture.revisionId)],
-    readE7ApiKey: () => "test-key",
     fetch: options.fetch,
     postSlackMessage: async (_outputContext, content) => {
       options.notices.push(content);

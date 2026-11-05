@@ -205,6 +205,18 @@ const WaitStepSchema = z
   })
   .strict();
 
+const EnvStepSchema = z
+  .object({
+    id: z.string().min(1),
+    env: z
+      .object({
+        files: z.array(z.string().min(1)).min(1),
+      })
+      .strict(),
+    if: z.string().min(1).optional(),
+  })
+  .strict();
+
 const HttpStepSchema = z
   .object({
     id: z.string().min(1),
@@ -212,9 +224,9 @@ const HttpStepSchema = z
       .object({
         method: z.enum(["GET", "POST"]),
         url: z.string().startsWith("https://"),
-        auth: z.literal("e7"),
         number_from_prompt: z.literal(true),
         path: z.enum(["assign"]).optional(),
+        headers: z.record(z.string().min(1), z.string().min(1)),
       })
       .strict(),
     if: z.string().min(1).optional(),
@@ -233,7 +245,13 @@ const NoticeStepSchema = z
   })
   .strict();
 
-const StepSchema = z.union([WaitStepSchema, HttpStepSchema, NoticeStepSchema, AgentStepSchema]);
+const StepSchema = z.union([
+  WaitStepSchema,
+  EnvStepSchema,
+  HttpStepSchema,
+  NoticeStepSchema,
+  AgentStepSchema,
+]);
 
 const AuthoredTriggerSchema = z
   .object({
@@ -314,14 +332,17 @@ export interface CompiledStep {
   background: boolean;
   /** Set when this step pauses the run instead of launching its agent. */
   waitMs?: number | undefined;
+  /** Dotenv files named by the workflow. The values stay out of the step output. */
+  envFiles?: readonly string[] | undefined;
   /** Set when Hub calls the deploy API itself and stores the JSON. */
   http?:
     | {
         method: "GET" | "POST";
         url: string;
-        auth: "e7";
         numberFromPrompt: true;
         path?: "assign" | undefined;
+        /** Header templates. `${var:KEY}` resolves from earlier env files at request time. */
+        headers: Readonly<Record<string, string>>;
       }
     | undefined;
   /** Set when Hub posts the text itself. */
@@ -345,10 +366,15 @@ export function isCompiledWaitStep(step: CompiledStep): boolean {
  * Whether Hub runs this step itself instead of launching an agent.
  *
  * @param step - Step from a compiled trigger
- * @returns True for a wait, an HTTP call, or a notice
+ * @returns True for a wait, an env load, an HTTP call, or a notice
  */
 export function isCompiledStaticStep(step: CompiledStep): boolean {
-  return step.waitMs !== undefined || step.http !== undefined || step.notice !== undefined;
+  return (
+    step.waitMs !== undefined ||
+    step.envFiles !== undefined ||
+    step.http !== undefined ||
+    step.notice !== undefined
+  );
 }
 
 export type CompiledSteps = readonly CompiledStep[];
@@ -510,13 +536,14 @@ const CompiledStepSchema: z.ZodType<CompiledStep> = z
     autoArchive: z.boolean(),
     background: z.boolean().default(false),
     waitMs: z.number().int().positive().max(MAX_DURATION_MS).optional(),
+    envFiles: z.array(z.string().min(1)).min(1).optional(),
     http: z
       .object({
         method: z.enum(["GET", "POST"]),
         url: z.string().min(1),
-        auth: z.literal("e7"),
         numberFromPrompt: z.literal(true),
         path: z.enum(["assign"]).optional(),
+        headers: z.record(z.string().min(1), z.string().min(1)),
       })
       .strict()
       .optional(),
@@ -659,9 +686,19 @@ function compileTrigger(
   return compiled;
 }
 
+/** An env reaction lists files. An agent step may also have `env`, and those values are strings. */
+function isAuthoredEnvStep(
+  step: AuthoredStep,
+): step is Extract<AuthoredStep, { env: { files: readonly string[] } }> {
+  return "env" in step && typeof step.env === "object" && step.env !== null && "files" in step.env;
+}
+
 function compilePassiveStep(
   trigger: AuthoredTrigger,
-  step: Extract<AuthoredStep, { wait: unknown } | { http: unknown } | { notice: unknown }>,
+  step: Extract<
+    AuthoredStep,
+    { wait: unknown } | { env: unknown } | { http: unknown } | { notice: unknown }
+  >,
   stepPath: readonly (string | number)[],
   environmentNames: ReadonlySet<string>,
 ): CompiledStep {
@@ -697,24 +734,27 @@ function compilePassiveStep(
       prompt: [{ kind: "text", value: "wait" }],
     };
   }
-  // http and notice are the same kind of step: Hub runs them and does not launch the agent.
-  return {
+  // env, http and notice are the same kind of step: Hub runs them and does not launch the agent.
+  const passive = {
     ...shell,
     maxRuntimeMs: 60_000,
     idleTimeoutMs: 60_000,
-    prompt: [{ kind: "text", value: "static" }],
-    ...("http" in step
-      ? {
-          http: {
-            method: step.http.method,
-            url: step.http.url,
-            auth: "e7" as const,
-            numberFromPrompt: true as const,
-            ...(step.http.path === undefined ? {} : { path: step.http.path }),
-          },
-        }
-      : { notice: { text: step.notice.text } }),
+    prompt: [{ kind: "text" as const, value: "static" }],
   };
+  if (isAuthoredEnvStep(step)) return { ...passive, envFiles: step.env.files };
+  if ("http" in step) {
+    return {
+      ...passive,
+      http: {
+        method: step.http.method,
+        url: step.http.url,
+        numberFromPrompt: true as const,
+        ...(step.http.path === undefined ? {} : { path: step.http.path }),
+        headers: step.http.headers,
+      },
+    };
+  }
+  return { ...passive, notice: { text: step.notice.text } };
 }
 
 function validateStepOutputReference(
@@ -764,7 +804,7 @@ function compileStep(
   namedAgents: Readonly<Record<string, CompiledAgent>>,
 ): CompiledStep {
   const stepPath = ["triggers", trigger.name, "steps", step.id] as const;
-  if ("wait" in step || "http" in step || "notice" in step) {
+  if ("wait" in step || isAuthoredEnvStep(step) || "http" in step || "notice" in step) {
     return compilePassiveStep(trigger, step, stepPath, environmentNames);
   }
   compileAt([...stepPath, "environment"], () => {
@@ -1003,7 +1043,7 @@ function validateEnvironmentInputChoices(
   environments: ReadonlyMap<string, AuthoredEnvironment>,
 ): void {
   for (const step of trigger.steps) {
-    if ("wait" in step || "http" in step || "notice" in step) continue;
+    if ("wait" in step || isAuthoredEnvStep(step) || "http" in step || "notice" in step) continue;
     const reference = DYNAMIC_INPUT_REFERENCE.exec(step.environment);
     if (reference === null) continue;
     const input = inputs[reference[1]!];

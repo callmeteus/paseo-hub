@@ -1,5 +1,5 @@
 import { parseExpression } from "../../workflows/expression.js";
-import { trueBranch, type TriggerReaction } from "./schema.js";
+import { isEnvReaction, trueBranch, type TriggerReaction } from "./schema.js";
 
 const DURATION = /^([1-9][0-9]*)(ms|s|m|h)$/u;
 const IDENTIFIER = /^[a-z][a-z0-9_-]*$/u;
@@ -311,10 +311,10 @@ function projectReaction(
       },
     };
   }
-  if ("http" in reaction || "notice" in reaction) {
+  if (isEnvReaction(reaction) || "http" in reaction || "notice" in reaction) {
     return {
       status: "yaml_only",
-      reason: "HTTP and notice reactions can only be edited in YAML.",
+      reason: "Env, HTTP and notice reactions can only be edited in YAML.",
     };
   }
   if ("if" in reaction) {

@@ -58,7 +58,7 @@ import {
 } from "./expression.js";
 import type { WorktreeTarget } from "../config/index.js";
 import type { Logger } from "pino";
-import { callDeployHttp, readE7ApiKey } from "./static-request.js";
+import { callDeployHttp, interpolateEnv, loadEnvFiles } from "./static-request.js";
 
 const DEFAULT_WAKEUP_LEASE_MS = 30_000;
 const DEFAULT_WORKER_INTERVAL_MS = 250;
@@ -99,8 +99,6 @@ export interface DurableWorkflowEngineOptions {
   onWorkflowRunTerminal?: (run: TriggerRunRecord) => Promise<JsonValue | null | void>;
   /** Posts a Slack reply without launching an agent. */
   postSlackMessage?: (outputContext: unknown, content: string) => Promise<void>;
-  /** Reads the E7 API key. The default reads the Lemon credentials file. */
-  readE7ApiKey?: () => string;
   fetch?: typeof fetch;
   logger?: Pick<Logger, "warn" | "error">;
 }
@@ -303,7 +301,20 @@ export class DurableWorkflowEngine {
       if (failed?.transitioned === true) await this.notifyWorkflowRunTerminal(failed.run);
       return;
     }
-    if (await this.pauseOrSkipStep(database, run, step, context, next.startedAt, shouldRun)) return;
+    if (
+      await this.pauseOrSkipStep(
+        database,
+        run,
+        step,
+        context,
+        next.startedAt,
+        shouldRun,
+        trigger.steps,
+        steps,
+      )
+    ) {
+      return;
+    }
     const startedAt = this.now();
     const deadlineAt = new Date(
       Math.min(run.deadlineAt.getTime(), startedAt.getTime() + step.maxRuntimeMs),
@@ -388,6 +399,8 @@ export class DurableWorkflowEngine {
    * @param context - Expression context, including earlier step outputs
    * @param startedAt - When the wait first started, if it already had
    * @param shouldRun - Whether the step condition passed
+   * @param triggerSteps - Compiled steps, so an HTTP call can see earlier env files
+   * @param stepRuns - Status of each step in this run
    * @returns True when the step was skipped or Hub handled it
    */
   private async pauseOrSkipStep(
@@ -397,6 +410,8 @@ export class DurableWorkflowEngine {
     context: ExpressionContext,
     startedAt: Date | null,
     shouldRun: boolean,
+    triggerSteps: readonly CompiledStep[],
+    stepRuns: readonly WorkflowStepRun[],
   ): Promise<boolean> {
     if (!shouldRun) {
       await database.markWorkflowStepSkipped(run.id, step.id, "condition_false");
@@ -406,8 +421,12 @@ export class DurableWorkflowEngine {
       await this.processWaitStep(run.id, step, startedAt);
       return true;
     }
+    if (step.envFiles !== undefined) {
+      await this.processEnvStep(database, run, step);
+      return true;
+    }
     if (step.http !== undefined) {
-      await this.processHttpStep(database, run, step);
+      await this.processHttpStep(database, run, step, triggerSteps, stepRuns);
       return true;
     }
     if (step.notice !== undefined) {
@@ -417,22 +436,39 @@ export class DurableWorkflowEngine {
     return false;
   }
 
-  private async processHttpStep(
+  private async processEnvStep(
     database: Database,
     run: AcceptedWorkflowRun,
     step: CompiledStep,
   ): Promise<void> {
+    await database.succeedWorkflowStep(run.id, step.id, { loaded: true }, this.now());
+  }
+
+  private async processHttpStep(
+    database: Database,
+    run: AcceptedWorkflowRun,
+    step: CompiledStep,
+    triggerSteps: readonly CompiledStep[],
+    stepRuns: readonly WorkflowStepRun[],
+  ): Promise<void> {
     const request = step.http;
     if (request === undefined) return;
     try {
-      const apiKey = (
-        this.options.readE7ApiKey ?? (() => readE7ApiKey(process.env["HOME"] ?? ""))
-      )();
+      const files = envFilesForHttp(triggerSteps, stepRuns, step.id);
+      const env = loadEnvFiles(files, process.env["HOME"] ?? "");
+      const headers: Record<string, string> = {};
+      const secrets: string[] = [];
+      for (const [name, template] of Object.entries(request.headers)) {
+        const rendered = interpolateEnv(template, env);
+        headers[name] = rendered.text;
+        secrets.push(...rendered.secrets);
+      }
       const result = await callDeployHttp({
         step: request,
         prompt: run.prompt,
         triggerContext: run.triggerContext,
-        apiKey,
+        headers,
+        secrets,
         fetch: this.options.fetch ?? globalThis.fetch,
       });
       if (!result.ok) {
@@ -1154,6 +1190,34 @@ function buildStepIntent(
     ...(step.output === undefined ? {} : { outputSchema: step.output.schema }),
     deadlineAt,
   };
+}
+
+/**
+ * Dotenv files from env steps that already succeeded before this HTTP call.
+ *
+ * The file list lives on the compiled step. The secret values are read again
+ * when the request is made, so they are not stored on the run.
+ *
+ * @param triggerSteps - Compiled steps in order
+ * @param stepRuns - Status of each step in this run
+ * @param stepId - HTTP step that needs the files
+ * @returns Paths, in the order the workflow named them
+ */
+function envFilesForHttp(
+  triggerSteps: readonly CompiledStep[],
+  stepRuns: readonly { stepId: string; status: string }[],
+  stepId: string,
+): string[] {
+  const succeeded = new Set(
+    stepRuns.filter((step) => step.status === "succeeded").map((step) => step.stepId),
+  );
+  const files: string[] = [];
+  for (const step of triggerSteps) {
+    if (step.id === stepId) break;
+    if (step.envFiles === undefined || !succeeded.has(step.id)) continue;
+    files.push(...step.envFiles);
+  }
+  return files;
 }
 
 function materializeAgent(selection: CompiledAgentSelection, context: ExpressionContext) {

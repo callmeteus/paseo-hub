@@ -16,27 +16,160 @@ export type DeployHttpResult =
   | { ok: true; output: Readonly<Record<string, unknown>> }
   | { ok: false; reason: string };
 
+const VAR_NAME = /^[A-Za-z_][A-Za-z0-9_.]*/u;
+const MAX_ENV_DEPTH = 8;
+
+export interface EnvInterpolation {
+  text: string;
+  /** Values taken from the files. Used to redact an error, never stored. */
+  secrets: readonly string[];
+}
+
 /**
- * Reads the E7 API key from the Lemon credentials files.
+ * Merges dotenv files in order. The first file that has a key keeps it.
  *
- * `~/.lm.credentials` wins when it has the key. Otherwise `~/.lemon.credentials`.
- * The file is dotenv. The key is `EVEN_AGENT_API_KEY`, or `e7.apiKey`.
+ * A path that starts with `~/` is under `home`. A missing file is skipped.
+ * Empty values are skipped. Nothing is logged.
  *
- * @param home - Home directory that holds the credentials files
- * @returns The API key
+ * @param files - Dotenv paths, in the order the workflow wrote them
+ * @param home - Home directory used to expand `~/`
+ * @returns The merged keys
  */
-export function readE7ApiKey(home: string): string {
-  const preferred = readDotenv(join(home, ".lm.credentials"));
-  const fallback = readDotenv(join(home, ".lemon.credentials"));
-  const key =
-    preferred["EVEN_AGENT_API_KEY"] ??
-    preferred["e7.apiKey"] ??
-    fallback["EVEN_AGENT_API_KEY"] ??
-    fallback["e7.apiKey"];
-  if (key === undefined || key.length === 0) {
-    throw new Error("e7 api key is missing from the credentials file");
+export function loadEnvFiles(
+  files: readonly string[],
+  home: string,
+): Readonly<Record<string, string>> {
+  const merged: Record<string, string> = {};
+  for (const file of files) {
+    const values = readDotenv(expandHome(file, home));
+    for (const [key, value] of Object.entries(values)) {
+      if (value.length === 0 || merged[key] !== undefined) continue;
+      merged[key] = value;
+    }
   }
-  return key;
+  return merged;
+}
+
+/**
+ * Replaces `${var:KEY}` from a merged dotenv map.
+ *
+ * `var:` is the only prefix. The key is the literal dotenv key, and it may
+ * contain a dot. This does not take a workflow `${{ ... }}`.
+ * `${var:KEY:-fallback}` is used when the value is missing or empty, and the
+ * fallback is interpolated too. `${var:KEY-fallback}` is used only when the
+ * value is missing. `$$` stays as `$`. A missing required key throws, and the
+ * message names the key without its value.
+ *
+ * @param template - Text that may contain `${var:KEY}`
+ * @param env - Merged dotenv values
+ * @param depth - Nested fallback depth
+ * @returns The text and the secret values that were inserted
+ */
+export function interpolateEnv(
+  template: string,
+  env: Readonly<Record<string, string>>,
+  depth = 0,
+): EnvInterpolation {
+  if (depth > MAX_ENV_DEPTH) throw new Error("env interpolation is too deep");
+  let text = "";
+  const secrets: string[] = [];
+  for (let index = 0; index < template.length; index += 1) {
+    if (template[index] !== "$") {
+      text += template[index];
+      continue;
+    }
+    if (template[index + 1] === "$") {
+      text += "$";
+      index += 1;
+      continue;
+    }
+    if (template[index + 1] !== "{") {
+      text += "$";
+      continue;
+    }
+    // ${{ is a workflow expression. Leave it for that renderer.
+    if (template[index + 2] === "{") {
+      text += "$";
+      continue;
+    }
+    const expression = readEnvExpression(template, index + 2);
+    const resolved = resolveEnvExpression(expression, env, depth);
+    text += resolved.text;
+    secrets.push(...resolved.secrets);
+    index = expression.end;
+  }
+  return { text, secrets };
+}
+
+interface EnvExpression {
+  name: string;
+  /** Set when the expression has a fallback. True when an empty value also falls back. */
+  whenEmpty?: boolean | undefined;
+  fallback?: string | undefined;
+  /** Index of the closing brace. */
+  end: number;
+}
+
+function readEnvExpression(template: string, start: number): EnvExpression {
+  if (!template.startsWith("var:", start)) throw new Error("interpolation must use var:KEY");
+  const nameStart = start + "var:".length;
+  const name = VAR_NAME.exec(template.slice(nameStart))?.[0];
+  if (name === undefined) throw new Error("interpolation is missing a key");
+  let cursor = nameStart + name.length;
+  if (template[cursor] === "}") return { name, end: cursor };
+  let whenEmpty = false;
+  if (template[cursor] === ":") {
+    if (template[cursor + 1] !== "-") throw new Error("interpolation has an unknown operator");
+    whenEmpty = true;
+    cursor += 2;
+  } else if (template[cursor] === "-") {
+    cursor += 1;
+  } else {
+    throw new Error("interpolation is missing a closing brace");
+  }
+  const fallback = readUntilBrace(template, cursor);
+  return { name, whenEmpty, fallback: fallback.text, end: fallback.end };
+}
+
+function readUntilBrace(template: string, start: number): { text: string; end: number } {
+  let depth = 0;
+  for (let index = start; index < template.length; index += 1) {
+    if (template[index] === "$" && template[index + 1] === "$") {
+      index += 1;
+      continue;
+    }
+    if (template[index] === "$" && template[index + 1] === "{") {
+      depth += 1;
+      index += 1;
+      continue;
+    }
+    if (template[index] !== "}") continue;
+    if (depth === 0) return { text: template.slice(start, index), end: index };
+    depth -= 1;
+  }
+  throw new Error("interpolation is missing a closing brace");
+}
+
+function resolveEnvExpression(
+  expression: EnvExpression,
+  env: Readonly<Record<string, string>>,
+  depth: number,
+): EnvInterpolation {
+  const value = env[expression.name];
+  if (value !== undefined && value.length > 0) return { text: value, secrets: [value] };
+  const unset = value === undefined;
+  if (expression.fallback !== undefined && (expression.whenEmpty === true || unset)) {
+    return interpolateEnv(expression.fallback, env, depth + 1);
+  }
+  // ${var:KEY-fallback} keeps an empty value. A required key does not.
+  if (value === "" && expression.fallback !== undefined) return { text: "", secrets: [] };
+  throw new Error(`var:${expression.name} is unset`);
+}
+
+function expandHome(file: string, home: string): string {
+  if (file === "~") return home;
+  if (file.startsWith("~/")) return join(home, file.slice(2));
+  return file;
 }
 
 /**
@@ -52,7 +185,8 @@ export async function callDeployHttp(input: {
   step: DeployHttpStep;
   prompt: string;
   triggerContext: unknown;
-  apiKey: string;
+  headers: Readonly<Record<string, string>>;
+  secrets: readonly string[];
   fetch: typeof fetch;
 }): Promise<DeployHttpResult> {
   if (input.step.method === "POST" && input.step.path !== "assign") {
@@ -75,7 +209,7 @@ export async function callDeployHttp(input: {
       method: input.step.method,
       headers: {
         accept: "application/json",
-        authorization: `Bearer ${input.apiKey}`,
+        ...input.headers,
         "x-sanddbox-actor": actor,
       },
       signal: AbortSignal.timeout(15_000),
@@ -86,10 +220,10 @@ export async function callDeployHttp(input: {
   }
   if (input.step.method === "POST") {
     if (response.status === 409) return { ok: true, output: { assigned: false } };
-    if (!response.ok) return { ok: false, reason: await failureReason(response, input.apiKey) };
+    if (!response.ok) return { ok: false, reason: await failureReason(response, input.secrets) };
     return { ok: true, output: { assigned: true } };
   }
-  if (!response.ok) return { ok: false, reason: await failureReason(response, input.apiKey) };
+  if (!response.ok) return { ok: false, reason: await failureReason(response, input.secrets) };
   let parsed: unknown;
   try {
     parsed = await response.json();
@@ -191,8 +325,13 @@ function readDotenv(path: string): Readonly<Record<string, string>> {
   return values;
 }
 
-async function failureReason(response: Response, apiKey: string): Promise<string> {
-  const text = (await response.text()).replaceAll(apiKey, "[redacted]").slice(0, 200);
+async function failureReason(response: Response, secrets: readonly string[]): Promise<string> {
+  let text = await response.text();
+  const hidden = [...secrets]
+    .filter((secret) => secret.length > 0)
+    .sort((a, b) => b.length - a.length);
+  for (const secret of hidden) text = text.replaceAll(secret, "[redacted]");
+  text = text.slice(0, 200);
   return `deploy api returned ${String(response.status)}${text.length === 0 ? "" : `: ${text}`}`;
 }
 

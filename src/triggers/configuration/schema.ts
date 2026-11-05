@@ -153,6 +153,17 @@ export const WaitReactionSchema = z
   })
   .strict();
 
+export const EnvReactionSchema = z
+  .object({
+    id: z.string().regex(IDENTIFIER).optional(),
+    env: z
+      .object({
+        files: z.array(z.string().min(1)).min(1),
+      })
+      .strict(),
+  })
+  .strict();
+
 export const HttpReactionSchema = z
   .object({
     id: z.string().regex(IDENTIFIER).optional(),
@@ -160,12 +171,19 @@ export const HttpReactionSchema = z
       .object({
         method: z.enum(["GET", "POST"]),
         url: z.string().startsWith("https://"),
-        auth: z.literal("e7"),
         number_from_prompt: z.literal(true),
         path: z.enum(["assign"]).optional(),
+        headers: z.record(z.string().min(1), z.string().min(1)),
       })
       .strict()
       .superRefine((request, context) => {
+        if (Object.keys(request.headers).length === 0) {
+          context.addIssue({
+            code: "custom",
+            path: ["headers"],
+            message: "headers needs a value.",
+          });
+        }
         if (request.method === "POST" && request.path !== "assign") {
           context.addIssue({
             code: "custom",
@@ -197,6 +215,20 @@ export const NoticeReactionSchema = z
 
 export type AgentReaction = z.infer<typeof AgentReactionSchema>;
 export type WaitReaction = z.infer<typeof WaitReactionSchema>;
+export type EnvReaction = z.infer<typeof EnvReactionSchema>;
+
+/**
+ * An env reaction names dotenv files. Agent settings are not this shape.
+ *
+ * @param reaction - One authored reaction
+ * @returns Whether the reaction loads env files
+ */
+export function isEnvReaction(reaction: TriggerReaction): reaction is EnvReaction {
+  if (!("env" in reaction) || reaction.env === undefined || !("files" in reaction.env)) {
+    return false;
+  }
+  return Array.isArray(reaction.env.files);
+}
 export type HttpReaction = z.infer<typeof HttpReactionSchema>;
 export type NoticeReaction = z.infer<typeof NoticeReactionSchema>;
 
@@ -212,6 +244,7 @@ export interface ConditionReaction {
 export type TriggerReaction =
   | AgentReaction
   | WaitReaction
+  | EnvReaction
   | HttpReaction
   | NoticeReaction
   | ConditionReaction;
@@ -231,6 +264,7 @@ export const TriggerReactionSchema: z.ZodType<TriggerReaction> = z.lazy(() =>
   z.union([
     AgentReactionSchema,
     WaitReactionSchema,
+    EnvReactionSchema,
     HttpReactionSchema,
     NoticeReactionSchema,
     ConditionReactionSchema,
