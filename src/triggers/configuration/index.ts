@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { dump, load } from "js-yaml";
 import {
   compileHubConfig,
-  isCompiledWaitStep,
+  isCompiledStaticStep,
   type AuthoredStep,
   type AuthoredTrigger,
   type CompiledAgentStep,
@@ -106,7 +106,7 @@ export function compileTriggerDocument(yaml: string): CompiledTriggerDocument {
       withAutomaticReply({
         ...trigger,
         steps: trigger.steps.map((step) => {
-          if (isCompiledWaitStep(step)) return step;
+          if (isCompiledStaticStep(step)) return step;
           return { ...step, continuation: continuationFor(authored, flattened, step.id) };
         }),
       }),
@@ -121,7 +121,7 @@ function withAutomaticReply(trigger: CompiledTrigger): CompiledTrigger {
   return {
     ...trigger,
     steps: trigger.steps.map((step) => {
-      if (isCompiledWaitStep(step)) return step;
+      if (isCompiledStaticStep(step)) return step;
       return {
         ...step,
         allowOutputs: automaticAllowOutputs(step.allowOutputs, replyType, trigger.on),

@@ -225,6 +225,14 @@ export function createHubApplication(options: HubRuntimeOptions): HubApplication
               intent.outputContext,
             ),
         }),
+    postSlackMessage: async (outputContext: unknown, content: string) => {
+      await outputRegistry.execute({
+        agentExecutionId: "workflow-notice",
+        toolType: "slack.reply",
+        args: { content },
+        outputContext,
+      });
+    },
     ...(daemonModule === null
       ? {}
       : {

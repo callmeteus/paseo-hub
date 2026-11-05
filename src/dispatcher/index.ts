@@ -26,6 +26,9 @@ export interface DispatcherOptions {
   onWorkflowRunAccepted?: DurableWorkflowEngineOptions["onWorkflowRunAccepted"];
   onWorkflowRunStarted?: DurableWorkflowEngineOptions["onWorkflowRunStarted"];
   onWorkflowRunTerminal?: DurableWorkflowEngineOptions["onWorkflowRunTerminal"];
+  postSlackMessage?: DurableWorkflowEngineOptions["postSlackMessage"];
+  readE7ApiKey?: DurableWorkflowEngineOptions["readE7ApiKey"];
+  fetch?: DurableWorkflowEngineOptions["fetch"];
 }
 
 export function createDispatcher(options: DispatcherOptions): TriggerHandler {
@@ -71,6 +74,11 @@ export function createDispatcherWithEngine(options: DispatcherOptions): {
     ...(options.onWorkflowRunTerminal === undefined
       ? {}
       : { onWorkflowRunTerminal: options.onWorkflowRunTerminal }),
+    ...(options.postSlackMessage === undefined
+      ? {}
+      : { postSlackMessage: options.postSlackMessage }),
+    ...(options.readE7ApiKey === undefined ? {} : { readE7ApiKey: options.readE7ApiKey }),
+    ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
   };
   return createDurableWorkflowHandler(engineOptions);
 }

@@ -153,8 +153,52 @@ export const WaitReactionSchema = z
   })
   .strict();
 
+export const HttpReactionSchema = z
+  .object({
+    id: z.string().regex(IDENTIFIER).optional(),
+    http: z
+      .object({
+        method: z.enum(["GET", "POST"]),
+        url: z.string().startsWith("https://"),
+        auth: z.literal("e7"),
+        number_from_prompt: z.literal(true),
+        path: z.enum(["assign"]).optional(),
+      })
+      .strict()
+      .superRefine((request, context) => {
+        if (request.method === "POST" && request.path !== "assign") {
+          context.addIssue({
+            code: "custom",
+            path: ["path"],
+            message: "POST requires path assign.",
+          });
+        }
+        if (request.path === "assign" && request.method !== "POST") {
+          context.addIssue({
+            code: "custom",
+            path: ["path"],
+            message: "assign requires POST.",
+          });
+        }
+      }),
+  })
+  .strict();
+
+export const NoticeReactionSchema = z
+  .object({
+    id: z.string().regex(IDENTIFIER).optional(),
+    notice: z
+      .object({
+        text: z.string().min(1),
+      })
+      .strict(),
+  })
+  .strict();
+
 export type AgentReaction = z.infer<typeof AgentReactionSchema>;
 export type WaitReaction = z.infer<typeof WaitReactionSchema>;
+export type HttpReaction = z.infer<typeof HttpReactionSchema>;
+export type NoticeReaction = z.infer<typeof NoticeReactionSchema>;
 
 export interface ConditionReaction {
   id?: string | undefined;
@@ -165,7 +209,12 @@ export interface ConditionReaction {
   };
 }
 
-export type TriggerReaction = AgentReaction | WaitReaction | ConditionReaction;
+export type TriggerReaction =
+  | AgentReaction
+  | WaitReaction
+  | HttpReaction
+  | NoticeReaction
+  | ConditionReaction;
 
 /**
  * The true branch of a condition. The field name is the YAML key, not a Promise.
@@ -179,7 +228,13 @@ export function trueBranch<T>(value: T): { then: T } {
 }
 
 export const TriggerReactionSchema: z.ZodType<TriggerReaction> = z.lazy(() =>
-  z.union([AgentReactionSchema, WaitReactionSchema, ConditionReactionSchema]),
+  z.union([
+    AgentReactionSchema,
+    WaitReactionSchema,
+    HttpReactionSchema,
+    NoticeReactionSchema,
+    ConditionReactionSchema,
+  ]),
 );
 
 const ConditionReactionSchema: z.ZodType<ConditionReaction> = z.lazy(() =>

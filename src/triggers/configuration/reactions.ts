@@ -45,6 +45,26 @@ export function flattenTriggerReactions(authored: TriggerDocument): FlattenedRea
         });
         continue;
       }
+      if ("http" in reaction) {
+        const id = allocateId(reaction.id, "http", used);
+        const condition = andExpression(parent, undefined);
+        steps.push({
+          id,
+          http: reaction.http,
+          ...(condition === undefined ? {} : { if: condition }),
+        });
+        continue;
+      }
+      if ("notice" in reaction) {
+        const id = allocateId(reaction.id, "notice", used);
+        const condition = andExpression(parent, undefined);
+        steps.push({
+          id,
+          notice: reaction.notice,
+          ...(condition === undefined ? {} : { if: condition }),
+        });
+        continue;
+      }
       if ("if" in reaction) {
         const positive = andExpression(parent, reaction.if.condition);
         const negative = andExpression(parent, `!(${unwrapExpression(reaction.if.condition)})`);
@@ -64,7 +84,9 @@ export function flattenTriggerReactions(authored: TriggerDocument): FlattenedRea
 
   visit(authored.run.reactions, undefined);
   if (steps.length === 0) {
-    throw new Error("a reaction flow needs at least one agent, wait, or condition branch");
+    throw new Error(
+      "a reaction flow needs at least one agent, wait, request, notice, or condition branch",
+    );
   }
   return {
     steps,

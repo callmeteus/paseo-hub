@@ -14,6 +14,7 @@ import type {
 } from "../db/types.js";
 import type { AgentExecutionStatus } from "../db/schema.js";
 import {
+  isCompiledStaticStep,
   isCompiledWaitStep,
   parseCompiledHubConfig,
   type CompiledAgentSelection,
@@ -57,6 +58,7 @@ import {
 } from "./expression.js";
 import type { WorktreeTarget } from "../config/index.js";
 import type { Logger } from "pino";
+import { callDeployHttp, readE7ApiKey } from "./static-request.js";
 
 const DEFAULT_WAKEUP_LEASE_MS = 30_000;
 const DEFAULT_WORKER_INTERVAL_MS = 250;
@@ -95,6 +97,11 @@ export interface DurableWorkflowEngineOptions {
   onWorkflowRunAccepted?: (run: AcceptedTriggerRunRecord) => Promise<JsonValue | null | void>;
   onWorkflowRunStarted?: (run: AcceptedTriggerRunRecord) => Promise<JsonValue | null | void>;
   onWorkflowRunTerminal?: (run: TriggerRunRecord) => Promise<JsonValue | null | void>;
+  /** Posts a Slack reply without launching an agent. */
+  postSlackMessage?: (outputContext: unknown, content: string) => Promise<void>;
+  /** Reads the E7 API key. The default reads the Lemon credentials file. */
+  readE7ApiKey?: () => string;
+  fetch?: typeof fetch;
   logger?: Pick<Logger, "warn" | "error">;
 }
 
@@ -296,7 +303,7 @@ export class DurableWorkflowEngine {
       if (failed?.transitioned === true) await this.notifyWorkflowRunTerminal(failed.run);
       return;
     }
-    if (await this.pauseOrSkipStep(database, run.id, step, next.startedAt, shouldRun)) return;
+    if (await this.pauseOrSkipStep(database, run, step, context, next.startedAt, shouldRun)) return;
     const startedAt = this.now();
     const deadlineAt = new Date(
       Math.min(run.deadlineAt.getTime(), startedAt.getTime() + step.maxRuntimeMs),
@@ -372,29 +379,105 @@ export class DurableWorkflowEngine {
   }
 
   /**
-   * Skips a false condition or parks a wait. Either way the agent is not launched.
+   * Skips a false condition, parks a wait, or runs an HTTP call or notice.
+   * Either way the agent is not launched.
    *
    * @param database - Workflow store
-   * @param runId - Run that owns the step
+   * @param run - Run that owns the step
    * @param step - Step being woken
+   * @param context - Expression context, including earlier step outputs
    * @param startedAt - When the wait first started, if it already had
    * @param shouldRun - Whether the step condition passed
-   * @returns True when the step was skipped or is a wait
+   * @returns True when the step was skipped or Hub handled it
    */
   private async pauseOrSkipStep(
     database: Database,
-    runId: string,
+    run: AcceptedWorkflowRun,
     step: CompiledStep,
+    context: ExpressionContext,
     startedAt: Date | null,
     shouldRun: boolean,
   ): Promise<boolean> {
     if (!shouldRun) {
-      await database.markWorkflowStepSkipped(runId, step.id, "condition_false");
+      await database.markWorkflowStepSkipped(run.id, step.id, "condition_false");
       return true;
     }
-    if (!isCompiledWaitStep(step)) return false;
-    await this.processWaitStep(runId, step, startedAt);
-    return true;
+    if (isCompiledWaitStep(step)) {
+      await this.processWaitStep(run.id, step, startedAt);
+      return true;
+    }
+    if (step.http !== undefined) {
+      await this.processHttpStep(database, run, step);
+      return true;
+    }
+    if (step.notice !== undefined) {
+      await this.processNoticeStep(database, run, step, context);
+      return true;
+    }
+    return false;
+  }
+
+  private async processHttpStep(
+    database: Database,
+    run: AcceptedWorkflowRun,
+    step: CompiledStep,
+  ): Promise<void> {
+    const request = step.http;
+    if (request === undefined) return;
+    try {
+      const apiKey = (
+        this.options.readE7ApiKey ?? (() => readE7ApiKey(process.env["HOME"] ?? ""))
+      )();
+      const result = await callDeployHttp({
+        step: request,
+        prompt: run.prompt,
+        triggerContext: run.triggerContext,
+        apiKey,
+        fetch: this.options.fetch ?? globalThis.fetch,
+      });
+      if (!result.ok) {
+        await this.failStaticStep(database, run, step.id, result.reason);
+        return;
+      }
+      await database.succeedWorkflowStep(run.id, step.id, result.output, this.now());
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "deploy request failed";
+      await this.failStaticStep(database, run, step.id, reason);
+    }
+  }
+
+  private async processNoticeStep(
+    database: Database,
+    run: AcceptedWorkflowRun,
+    step: CompiledStep,
+    context: ExpressionContext,
+  ): Promise<void> {
+    const notice = step.notice;
+    if (notice === undefined) return;
+    const post = this.options.postSlackMessage;
+    if (post === undefined) {
+      await this.failStaticStep(database, run, step.id, "slack notice is unavailable");
+      return;
+    }
+    try {
+      const content = renderExpressionTemplate(notice.text, context);
+      await post(run.outputContext, content);
+      await database.succeedWorkflowStep(run.id, step.id, { sent: true }, this.now());
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "slack notice failed";
+      await this.failStaticStep(database, run, step.id, reason);
+    }
+  }
+
+  private async failStaticStep(
+    database: Database,
+    run: AcceptedWorkflowRun,
+    stepId: string,
+    reason: string,
+  ): Promise<void> {
+    this.report(new Error(reason), "workflow.static.fail", { triggerRunId: run.id, stepId });
+    const failed = await database.failWorkflowRun(run.id, "failed", reason, stepId);
+    if (failed?.transitioned === true) await this.notifyWorkflowRunTerminal(failed.run);
   }
 
   private async processWaitStep(
@@ -992,7 +1075,7 @@ function buildStepIntent(
   deadlineAt: Date,
   executionId: string,
 ): LaunchMachineIntent {
-  if (isCompiledWaitStep(step)) {
+  if (isCompiledStaticStep(step)) {
     throw new Error(`step ${step.id} does not launch an agent`);
   }
   const environmentName = authorityString(
@@ -1106,7 +1189,7 @@ function workflowContext(
 function stepUsesTriggerContext(
   step: CompiledProjectConfiguration["triggers"][number]["steps"][number],
 ): boolean {
-  if (isCompiledWaitStep(step)) return false;
+  if (isCompiledStaticStep(step)) return false;
   return step.prompt.some((block) =>
     expressionPathsInTemplate(block.kind === "text" ? block.value : block.content).some(
       (path) => path.namespace === "paseo" && path.path === "context",

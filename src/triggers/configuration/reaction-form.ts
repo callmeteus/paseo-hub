@@ -311,6 +311,12 @@ function projectReaction(
       },
     };
   }
+  if ("http" in reaction || "notice" in reaction) {
+    return {
+      status: "yaml_only",
+      reason: "HTTP and notice reactions can only be edited in YAML.",
+    };
+  }
   if ("if" in reaction) {
     const id = reaction.id ?? nextId("check", existing);
     const reserved = [...existing, placeholderCondition(id)];

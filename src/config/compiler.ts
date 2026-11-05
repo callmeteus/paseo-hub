@@ -205,7 +205,35 @@ const WaitStepSchema = z
   })
   .strict();
 
-const StepSchema = z.union([WaitStepSchema, AgentStepSchema]);
+const HttpStepSchema = z
+  .object({
+    id: z.string().min(1),
+    http: z
+      .object({
+        method: z.enum(["GET", "POST"]),
+        url: z.string().startsWith("https://"),
+        auth: z.literal("e7"),
+        number_from_prompt: z.literal(true),
+        path: z.enum(["assign"]).optional(),
+      })
+      .strict(),
+    if: z.string().min(1).optional(),
+  })
+  .strict();
+
+const NoticeStepSchema = z
+  .object({
+    id: z.string().min(1),
+    notice: z
+      .object({
+        text: z.string().min(1),
+      })
+      .strict(),
+    if: z.string().min(1).optional(),
+  })
+  .strict();
+
+const StepSchema = z.union([WaitStepSchema, HttpStepSchema, NoticeStepSchema, AgentStepSchema]);
 
 const AuthoredTriggerSchema = z
   .object({
@@ -286,6 +314,18 @@ export interface CompiledStep {
   background: boolean;
   /** Set when this step pauses the run instead of launching its agent. */
   waitMs?: number | undefined;
+  /** Set when Hub calls the deploy API itself and stores the JSON. */
+  http?:
+    | {
+        method: "GET" | "POST";
+        url: string;
+        auth: "e7";
+        numberFromPrompt: true;
+        path?: "assign" | undefined;
+      }
+    | undefined;
+  /** Set when Hub posts the text itself. */
+  notice?: { text: string } | undefined;
 }
 
 /** An agent step. A wait uses the same shape and sets `waitMs`. */
@@ -299,6 +339,16 @@ export type CompiledAgentStep = CompiledStep;
  */
 export function isCompiledWaitStep(step: CompiledStep): boolean {
   return step.waitMs !== undefined;
+}
+
+/**
+ * Whether Hub runs this step itself instead of launching an agent.
+ *
+ * @param step - Step from a compiled trigger
+ * @returns True for a wait, an HTTP call, or a notice
+ */
+export function isCompiledStaticStep(step: CompiledStep): boolean {
+  return step.waitMs !== undefined || step.http !== undefined || step.notice !== undefined;
 }
 
 export type CompiledSteps = readonly CompiledStep[];
@@ -460,6 +510,22 @@ const CompiledStepSchema: z.ZodType<CompiledStep> = z
     autoArchive: z.boolean(),
     background: z.boolean().default(false),
     waitMs: z.number().int().positive().max(MAX_DURATION_MS).optional(),
+    http: z
+      .object({
+        method: z.enum(["GET", "POST"]),
+        url: z.string().min(1),
+        auth: z.literal("e7"),
+        numberFromPrompt: z.literal(true),
+        path: z.enum(["assign"]).optional(),
+      })
+      .strict()
+      .optional(),
+    notice: z
+      .object({
+        text: z.string().min(1),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -593,6 +659,102 @@ function compileTrigger(
   return compiled;
 }
 
+function compilePassiveStep(
+  trigger: AuthoredTrigger,
+  step: Extract<AuthoredStep, { wait: unknown } | { http: unknown } | { notice: unknown }>,
+  stepPath: readonly (string | number)[],
+  environmentNames: ReadonlySet<string>,
+): CompiledStep {
+  const authoredCondition = step.if;
+  const condition =
+    authoredCondition === undefined
+      ? undefined
+      : compileAt([...stepPath, "if"], () => parseExpression(authoredCondition));
+  const environment = [...environmentNames][0];
+  if (environment === undefined) {
+    throw new Error(`step ${step.id} requires a daemon environment`);
+  }
+  const shell = {
+    id: step.id,
+    environment,
+    agent: { provider: "codex" },
+    allowOutputs: [],
+    autoArchive: false,
+    background: false,
+    ...(condition === undefined ? {} : { condition }),
+  };
+  if ("wait" in step) {
+    const waitMs = compileAt([...stepPath, "wait"], () =>
+      parseDurationMs(step.wait, `trigger ${trigger.name} step ${step.id} wait`),
+    );
+    // The agent fields stay present so a wait is still a workflow step. The engine
+    // sees waitMs and does not launch them.
+    return {
+      ...shell,
+      waitMs,
+      maxRuntimeMs: waitMs,
+      idleTimeoutMs: waitMs,
+      prompt: [{ kind: "text", value: "wait" }],
+    };
+  }
+  // http and notice are the same kind of step: Hub runs them and does not launch the agent.
+  return {
+    ...shell,
+    maxRuntimeMs: 60_000,
+    idleTimeoutMs: 60_000,
+    prompt: [{ kind: "text", value: "static" }],
+    ...("http" in step
+      ? {
+          http: {
+            method: step.http.method,
+            url: step.http.url,
+            auth: "e7" as const,
+            numberFromPrompt: true as const,
+            ...(step.http.path === undefined ? {} : { path: step.http.path }),
+          },
+        }
+      : { notice: { text: step.notice.text } }),
+  };
+}
+
+function validateStepOutputReference(
+  trigger: CompiledTrigger,
+  stepOrdinals: ReadonlyMap<string, number>,
+  reference: ExpressionPath,
+  ordinal: number,
+  path: string,
+  authorityBearing: boolean,
+): void {
+  if (reference.namespace !== "steps") return;
+  const referencedOrdinal = stepOrdinals.get(reference.stepId);
+  if (referencedOrdinal === undefined)
+    throw new Error(`${path} references unknown step ${reference.stepId}`);
+  if (referencedOrdinal >= ordinal) {
+    throw new Error(`${path} cannot reference forward step ${reference.stepId}`);
+  }
+  const referencedStep = trigger.steps[referencedOrdinal];
+  if (referencedStep?.http !== undefined || referencedStep?.notice !== undefined) {
+    if (authorityBearing) {
+      throw new Error(`${path} uses a static step output in an authority-bearing field`);
+    }
+    return;
+  }
+  if (
+    referencedStep === undefined ||
+    !("output" in referencedStep) ||
+    referencedStep.output === undefined
+  ) {
+    throw new Error(
+      `${path} references output from step ${reference.stepId} without an output schema`,
+    );
+  }
+  if (authorityBearing && !hasFiniteSchemaChoices(referencedStep.output.schema, reference.path)) {
+    throw new Error(
+      `${path} uses agent output without provable finite choices for authority; use a finite enum or const`,
+    );
+  }
+}
+
 function compileStep(
   trigger: AuthoredTrigger,
   step: AuthoredStep,
@@ -602,34 +764,8 @@ function compileStep(
   namedAgents: Readonly<Record<string, CompiledAgent>>,
 ): CompiledStep {
   const stepPath = ["triggers", trigger.name, "steps", step.id] as const;
-  if ("wait" in step) {
-    const waitMs = compileAt([...stepPath, "wait"], () =>
-      parseDurationMs(step.wait, `trigger ${trigger.name} step ${step.id} wait`),
-    );
-    const authoredCondition = step.if;
-    const condition =
-      authoredCondition === undefined
-        ? undefined
-        : compileAt([...stepPath, "if"], () => parseExpression(authoredCondition));
-    const environment = [...environmentNames][0];
-    if (environment === undefined) {
-      throw new Error(`step ${step.id} wait requires a daemon environment`);
-    }
-    // The agent fields stay present so a wait is still a workflow step. The engine
-    // sees waitMs and does not launch them.
-    return {
-      id: step.id,
-      waitMs,
-      environment,
-      maxRuntimeMs: waitMs,
-      idleTimeoutMs: waitMs,
-      agent: { provider: "codex" },
-      prompt: [{ kind: "text", value: "wait" }],
-      allowOutputs: [],
-      autoArchive: false,
-      background: false,
-      ...(condition === undefined ? {} : { condition }),
-    };
+  if ("wait" in step || "http" in step || "notice" in step) {
+    return compilePassiveStep(trigger, step, stepPath, environmentNames);
   }
   compileAt([...stepPath, "environment"], () => {
     if (!environmentNames.has(step.environment) && !step.environment.includes(EXPRESSION_START)) {
@@ -867,7 +1003,7 @@ function validateEnvironmentInputChoices(
   environments: ReadonlyMap<string, AuthoredEnvironment>,
 ): void {
   for (const step of trigger.steps) {
-    if ("wait" in step) continue;
+    if ("wait" in step || "http" in step || "notice" in step) continue;
     const reference = DYNAMIC_INPUT_REFERENCE.exec(step.environment);
     if (reference === null) continue;
     const input = inputs[reference[1]!];
@@ -935,7 +1071,12 @@ function validateExpressionContract(
       compileAt(["triggers", triggerName, "steps", step.id, "if"], () =>
         validateExpression(step.condition!, ordinal, `step ${step.id} if`, false),
       );
-    if (isCompiledWaitStep(step)) continue;
+    if (step.notice !== undefined) {
+      compileAt(["triggers", triggerName, "steps", step.id, "notice"], () =>
+        validateTemplate(step.notice!.text, ordinal, `step ${step.id} notice`, false),
+      );
+    }
+    if (isCompiledStaticStep(step)) continue;
     compileAt(["triggers", triggerName, "steps", step.id, "environment"], () => {
       validateTemplate(step.environment, ordinal, `step ${step.id} environment`, true);
       validateEnvironmentSelection(step.environment, ordinal, step.id);
@@ -1137,27 +1278,7 @@ function validateExpressionContract(
         throw new Error(`${path} references undeclared value ${reference.name}`);
       return;
     }
-    const referencedOrdinal = stepOrdinals.get(reference.stepId);
-    if (referencedOrdinal === undefined)
-      throw new Error(`${path} references unknown step ${reference.stepId}`);
-    if (referencedOrdinal >= ordinal) {
-      throw new Error(`${path} cannot reference forward step ${reference.stepId}`);
-    }
-    const referencedStep = trigger.steps[referencedOrdinal];
-    if (
-      referencedStep === undefined ||
-      !("output" in referencedStep) ||
-      referencedStep.output === undefined
-    ) {
-      throw new Error(
-        `${path} references output from step ${reference.stepId} without an output schema`,
-      );
-    }
-    if (authorityBearing && !hasFiniteSchemaChoices(referencedStep.output.schema, reference.path)) {
-      throw new Error(
-        `${path} uses agent output without provable finite choices for authority; use a finite enum or const`,
-      );
-    }
+    validateStepOutputReference(trigger, stepOrdinals, reference, ordinal, path, authorityBearing);
   }
 
   function isFiniteAuthorityExpression(expression: Expression): boolean {
@@ -1182,12 +1303,12 @@ function validateExpressionContract(
     }
     const referencedOrdinal = stepOrdinals.get(reference.stepId);
     const step = referencedOrdinal === undefined ? undefined : trigger.steps[referencedOrdinal];
-    if (step === undefined || isCompiledWaitStep(step) || step.output === undefined) return false;
+    if (step === undefined || isCompiledStaticStep(step) || step.output === undefined) return false;
     return hasFiniteSchemaChoices(step.output.schema, reference.path);
   }
 
   if (
-    trigger.steps.some((step) => !isCompiledWaitStep(step) && step.environment.includes("${{")) &&
+    trigger.steps.some((step) => !isCompiledStaticStep(step) && step.environment.includes("${{")) &&
     environmentNames.size === 0
   ) {
     throw new Error(`trigger ${triggerName} has no configured environments`);
@@ -1268,7 +1389,7 @@ function validateCompiledContract(config: CompiledHubConfig): void {
     for (const step of trigger.steps) {
       if (stepIds.has(step.id)) throw new Error(`duplicate step id: ${step.id}`);
       stepIds.add(step.id);
-      if (isCompiledWaitStep(step)) {
+      if (isCompiledStaticStep(step)) {
         if (step.condition !== undefined && !isExpression(step.condition)) {
           throw new Error(`step ${step.id} contains an invalid condition`);
         }

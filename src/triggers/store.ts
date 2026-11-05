@@ -180,7 +180,7 @@ function agentsIn(
 ): { path: readonly (string | number)[]; agent: AuthoredAgent }[] {
   const found: { path: readonly (string | number)[]; agent: AuthoredAgent }[] = [];
   for (const [index, reaction] of reactions.entries()) {
-    if ("wait" in reaction) continue;
+    if ("wait" in reaction || "http" in reaction || "notice" in reaction) continue;
     if ("if" in reaction) {
       found.push(...agentsIn(reaction.if.then, [...path, index, "if", "then"]));
       found.push(...agentsIn(reaction.if.else, [...path, index, "if", "else"]));

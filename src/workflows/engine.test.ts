@@ -1702,6 +1702,94 @@ run:
     assert.equal(finished.get("run"), "running");
   });
 
+  it("does not launch an agent when the deploy is already assigned", async () => {
+    const notices: string[] = [];
+    const called: string[] = [];
+    const { handler, engine, fixture } = await deployGateHarness({
+      notices,
+      fetch: async (input, init) => {
+        called.push(`${init?.method ?? "GET"} ${requestUrl(input)}`);
+        return Response.json({ status: "ASSIGNED", assignedTo: "U9" });
+      },
+    });
+
+    await handler(fixture.trigger("Deploy Request #848 por <@U094ZL7KXK6>"));
+    await engine.processAvailable();
+
+    assert.deepEqual(called, ["GET https://e7bot.even7.dev/admin/api/deploys/848"]);
+    assert.equal(notices.length, 1);
+    assert.match(notices[0] ?? "", /848/);
+    assert.match(notices[0] ?? "", /<@U9>/);
+    const statuses = await stepStatuses(fixture);
+    assert.equal(statuses.get("gate"), "succeeded");
+    assert.equal(statuses.get("claim"), "skipped");
+    assert.equal(statuses.get("compile"), "skipped");
+    assert.equal(statuses.get("taken"), "succeeded");
+  });
+
+  it("assigns a free deploy before launching the compiler", async () => {
+    const notices: string[] = [];
+    const intents: LaunchMachineIntent[] = [];
+    const headers: Array<{ authorization: string; actor: string; url: string }> = [];
+    const { handler, engine, fixture } = await deployGateHarness({
+      notices,
+      intents,
+      fetch: async (input, init) => {
+        const read = new Headers(init?.headers);
+        const url = requestUrl(input);
+        headers.push({
+          authorization: read.get("authorization") ?? "",
+          actor: read.get("x-sanddbox-actor") ?? "",
+          url,
+        });
+        if (url.endsWith("/assign")) return Response.json({ ok: true });
+        return Response.json({ status: "AWAITING", assignedTo: null, buildAreas: ["proxy"] });
+      },
+    });
+
+    await handler(fixture.trigger("Deploy Request #848 por <@U094ZL7KXK6>"));
+    await engine.processAvailable();
+
+    assert.deepEqual(
+      headers.map((header) => header["url"]),
+      [
+        "https://e7bot.even7.dev/admin/api/deploys/848",
+        "https://e7bot.even7.dev/admin/api/deploys/848/assign",
+      ],
+    );
+    assert.equal(headers[0]?.authorization, "Bearer test-key");
+    assert.equal(headers[1]?.actor, "U094ZL7KXK6");
+    assert.equal(notices.length, 0);
+    assert.equal(intents.length, 1);
+    assert.match(intents[0]?.prompt ?? "", /AWAITING/);
+    const running = await stepStatuses(fixture);
+    assert.equal(running.get("compile"), "running");
+
+    const runs = await fixture.database.findTriggerRunsByProviderEventReceiptId(
+      fixture.providerEventReceiptId,
+    );
+    const run = runs[0];
+    assert.ok(run);
+    const steps = await fixture.database.listWorkflowStepRunsForTriggerRun(run.id);
+    const compile = steps.find((step) => step.stepId === "compile");
+    assert.ok(compile);
+    const execution = await fixture.database.findAgentExecutionByWorkflowStepRunId(compile.id);
+    assert.ok(execution);
+    await fixture.database.completeWorkflowAgentExecution({
+      executionId: execution.id,
+      executionStatus: "succeeded",
+      stepStatus: "succeeded",
+      result: { status: "succeeded" },
+      stepOutput: {},
+      completedByAgent: true,
+    });
+    await engine.processAvailable();
+
+    const finished = await stepStatuses(fixture);
+    assert.equal(finished.get("taken"), "skipped");
+    assert.equal(finished.get("raced"), "skipped");
+  });
+
   it("takes the false branch of a condition and skips the true branch", async () => {
     const now = new Date(Date.now() + 60_000);
     const compiled = compileTriggerDocument(`
@@ -1768,6 +1856,90 @@ interface Fixture {
   revisionId: string;
   configuration: CompiledHubConfig;
   trigger(message: string): DurableProviderEvent;
+}
+
+function requestUrl(input: Parameters<typeof fetch>[0]): string {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
+}
+
+async function deployGateHarness(options: {
+  notices: string[];
+  intents?: LaunchMachineIntent[];
+  fetch: typeof fetch;
+}) {
+  const compiled = compileTriggerDocument(`
+name: deploy-gate
+enabled: true
+on:
+  manual.run: {}
+run:
+  target:
+    daemon: office
+    cwd: /workspace
+  reactions:
+    - id: gate
+      http:
+        method: GET
+        url: https://e7bot.even7.dev/admin/api/deploys
+        auth: e7
+        number_from_prompt: true
+    - id: open
+      if:
+        condition: "\${{ steps.gate.outputs.open == true }}"
+        then:
+          - id: claim
+            http:
+              method: POST
+              url: https://e7bot.even7.dev/admin/api/deploys
+              auth: e7
+              number_from_prompt: true
+              path: assign
+          - id: claimed
+            if:
+              condition: "\${{ steps.claim.outputs.assigned == true }}"
+              then:
+                - id: compile
+                  agent:
+                    provider: codex
+                    mode: agent
+                  prompt: "Status \${{ steps.gate.outputs.status }}"
+              else:
+                - id: raced
+                  notice:
+                    text: "O pedido \${{ steps.gate.outputs.number }} mudou."
+        else:
+          - id: taken
+            notice:
+              text: "O pedido \${{ steps.gate.outputs.number }} já está em \`\${{ steps.gate.outputs.status }}\`\${{ steps.gate.outputs.assignee }}."
+`);
+  const fixture = await workflowFixture({
+    compiledConfiguration: {
+      environments: [compiled.environment],
+      triggers: [...compiled.events],
+    },
+  });
+  const intents = options.intents ?? [];
+  const { handler, engine } = createDurableWorkflowHandler({
+    database: fixture.database,
+    entitlements: fixture.entitlements,
+    providers: [providerMatch(fixture.configuration, fixture.revisionId)],
+    readE7ApiKey: () => "test-key",
+    fetch: options.fetch,
+    postSlackMessage: async (_outputContext, content) => {
+      options.notices.push(content);
+    },
+    dispatchLaunchMachineIntent: async (intent) => {
+      intents.push(intent);
+      const execution = await fixture.database.findAgentExecutionByWorkflowStepRunId(
+        intent.workflowStepRunId!,
+      );
+      assert.ok(execution);
+      return { execution };
+    },
+  });
+  return { handler, engine, fixture };
 }
 
 async function stepStatuses(fixture: Fixture): Promise<Map<string, string>> {

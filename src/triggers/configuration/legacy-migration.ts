@@ -10,7 +10,11 @@ import type {
   CompiledTrigger,
   JsonPrimitive,
 } from "../../config/compiler.js";
-import { isCompiledWaitStep, parseCompiledHubConfig } from "../../config/compiler.js";
+import {
+  isCompiledStaticStep,
+  isCompiledWaitStep,
+  parseCompiledHubConfig,
+} from "../../config/compiler.js";
 import type { TriggerDocument } from "./schema.js";
 import { compileTriggerDocument, serializeTriggerDocument } from "./index.js";
 
@@ -98,8 +102,10 @@ function convertSingleRun(
   if (Object.keys(trigger.values).length > 0) blockers.push("trigger defines workflow values");
   const step = trigger.steps[0];
   if (step === undefined) return { success: false, blockers };
-  if (isCompiledWaitStep(step)) blockers.push("step waits");
-  if (isCompiledWaitStep(step)) return { success: false, blockers };
+  if (isCompiledStaticStep(step)) {
+    blockers.push(isCompiledWaitStep(step) ? "step waits" : "step is static");
+    return { success: false, blockers };
+  }
   if (step.condition !== undefined) blockers.push("run is conditional");
   if (hasNullableInputs(trigger.inputs)) blockers.push("trigger inputs allow null values");
   const environment = configuration.environments.find(
