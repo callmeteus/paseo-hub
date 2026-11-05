@@ -260,18 +260,22 @@ export function deployNumber(prompt: string): string | undefined {
 /**
  * The Slack user the deploy API should see.
  *
- * A new card is posted by the bot and names the requester as `por <@U...>`.
- * That person is the actor. A mention falls back to the message author.
+ * The bot connected to this automation is the one executing the deploy, so the
+ * API records that bot. The card is often posted by a different app, and the
+ * person named on the card stays the requester. Sending either of those ids is
+ * rejected when they are not members of the team that owns the route.
+ *
+ * A run without a bot, such as a manual one, still uses the requester written
+ * as `por <@U...>` in the message. It does not fall back to the message author.
  *
  * @param prompt - Trigger message
  * @param triggerContext - Provider context for the run
  * @returns Slack user id, when one is present
  */
 export function deployActor(prompt: string, triggerContext: unknown): string | undefined {
-  const requester = REQUESTER.exec(prompt)?.[1];
-  if (requester !== undefined) return requester;
-  const author = slackAuthor(triggerContext);
-  return author !== undefined && SLACK_USER.test(author) ? author : undefined;
+  const bot = slackBotUser(triggerContext);
+  if (bot !== undefined && SLACK_USER.test(bot)) return bot;
+  return REQUESTER.exec(prompt)?.[1];
 }
 
 function deployUrl(base: string, number: string, path: "assign" | undefined): string {
@@ -291,17 +295,15 @@ function readDeployFields(body: unknown): { status: string; assignedTo: string |
   return { status, assignedTo };
 }
 
-function slackAuthor(triggerContext: unknown): string | undefined {
+function slackBotUser(triggerContext: unknown): string | undefined {
   if (!isRecord(triggerContext)) return undefined;
   const event = triggerContext["event"];
   if (!isRecord(event)) return undefined;
   const slack = event["slack"];
   if (!isRecord(slack)) return undefined;
-  const message = slack["trigger_message"];
-  if (!isRecord(message)) return undefined;
-  const author = message["author"];
-  if (!isRecord(author)) return undefined;
-  return typeof author["id"] === "string" ? author["id"] : undefined;
+  const bot = slack["bot"];
+  if (!isRecord(bot)) return undefined;
+  return typeof bot["id"] === "string" ? bot["id"] : undefined;
 }
 
 function readDotenv(path: string): Readonly<Record<string, string>> {

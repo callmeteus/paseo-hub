@@ -260,6 +260,7 @@ describe("Slack Phase 1 trigger provider", () => {
 
     if (!isAcceptedTriggerProviderMatch(match)) throw new Error("expected accepted match");
     assert.equal(match.triggerContext.event.slack.trigger_message.thread, null);
+    assert.equal(match.triggerContext.event.slack.bot.id, "UBOT");
     assert.equal(match.outputContext.threadTs, match.outputContext.messageTs);
     const reply = (
       await provider.match(external(project.id, revision.id, { messageTs: "1700000000.000002" }))
@@ -397,7 +398,14 @@ describe("Slack Phase 1 trigger provider", () => {
     });
     assert.equal(rootContext?.slack.thread.status, "available");
     assert.equal(rootContext?.slack.thread.messages[0]?.content, "<@UBOT> deploy now");
-    assert.deepEqual(client.threadReads, ["1700000000.000001"]);
+    assert.equal(
+      rootContext?.slack.thread.messages.some((message) => message.content === "reply-6"),
+      true,
+    );
+    assert.deepEqual(client.threadReads, [
+      "1700000000.000001",
+      "1700000000.000001:after:1700000000.000001",
+    ]);
   });
 
   it("follows a forward into a channel the bot can read and keeps the private copy", async () => {
@@ -862,7 +870,7 @@ function inputMarkerConfiguration() {
     triggers: [
       {
         ...trigger,
-        filters: { ...trigger.filters, pattern: "run" },
+        filters: { ...trigger.filters, pattern: "run", regex: ["<@UBOT> run(?!\\S)"] },
       },
     ],
   };
@@ -964,14 +972,22 @@ class RecordingSlackClient implements SlackBotClient {
     channelId: string;
     threadTs: string;
     beforeTs: string;
+    afterTs?: string;
   }): Promise<SlackThreadReadResult> {
-    this.threadReads.push(input.threadTs);
+    this.threadReads.push(
+      input.afterTs === undefined ? input.threadTs : `${input.threadTs}:after:${input.afterTs}`,
+    );
     if (this.options.failThreadRead === true) {
       return Promise.reject(new Error("thread history unavailable"));
     }
+    const afterTs = input.afterTs;
+    const messages =
+      afterTs === undefined
+        ? this.threadMessages
+        : this.threadMessages.filter((message) => Number(message.ts) > Number(afterTs));
     return Promise.resolve({
       complete: this.options.threadComplete ?? true,
-      messages: this.threadMessages,
+      messages,
     });
   }
 }

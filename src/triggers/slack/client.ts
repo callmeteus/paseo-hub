@@ -99,6 +99,8 @@ export interface SlackBotClient {
     channelId: string;
     threadTs: string;
     beforeTs: string;
+    /** When set, return replies newer than this timestamp instead of older than `beforeTs`. */
+    afterTs?: string;
   }): Promise<SlackThreadReadResult>;
   lookupUserName?(input: {
     organizationId: string;
@@ -222,7 +224,9 @@ export function createSlackBotClient(options: {
     channelId: string;
     threadTs: string;
     beforeTs: string;
+    afterTs?: string;
   }): Promise<SlackThreadReadResult> {
+    const afterTs = input.afterTs;
     let cursor: string | undefined;
     let root: SlackThreadMessage | undefined;
     let selectedReplies: SlackThreadMessage[] = [];
@@ -236,9 +240,9 @@ export function createSlackBotClient(options: {
           await queryJson(input.organizationId, input.teamId, "conversations.replies", {
             channel: input.channelId,
             ts: input.threadTs,
-            latest: input.beforeTs,
             inclusive: "false",
             limit: "100",
+            ...(afterTs === undefined ? { latest: input.beforeTs } : { oldest: afterTs }),
             ...(cursor === undefined ? {} : { cursor }),
           }),
         );
@@ -255,7 +259,11 @@ export function createSlackBotClient(options: {
       }
       const page = (result.messages ?? [])
         .map(normalizeThreadMessage)
-        .filter((message) => compareSlackTs(message.ts, input.beforeTs) < 0);
+        .filter((message) =>
+          afterTs === undefined
+            ? compareSlackTs(message.ts, input.beforeTs) < 0
+            : compareSlackTs(message.ts, afterTs) > 0,
+        );
       root ??= page.find((message) => message.ts === input.threadTs);
       selectedReplies = [
         ...selectedReplies,
@@ -278,9 +286,14 @@ export function createSlackBotClient(options: {
       }
     }
 
-    if (root === undefined) throw new Error("Slack thread root unavailable");
+    const replies = selectedReplies.sort((left, right) => compareSlackTs(left.ts, right.ts));
+    // A read of replies after the parent does not include the parent itself.
+    if (root === undefined) {
+      if (afterTs !== undefined) return { messages: replies, complete };
+      throw new Error("Slack thread root unavailable");
+    }
     return {
-      messages: [root, ...selectedReplies.sort((left, right) => compareSlackTs(left.ts, right.ts))],
+      messages: [root, ...replies],
       complete,
     };
   }

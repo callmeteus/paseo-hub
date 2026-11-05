@@ -26,6 +26,45 @@ describe("Slack react output", () => {
     ]);
   });
 
+  it("removes eyes when the agent marks the message finished", async () => {
+    const client = new RecordingSlackClient();
+    const execute = createSlackReactExecutor({ client });
+
+    await execute({
+      agentExecutionId: "execution-1",
+      toolType: "slack.react",
+      args: { name: "white_check_mark" },
+      outputContext: slackContext(),
+    });
+
+    assert.deepEqual(
+      client.reactions.map((reaction) => reaction.name),
+      ["white_check_mark"],
+    );
+    assert.deepEqual(
+      client.removed.map((reaction) => reaction.name),
+      ["eyes"],
+    );
+  });
+
+  it("treats check as finished and ignores eyes that were never added", async () => {
+    const client = new RecordingSlackClient();
+    client.missingEyes = true;
+    const execute = createSlackReactExecutor({ client });
+
+    await execute({
+      agentExecutionId: "execution-1",
+      toolType: "slack.react",
+      args: { name: ":check:" },
+      outputContext: slackContext(),
+    });
+
+    assert.deepEqual(
+      client.removed.map((reaction) => reaction.name),
+      ["eyes"],
+    );
+  });
+
   it("rejects an emoji name Slack would not accept", async () => {
     const client = new RecordingSlackClient();
     const execute = createSlackReactExecutor({ client });
@@ -99,6 +138,9 @@ class RecordingSlackClient implements SlackBotClient {
     name: string;
   }> = [];
 
+  removed: Array<(typeof this.reactions)[number]> = [];
+  missingEyes = false;
+
   sendMessage(): Promise<void> {
     return Promise.resolve();
   }
@@ -108,7 +150,9 @@ class RecordingSlackClient implements SlackBotClient {
     return Promise.resolve();
   }
 
-  removeReaction(): Promise<void> {
+  removeReaction(input: (typeof this.reactions)[number]): Promise<void> {
+    this.removed.push(input);
+    if (this.missingEyes) return Promise.reject(new Error("Slack API no_reaction"));
     return Promise.resolve();
   }
 }

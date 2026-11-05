@@ -40,6 +40,8 @@ export interface SlackMergeData {
     connection_id: string | null;
     team: { id: string };
     app: { id: string };
+    /** Slack user of the bot that received the event. This bot executes the automation. */
+    bot: { id: string };
     trigger_message: {
       ts: string;
       content: string;
@@ -100,6 +102,67 @@ export function createSlackTriggerProvider(options: {
   attachments?: AttachmentCapabilityRegistry;
   billingUrlForOrganization?: (organizationId: string) => Promise<string>;
 }): TriggerProvider<"slack", SlackTriggerContext, SlackOutputContext, SlackMaterializedContext> {
+  async function readRepliesAfterMessage(
+    launch: {
+      executionId: string;
+      organizationId: string;
+      providerEventReceiptId: string;
+      triggerContext: SlackTriggerContext;
+    },
+    message: SlackMergeData["slack"]["trigger_message"],
+  ): Promise<{
+    status: SlackMaterializedContext["slack"]["thread"]["status"];
+    messages: SlackMaterializedContext["slack"]["thread"]["messages"];
+  }> {
+    if (options.client.readThreadMessages === undefined) {
+      return { status: "available", messages: [] };
+    }
+    let history;
+    try {
+      history = await options.client.readThreadMessages({
+        organizationId: launch.organizationId,
+        teamId: launch.triggerContext.event.slack.team.id,
+        channelId: message.channel.id,
+        threadTs: message.ts,
+        beforeTs: message.ts,
+        afterTs: message.ts,
+      });
+    } catch (error) {
+      reportFailure(
+        error,
+        { operation: "slack.thread.hydrate", component: "triggers", provider: "slack" },
+        {
+          diagnostic: {
+            teamId: launch.triggerContext.event.slack.team.id,
+            channelId: message.channel.id,
+          },
+        },
+      );
+      return { status: "available", messages: [] };
+    }
+    const messages = await Promise.all(
+      history.messages
+        .filter((item) => item.ts !== message.ts)
+        .map(async (item) => ({
+          ts: item.ts,
+          content: item.content,
+          author: item.author,
+          channel: message.channel,
+          created_at: item.createdAt,
+          attachments: await registerAttachments(
+            item.attachments,
+            launch.providerEventReceiptId,
+            launch.organizationId,
+            launch.triggerContext.event.slack.team.id,
+            launch.triggerContext.event.slack.connection_id,
+            launch.executionId,
+            options.attachments,
+          ),
+        })),
+    );
+    return { status: history.complete ? "available" : "incomplete", messages };
+  }
+
   return {
     name: "slack",
     eventNames: ["slack.mention", "slack.message"],
@@ -203,36 +266,37 @@ export function createSlackTriggerProvider(options: {
     async materializeContext(launch): Promise<SlackMaterializedContext> {
       const locator = launch.triggerContext.event.slack.trigger_thread_context;
       if (locator.status === "not_applicable") {
-        // A channel message has no earlier thread. Show the message that started it
-        // instead of an empty not_applicable block.
+        // A channel message has no earlier thread. Show the message that started it,
+        // plus replies that arrived after it. A later step, such as one that waits
+        // before acting, has to see those replies.
         const message = launch.triggerContext.event.slack.trigger_message;
+        const root = {
+          ts: message.ts,
+          content: message.content,
+          author: message.author,
+          channel: message.channel,
+          created_at: message.created_at,
+          attachments: await registerAttachments(
+            message.attachments.map((file) => ({
+              id: file.id,
+              filename: file.filename,
+              contentType: file.content_type,
+              size: file.size,
+            })),
+            launch.providerEventReceiptId,
+            launch.organizationId,
+            launch.triggerContext.event.slack.team.id,
+            launch.triggerContext.event.slack.connection_id,
+            launch.executionId,
+            options.attachments,
+          ),
+        };
+        const later = await readRepliesAfterMessage(launch, message);
         return {
           slack: {
             thread: {
-              status: "available",
-              messages: [
-                {
-                  ts: message.ts,
-                  content: message.content,
-                  author: message.author,
-                  channel: message.channel,
-                  created_at: message.created_at,
-                  attachments: await registerAttachments(
-                    message.attachments.map((file) => ({
-                      id: file.id,
-                      filename: file.filename,
-                      contentType: file.content_type,
-                      size: file.size,
-                    })),
-                    launch.providerEventReceiptId,
-                    launch.organizationId,
-                    launch.triggerContext.event.slack.team.id,
-                    launch.triggerContext.event.slack.connection_id,
-                    launch.executionId,
-                    options.attachments,
-                  ),
-                },
-              ],
+              status: later.status,
+              messages: [root, ...later.messages],
             },
           },
         };
@@ -405,6 +469,7 @@ function buildSlackMergeData(
       connection_id: connectionId ?? null,
       team: { id: event.teamId },
       app: { id: event.appId },
+      bot: { id: botUserId },
       trigger_message: {
         ts: event.messageTs,
         content: event.content,

@@ -22,18 +22,26 @@ const SENT = {
 };
 
 describe("deploy request step", () => {
-  it("reads the deploy number and the requester named on the card", () => {
+  it("reads the deploy number and uses the connected bot as the actor", () => {
     const prompt = "Deploy Request #848 por <@U094ZL7KXK6>";
     assert.equal(deployNumber(prompt), "848");
-    assert.equal(deployActor(prompt, undefined), "U094ZL7KXK6");
-  });
-
-  it("uses the message author when the card does not name a requester", () => {
     assert.equal(
-      deployActor("compila agora", {
+      deployActor(prompt, {
+        event: {
+          slack: {
+            bot: { id: "UBOT" },
+            trigger_message: { author: { id: "U123" } },
+          },
+        },
+      }),
+      "UBOT",
+    );
+    assert.equal(deployActor(prompt, undefined), "U094ZL7KXK6");
+    assert.equal(
+      deployActor("Deploy Request #848", {
         event: { slack: { trigger_message: { author: { id: "U123" } } } },
       }),
-      "U123",
+      undefined,
     );
   });
 
@@ -74,7 +82,7 @@ describe("deploy request step", () => {
     const free = await callDeployHttp({
       step: STEP,
       prompt: "Deploy Request #848 por <@U1>",
-      triggerContext: undefined,
+      triggerContext: { event: { slack: { bot: { id: "UBOT" } } } },
       ...SENT,
       fetch: async () =>
         Response.json({ status: "AWAITING", assignedTo: null, buildAreas: ["proxy"] }),
@@ -87,7 +95,7 @@ describe("deploy request step", () => {
     const taken = await callDeployHttp({
       step: STEP,
       prompt: "Deploy Request #848 por <@U1>",
-      triggerContext: undefined,
+      triggerContext: { event: { slack: { bot: { id: "UBOT" } } } },
       ...SENT,
       fetch: async () => Response.json({ status: "ASSIGNED", assignedTo: "U9" }),
     });
@@ -101,12 +109,12 @@ describe("deploy request step", () => {
     const result = await callDeployHttp({
       step: { ...STEP, method: "POST", path: "assign" },
       prompt: "Deploy Request #848 por <@U1>",
-      triggerContext: undefined,
+      triggerContext: { event: { slack: { bot: { id: "UBOT" } } } },
       ...SENT,
       fetch: async (_url, init) => {
         const headers = new Headers(init?.headers);
         assert.equal(headers.get("authorization"), "Bearer test-key");
-        assert.equal(headers.get("x-sanddbox-actor"), "U1");
+        assert.equal(headers.get("x-sanddbox-actor"), "UBOT");
         return new Response("taken", { status: 409 });
       },
     });
@@ -115,7 +123,7 @@ describe("deploy request step", () => {
     const leaked = await callDeployHttp({
       step: { ...STEP, method: "POST", path: "assign" },
       prompt: "Deploy Request #848 por <@U1>",
-      triggerContext: undefined,
+      triggerContext: { event: { slack: { bot: { id: "UBOT" } } } },
       ...SENT,
       fetch: async () => new Response("bad test-key", { status: 500 }),
     });

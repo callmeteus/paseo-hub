@@ -13,6 +13,12 @@ const SlackEmojiNameSchema = z
 
 const SlackReactArgsSchema = z.object({ name: SlackEmojiNameSchema }).strict();
 
+/**
+ * Reaction names that mean the work on this message is finished.
+ * Adding one of them takes the eyes off, which is the "still working" mark.
+ */
+const DONE_REACTION_NAMES = new Set(["white_check_mark", "heavy_check_mark", "check"]);
+
 const SlackReactOutputContextSchema = z.object({
   organizationId: z.string().min(1),
   teamId: z.string().min(1),
@@ -27,7 +33,7 @@ const SlackReactOutputContextSchema = z.object({
 export const reactOutputTool: OutputToolDefinition = {
   name: "react",
   description:
-    "Adds one emoji reaction to the Slack message that started this run. Pass the emoji name without colons, such as eyes. Hub does not add a reaction unless this tool is called.",
+    "Adds one emoji reaction to the Slack message that started this run. Pass the emoji name without colons, such as eyes. Adding white_check_mark, heavy_check_mark, or check also removes eyes from that message. Hub does not add a reaction unless this tool is called.",
   inputSchema: {
     type: "object",
     properties: {
@@ -49,18 +55,28 @@ export const reactOutputTool: OutputToolDefinition = {
  * @returns Executor for the `slack.react` output
  */
 export function createSlackReactExecutor(options: {
-  client: { addReaction(input: SlackReactionInput): Promise<void> };
+  client: {
+    addReaction(input: SlackReactionInput): Promise<void>;
+    removeReaction(input: SlackReactionInput): Promise<void>;
+  };
 }): OutputExecutor {
   return async function executeSlackReact(input) {
     const args = SlackReactArgsSchema.parse(input.args);
     const context = SlackReactOutputContextSchema.parse(input.outputContext);
-    await options.client.addReaction({
+    const target = {
       organizationId: context.organizationId,
       teamId: context.teamId,
       channelId: context.channelId,
       messageTs: context.messageTs,
-      name: args.name,
-    });
+    };
+    await options.client.addReaction({ ...target, name: args.name });
+    if (!DONE_REACTION_NAMES.has(args.name)) return;
+    try {
+      await options.client.removeReaction({ ...target, name: "eyes" });
+    } catch (error) {
+      // The message was never marked in progress. The finished reaction still stands.
+      if (!isMissingReaction(error)) throw error;
+    }
   };
 }
 
@@ -98,6 +114,16 @@ interface SlackReactionInput {
   channelId: string;
   messageTs: string;
   name: string;
+}
+
+/**
+ * True when Slack says this user has no such reaction on the message.
+ *
+ * @param error - Failure from `reactions.remove`
+ * @returns Whether the eyes were already gone
+ */
+function isMissingReaction(error: unknown): boolean {
+  return error instanceof Error && error.message.includes("no_reaction");
 }
 
 /**
