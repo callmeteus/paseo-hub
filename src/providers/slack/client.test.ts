@@ -53,7 +53,7 @@ describe("Slack connection client", () => {
           access_token: "xoxb-token",
           bot_user_id: "UBOT",
           scope:
-            "app_mentions:read,channels:history,channels:read,chat:write,files:read,groups:history,groups:read,reactions:write,users:read",
+            "app_mentions:read,assistant:write,channels:history,channels:read,chat:write,files:read,groups:history,groups:read,reactions:write,users:read",
           team: { id: "T1", name: "Acme" },
         });
       },
@@ -64,7 +64,7 @@ describe("Slack connection client", () => {
     assert.equal(authorization.searchParams.get("state"), "random-state");
     assert.equal(
       authorization.searchParams.get("scope"),
-      "app_mentions:read,channels:history,channels:read,chat:write,files:read,groups:history,groups:read,reactions:write,users:read",
+      "app_mentions:read,assistant:write,channels:history,channels:read,chat:write,files:read,groups:history,groups:read,reactions:write,users:read",
     );
     assert.equal(
       authorization.searchParams.get("redirect_uri"),
@@ -79,6 +79,7 @@ describe("Slack connection client", () => {
       botAccessToken: "xoxb-token",
       scopes: [
         "app_mentions:read",
+        "assistant:write",
         "channels:history",
         "channels:read",
         "chat:write",

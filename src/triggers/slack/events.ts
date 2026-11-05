@@ -88,6 +88,20 @@ const SlackChannelMessageSchema = z
   })
   .passthrough();
 
+const SlackAssistantThreadLocatorSchema = z.object({
+  channel_id: SlackIdSchema,
+  thread_ts: SlackTimestampSchema,
+});
+const SlackAssistantThreadStartedSchema = z
+  .object({
+    type: z.literal("assistant_thread_started"),
+    assistant_thread: SlackAssistantThreadLocatorSchema.extend({
+      user_id: SlackIdSchema,
+    }),
+    event_ts: SlackTimestampSchema,
+  })
+  .passthrough();
+
 export const NormalizedSlackMentionEventSchema = z.object({
   type: z.enum(["mention", "message"]),
   id: SlackIdSchema,
@@ -99,6 +113,8 @@ export const NormalizedSlackMentionEventSchema = z.object({
   eventTs: SlackTimestampSchema,
   eventTime: z.number().int().nonnegative(),
   content: z.string(),
+  /** The Slack thread is an app-agent thread, not a channel post. */
+  assistantThread: z.boolean().optional(),
   lead: z.string().default(""),
   forwards: z
     .array(
@@ -194,6 +210,14 @@ function slackEventDropReason(
     return "subtype";
   }
 
+  // A person continuing an app-agent thread is the conversation. The bot's own reply is not.
+  if (eventType === "message" && readAssistantMessageThread(event) !== undefined) {
+    if (event["bot_id"] !== undefined || event["subtype"] === "bot_message") {
+      return "bot";
+    }
+    return undefined;
+  }
+
   const channelType = event["channel_type"];
 
   if (channelType === "im" || channelType === "mpim") {
@@ -229,9 +253,60 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+function readStartedAssistantThread(
+  event: unknown,
+): { channelId: string; threadTs: string; userId: string; eventTs: string } | undefined {
+  const parsed = SlackAssistantThreadStartedSchema.safeParse(event);
+  if (!parsed.success) return undefined;
+  return {
+    channelId: parsed.data.assistant_thread.channel_id,
+    threadTs: parsed.data.assistant_thread.thread_ts,
+    userId: parsed.data.assistant_thread.user_id,
+    eventTs: parsed.data.event_ts,
+  };
+}
+
+/**
+ * The thread a user message continues, when that thread is already an app-agent thread.
+ *
+ * Slack does not repeat `assistant_thread` on later messages. Those arrive as a direct
+ * message that already carries the thread timestamp. A reply in a channel does not.
+ *
+ * @param event - Inner Slack event
+ * @returns The assistant channel and thread, or undefined when this is not that message
+ */
+function readAssistantMessageThread(
+  event: Record<string, unknown>,
+): { channelId: string; threadTs: string } | undefined {
+  if (event["type"] !== "message") return undefined;
+  const marked = SlackAssistantThreadLocatorSchema.safeParse(event["assistant_thread"]);
+  if (marked.success) {
+    return { channelId: marked.data.channel_id, threadTs: marked.data.thread_ts };
+  }
+  if (event["channel_type"] !== "im") return undefined;
+  const channelId = event["channel"];
+  const threadTs = event["thread_ts"];
+  if (typeof channelId !== "string" || typeof threadTs !== "string") return undefined;
+  if (!SlackIdSchema.safeParse(channelId).success) return undefined;
+  if (!SlackTimestampSchema.safeParse(threadTs).success) return undefined;
+  return { channelId, threadTs };
+}
+
 export function normalizeSlackEvent(
   envelope: z.infer<typeof SlackEventCallbackSchema>,
 ): NormalizedSlackMentionEvent | undefined {
+  const started = readStartedAssistantThread(envelope.event);
+  if (started !== undefined) {
+    return normalizedSlackEvent(envelope, "message", envelope.event, {
+      channel: started.channelId,
+      ts: started.threadTs,
+      eventTs: started.eventTs,
+      threadTs: started.threadTs,
+      user: started.userId,
+      assistantThread: true,
+    });
+  }
+
   const mention = SlackAppMentionSchema.safeParse(envelope.event);
   if (mention.success) {
     if (mention.data.bot_id !== undefined || mention.data.subtype === "bot_message") {
@@ -252,6 +327,22 @@ export function normalizeSlackEvent(
   // Joins and edits stay out. A card from another app arrives as bot_message and has a user.
   if (message.data.subtype !== undefined && message.data.subtype !== "bot_message")
     return undefined;
+  const assistantThread = isRecord(envelope.event)
+    ? readAssistantMessageThread(envelope.event)
+    : undefined;
+  if (assistantThread !== undefined) {
+    if (message.data.bot_id !== undefined || message.data.subtype === "bot_message") {
+      return undefined;
+    }
+    return normalizedSlackEvent(envelope, "message", message.data, {
+      channel: assistantThread.channelId,
+      ts: message.data.ts,
+      eventTs: message.data.event_ts,
+      threadTs: assistantThread.threadTs,
+      user: message.data.user,
+      assistantThread: true,
+    });
+  }
   if (message.data.channel_type === "im" || message.data.channel_type === "mpim") return undefined;
   // A thread reply carries a parent timestamp. The message that opened the thread uses its own.
   if (message.data.thread_ts !== undefined && message.data.thread_ts !== message.data.ts) {
@@ -278,6 +369,7 @@ function normalizedSlackEvent(
     threadTs: string | null;
     user: string;
     fromBot?: boolean;
+    assistantThread?: boolean;
   },
 ): NormalizedSlackMentionEvent {
   // A forward keeps the original text on the attachment. `text` itself is often empty.
@@ -297,6 +389,7 @@ function normalizedSlackEvent(
     forwards: readSlackForwardLocators(source),
     author: { id: event.user },
     ...(event.fromBot === true ? { fromBot: true } : {}),
+    ...(event.assistantThread === true ? { assistantThread: true } : {}),
     createdAt: new Date(Number(event.ts) * 1_000).toISOString(),
     attachments: files.map((file) => ({
       id: file.id,

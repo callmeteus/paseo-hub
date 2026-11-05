@@ -8,6 +8,7 @@ oauth_config:
   scopes:
     bot:
       - app_mentions:read
+      - assistant:write
       - channels:history
       - channels:read
       - chat:write
@@ -20,8 +21,10 @@ settings:
   event_subscriptions:
     bot_events:
       - app_mention
+      - assistant_thread_started
       - message.channels
       - message.groups
+      - message.im
   interactivity:
     is_enabled: false
   org_deploy_enabled: false

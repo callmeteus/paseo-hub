@@ -100,6 +100,88 @@ describe("normalizeSlackEvent", () => {
     assert.equal(untyped?.author.id, "U09FFH54LM9");
   });
 
+  it("keeps an app-agent thread and a message that continues it", () => {
+    const started = normalizeSlackEvent({
+      ...envelope,
+      event: {
+        type: "assistant_thread_started",
+        assistant_thread: {
+          user_id: "U1",
+          channel_id: "D1",
+          thread_ts: "1729999327.187299",
+          context: { channel_id: "C9", team_id: "T1" },
+        },
+        event_ts: "1729999327.187299",
+      },
+    });
+    assert.equal(started?.type, "message");
+    assert.equal(started?.assistantThread, true);
+    assert.equal(started?.channelId, "D1");
+    assert.equal(started?.threadTs, "1729999327.187299");
+    assert.equal(started?.messageTs, "1729999327.187299");
+    assert.equal(started?.content, "");
+    assert.equal(started?.author.id, "U1");
+
+    const continued = {
+      type: "message",
+      user: "U1",
+      channel: "D1",
+      channel_type: "im",
+      text: "qual o estado?",
+      ts: "1729999328.000100",
+      thread_ts: "1729999327.187299",
+      event_ts: "1729999328.000100",
+    };
+    const message = normalizeSlackEvent({ ...envelope, event: continued });
+    assert.equal(message?.assistantThread, true);
+    assert.equal(message?.channelId, "D1");
+    assert.equal(message?.threadTs, "1729999327.187299");
+    assert.equal(message?.messageTs, "1729999328.000100");
+    assert.equal(message?.content, "qual o estado?");
+    assert.equal(describeDroppedSlackEvent(continued), undefined);
+
+    const marked = normalizeSlackEvent({
+      ...envelope,
+      event: {
+        ...continued,
+        channel: "C1",
+        channel_type: "channel",
+        assistant_thread: { channel_id: "D1", thread_ts: "1729999327.187299" },
+      },
+    });
+    assert.equal(marked?.assistantThread, true);
+    assert.equal(marked?.channelId, "D1");
+    assert.equal(marked?.threadTs, "1729999327.187299");
+  });
+
+  it("still drops a plain direct message and the bot reply inside an assistant thread", () => {
+    const direct = {
+      type: "message",
+      user: "U1",
+      channel: "D1",
+      channel_type: "im",
+      text: "oi",
+      ts: "1729999328.000100",
+      event_ts: "1729999328.000100",
+    };
+    assert.equal(normalizeSlackEvent({ ...envelope, event: direct }), undefined);
+    assert.equal(describeDroppedSlackEvent(direct)?.reason, "direct_message");
+
+    const botReply = {
+      type: "message",
+      user: "UBOT",
+      bot_id: "B1",
+      channel: "D1",
+      channel_type: "im",
+      text: "resposta",
+      ts: "1729999329.000100",
+      thread_ts: "1729999327.187299",
+      event_ts: "1729999329.000100",
+    };
+    assert.equal(normalizeSlackEvent({ ...envelope, event: botReply }), undefined);
+    assert.equal(describeDroppedSlackEvent(botReply)?.reason, "bot");
+  });
+
   it("keeps an app mention", () => {
     const event = normalizeSlackEvent({
       ...envelope,

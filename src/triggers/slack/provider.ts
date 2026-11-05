@@ -57,6 +57,8 @@ export interface SlackMergeData {
       | {
           status: "not_applicable";
         };
+    /** Present when this event is an app-agent thread, not a channel post. */
+    assistant_thread?: true;
   };
 }
 
@@ -353,7 +355,14 @@ export function createSlackTriggerProvider(options: {
         },
       };
     },
+    async onAgentExecutionStarted(context) {
+      await publishAssistantStatus(options.client, context, ASSISTANT_RUNNING_STATUS);
+    },
+    async onAgentExecutionCompleted(context) {
+      await publishAssistantStatus(options.client, context, "");
+    },
     async onAgentExecutionFailed(context, _output, reason) {
+      await publishAssistantStatus(options.client, context, "");
       await failWithNotice(
         options.client,
         context.target,
@@ -366,6 +375,7 @@ export function createSlackTriggerProvider(options: {
       return null;
     },
     async onMachineTerminated(context, reason, reactionState) {
+      await publishAssistantStatus(options.client, context, "");
       if (reason === "launch_failed" || reason === "daemon_disconnected") {
         await failWithNotice(options.client, context.target, `Paseo agent failed: ${reason}`);
         return null;
@@ -455,11 +465,18 @@ function needsSlackUsername(
   );
 }
 
+const ASSISTANT_RUNNING_STATUS = "is thinking...";
+
 function buildSlackMergeData(
   event: NormalizedSlackMentionEvent,
   botUserId: string,
   connectionId: string | null | undefined,
 ): SlackMergeData {
+  const assistantThread = event.assistantThread === true;
+  const threadTs = event.threadTs;
+  // The event that opens the app-agent thread is the root. There is no earlier history.
+  const openedAssistantThread =
+    assistantThread && threadTs !== null && threadTs === event.messageTs;
   return {
     slack: {
       event_type: event.type === "message" ? "message" : "app_mention",
@@ -476,7 +493,7 @@ function buildSlackMergeData(
         body: readSlackPromptBody(event, botUserId),
         author: event.author,
         channel: { id: event.channelId },
-        thread: event.threadTs === null ? null : { ts: event.threadTs },
+        thread: threadTs === null ? null : { ts: threadTs },
         created_at: event.createdAt,
         attachments: event.attachments.map((attachment) => ({
           id: attachment.id,
@@ -486,16 +503,51 @@ function buildSlackMergeData(
         })),
       },
       trigger_thread_context:
-        event.threadTs === null
+        threadTs === null || openedAssistantThread
           ? { status: "not_applicable" }
           : {
               status: "deferred",
               channel: { id: event.channelId },
-              thread: { ts: event.threadTs },
+              thread: { ts: threadTs },
               before: { ts: event.messageTs },
             },
+      ...(assistantThread ? { assistant_thread: true as const } : {}),
     },
   };
+}
+
+/**
+ * Sets the app-agent status for this run, then lets the reply use `chat.postMessage`.
+ *
+ * A token without `assistant:write` is logged by the client and does not block the reply.
+ * Status on any other Slack event is left alone.
+ *
+ * @param client - The workspace bot
+ * @param context - Trigger context stored on the run
+ * @param status - Short status, or an empty string to clear it
+ */
+async function publishAssistantStatus(
+  client: SlackBotClient,
+  context: SlackTriggerContext,
+  status: string,
+): Promise<void> {
+  if (context.event.slack.assistant_thread !== true) return;
+  if (client.setAssistantStatus === undefined) return;
+  try {
+    await client.setAssistantStatus({
+      organizationId: context.target.organizationId,
+      teamId: context.target.teamId,
+      channelId: context.target.channelId,
+      threadTs: context.target.threadTs,
+      status,
+    });
+  } catch (error) {
+    reportFailure(
+      error,
+      { operation: "slack.assistant.status", component: "triggers", provider: "slack" },
+      { diagnostic: { teamId: context.target.teamId, channelId: context.target.channelId } },
+    );
+  }
 }
 
 async function registerAttachments(

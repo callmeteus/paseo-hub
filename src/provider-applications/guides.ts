@@ -732,8 +732,10 @@ settings:
   event_subscriptions:
 ${requestUrl}    bot_events:
       - app_mention
+      - assistant_thread_started
       - message.channels
       - message.groups
+      - message.im
   interactivity:
     is_enabled: false
   org_deploy_enabled: false

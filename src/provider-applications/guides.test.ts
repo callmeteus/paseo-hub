@@ -56,7 +56,7 @@ test("the Slack manifest asks for exactly the scopes Hub checks installations ag
         }),
       })
       .parse(load(slackManifest(LOCAL, "socket"))).settings.event_subscriptions.bot_events,
-    ["app_mention", "message.channels", "message.groups"],
+    ["app_mention", "assistant_thread_started", "message.channels", "message.groups", "message.im"],
   );
 });
 

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { reportFailure } from "../../failures/index.js";
+import { logger } from "../../logger.js";
 import { readSlackMessageFiles, readSlackMessageText } from "./forwarded-message.js";
 
 const SlackApiResponseSchema = z
@@ -40,6 +41,19 @@ const SlackFileInfoSchema = SlackApiResponseSchema.extend({
 });
 const SlackUserInfoSchema = SlackApiResponseSchema.extend({
   user: z.object({ name: z.string().min(1).max(255) }).optional(),
+});
+const SlackChannelInfoSchema = SlackApiResponseSchema.extend({
+  channel: z.object({ name: z.string().min(1).max(255).optional() }).optional(),
+});
+const SlackUserGroupListSchema = SlackApiResponseSchema.extend({
+  usergroups: z
+    .array(
+      z.object({
+        id: z.string().min(1).max(255),
+        name: z.string().min(1).max(255).optional(),
+      }),
+    )
+    .optional(),
 });
 const SLACK_API_TIMEOUT_MS = 10_000;
 const SLACK_THREAD_REPLIES_MAX_PAGES = 10;
@@ -107,6 +121,28 @@ export interface SlackBotClient {
     teamId: string;
     userId: string;
   }): Promise<string | undefined>;
+  lookupChannelName?(input: {
+    organizationId: string;
+    teamId: string;
+    channelId: string;
+  }): Promise<string | undefined>;
+  listUserGroupNames?(input: {
+    organizationId: string;
+    teamId: string;
+  }): Promise<ReadonlyMap<string, string>>;
+  /**
+   * Shows or clears the app-agent status in a thread.
+   *
+   * An empty `status` clears the indicator. `missing_scope` means the saved token
+   * does not have `assistant:write` yet; the caller still posts with `chat.postMessage`.
+   */
+  setAssistantStatus?(input: {
+    organizationId: string;
+    teamId: string;
+    channelId: string;
+    threadTs: string;
+    status: string;
+  }): Promise<void>;
   downloadAttachment?(input: {
     organizationId: string;
     teamId: string;
@@ -337,6 +373,65 @@ export function createSlackBotClient(options: {
     return result.user?.name;
   }
 
+  async function lookupChannelName(input: {
+    organizationId: string;
+    teamId: string;
+    channelId: string;
+  }): Promise<string | undefined> {
+    const result = SlackChannelInfoSchema.parse(
+      await callJson(input.organizationId, input.teamId, "conversations.info", {
+        channel: input.channelId,
+      }),
+    );
+    if (!result.ok) throw new Error(`Slack API ${result.error ?? "unknown_error"}`);
+    return result.channel?.name;
+  }
+
+  async function listUserGroupNames(input: {
+    organizationId: string;
+    teamId: string;
+  }): Promise<ReadonlyMap<string, string>> {
+    const result = SlackUserGroupListSchema.parse(
+      await callJson(input.organizationId, input.teamId, "usergroups.list", {}),
+    );
+    if (!result.ok) throw new Error(`Slack API ${result.error ?? "unknown_error"}`);
+    const names = new Map<string, string>();
+    for (const group of result.usergroups ?? []) {
+      if (group.name !== undefined) names.set(group.id, group.name);
+    }
+    return names;
+  }
+
+  async function setAssistantStatus(input: {
+    organizationId: string;
+    teamId: string;
+    channelId: string;
+    threadTs: string;
+    status: string;
+  }): Promise<void> {
+    const result = SlackApiResponseSchema.parse(
+      await callJson(input.organizationId, input.teamId, "assistant.threads.setStatus", {
+        channel_id: input.channelId,
+        thread_ts: input.threadTs,
+        status: input.status,
+      }),
+    );
+    if (result.ok) return;
+    if (result.error === "missing_scope") {
+      logger.warn(
+        {
+          provider: "slack",
+          operation: "slack.assistant.status",
+          teamId: input.teamId,
+          channelId: input.channelId,
+        },
+        "Slack token does not have assistant:write",
+      );
+      return;
+    }
+    throw new Error(`Slack API ${result.error ?? "unknown_error"}`);
+  }
+
   return {
     sendMessage: (input) =>
       call(input.organizationId, input.teamId, "chat.postMessage", {
@@ -344,6 +439,7 @@ export function createSlackBotClient(options: {
         thread_ts: input.threadTs,
         text: input.content,
       }),
+    setAssistantStatus,
     addReaction: (input) =>
       call(input.organizationId, input.teamId, "reactions.add", {
         channel: input.channelId,
@@ -359,7 +455,53 @@ export function createSlackBotClient(options: {
     readThreadMessages,
     readSharedMessage,
     lookupUserName,
+    lookupChannelName,
+    listUserGroupNames,
     downloadAttachment,
+  };
+}
+
+/**
+ * The name lookups Home can ask of the bot the Hub already connected.
+ *
+ * A test double that never grew these methods answers with nothing, which leaves the stored
+ * id on the row.
+ */
+export interface SlackNameDirectory {
+  lookupUserName(input: {
+    organizationId: string;
+    teamId: string;
+    userId: string;
+  }): Promise<string | undefined>;
+  lookupChannelName(input: {
+    organizationId: string;
+    teamId: string;
+    channelId: string;
+  }): Promise<string | undefined>;
+  listUserGroupNames(input: {
+    organizationId: string;
+    teamId: string;
+  }): Promise<ReadonlyMap<string, string>>;
+}
+
+/**
+ * Adapts the bot client Home already has. Missing methods stay empty rather than throwing,
+ * so an older double does not take the review down.
+ *
+ * @param client - The workspace bot
+ * @returns The three lookups the review uses
+ */
+export function slackNameDirectory(client: SlackBotClient): SlackNameDirectory {
+  return {
+    lookupUserName(input) {
+      return client.lookupUserName?.(input) ?? Promise.resolve(undefined);
+    },
+    lookupChannelName(input) {
+      return client.lookupChannelName?.(input) ?? Promise.resolve(undefined);
+    },
+    listUserGroupNames(input) {
+      return client.listUserGroupNames?.(input) ?? Promise.resolve(new Map());
+    },
   };
 }
 

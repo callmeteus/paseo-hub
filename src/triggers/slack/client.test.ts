@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { describe, it } from "vitest";
+import { describe, it, vi } from "vitest";
+import { logger } from "../../logger.js";
 import { createSlackBotClient } from "./client.js";
 
 describe("Slack Web API client", () => {
@@ -20,6 +21,88 @@ describe("Slack Web API client", () => {
     assert.deepEqual(request, {
       url: "https://slack.com/api/users.info",
       method: "POST",
+    });
+  });
+
+  it("looks up a channel name with the same workspace bot token", async () => {
+    const token = "xoxb-secret";
+    let request:
+      | {
+          url: string;
+          method: string | undefined;
+          authorization: string | null;
+          body: unknown;
+        }
+      | undefined;
+    const client = createSlackBotClient({
+      tokenForWorkspace: () => Promise.resolve(token),
+      fetch: async (input, init) => {
+        request = {
+          url: requestUrl(input),
+          method: init?.method,
+          authorization: new Headers(init?.headers).get("authorization"),
+          body: typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
+        };
+        return Response.json({ ok: true, channel: { name: "alertas" } });
+      },
+    });
+
+    assert.equal(
+      await client.lookupChannelName?.({
+        organizationId: "org-1",
+        teamId: "T1",
+        channelId: "C096V21TE0K",
+      }),
+      "alertas",
+    );
+    assert.deepEqual(request, {
+      url: "https://slack.com/api/conversations.info",
+      method: "POST",
+      authorization: `Bearer ${token}`,
+      body: { channel: "C096V21TE0K" },
+    });
+  });
+
+  it("leaves a channel unresolved when Slack refuses the lookup", async () => {
+    const client = createSlackBotClient({
+      tokenForWorkspace: () => Promise.resolve("xoxb-secret"),
+      fetch: () => Promise.resolve(Response.json({ ok: false, error: "channel_not_found" })),
+    });
+    await assert.rejects(
+      () =>
+        client.lookupChannelName?.({
+          organizationId: "org-1",
+          teamId: "T1",
+          channelId: "C0BB3ESNU9W",
+        }) ?? Promise.reject(new Error("channel lookup is missing")),
+      /channel_not_found/u,
+    );
+  });
+
+  it("lists user group names with the workspace bot token", async () => {
+    const token = "xoxb-secret";
+    let request: { url: string; authorization: string | null } | undefined;
+    const client = createSlackBotClient({
+      tokenForWorkspace: () => Promise.resolve(token),
+      fetch: async (input, init) => {
+        request = {
+          url: requestUrl(input),
+          authorization: new Headers(init?.headers).get("authorization"),
+        };
+        return Response.json({
+          ok: true,
+          usergroups: [{ id: "S097UJTSNH2", name: "plantao" }, { id: "S0000000000" }],
+        });
+      },
+    });
+
+    const names = await client.listUserGroupNames?.({ organizationId: "org-1", teamId: "T1" });
+
+    assert.equal(names?.get("S097UJTSNH2"), "plantao");
+    assert.equal(names?.has("S0000000000"), false);
+    assert.deepEqual(request, {
+      url: "https://slack.com/api/usergroups.list",
+      authorization: `Bearer ${token}`,
     });
   });
 
@@ -372,6 +455,95 @@ describe("Slack Web API client", () => {
         authorization: "Bearer xoxb-secret",
       },
     ]);
+  });
+
+  it("sets and clears the status on an assistant thread", async () => {
+    const requests: Array<{ url: string; body: unknown }> = [];
+    const client = createSlackBotClient({
+      tokenForWorkspace: () => Promise.resolve("xoxb-secret"),
+      fetch: async (input, init) => {
+        requests.push({
+          url: requestUrl(input),
+          body: typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
+        });
+        return Response.json({ ok: true });
+      },
+    });
+
+    await client.setAssistantStatus?.({
+      organizationId: "org-1",
+      teamId: "T1",
+      channelId: "D1",
+      threadTs: "1729999327.187299",
+      status: "is thinking...",
+    });
+    await client.setAssistantStatus?.({
+      organizationId: "org-1",
+      teamId: "T1",
+      channelId: "D1",
+      threadTs: "1729999327.187299",
+      status: "",
+    });
+
+    assert.deepEqual(requests, [
+      {
+        url: "https://slack.com/api/assistant.threads.setStatus",
+        body: {
+          channel_id: "D1",
+          thread_ts: "1729999327.187299",
+          status: "is thinking...",
+        },
+      },
+      {
+        url: "https://slack.com/api/assistant.threads.setStatus",
+        body: { channel_id: "D1", thread_ts: "1729999327.187299", status: "" },
+      },
+    ]);
+  });
+
+  it("posts with chat.postMessage when the token does not have assistant:write", async () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    const requests: Array<{ url: string; body: unknown }> = [];
+    const client = createSlackBotClient({
+      tokenForWorkspace: () => Promise.resolve("xoxb-secret"),
+      fetch: async (input, init) => {
+        const url = requestUrl(input);
+        requests.push({
+          url,
+          body: typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
+        });
+        if (url.endsWith("/assistant.threads.setStatus")) {
+          return Response.json({ ok: false, error: "missing_scope", needed: "assistant:write" });
+        }
+        return Response.json({ ok: true });
+      },
+    });
+
+    await client.setAssistantStatus?.({
+      organizationId: "org-1",
+      teamId: "T1",
+      channelId: "D1",
+      threadTs: "1729999327.187299",
+      status: "is thinking...",
+    });
+    await client.sendMessage({
+      organizationId: "org-1",
+      teamId: "T1",
+      channelId: "D1",
+      threadTs: "1729999327.187299",
+      content: "Pronto",
+    });
+
+    assert.equal(
+      warn.mock.calls.some((call) => call[1] === "Slack token does not have assistant:write"),
+      true,
+    );
+    assert.equal(JSON.stringify(warn.mock.calls).includes("xoxb-secret"), false);
+    assert.deepEqual(requests[1], {
+      url: "https://slack.com/api/chat.postMessage",
+      body: { channel: "D1", thread_ts: "1729999327.187299", text: "Pronto" },
+    });
+    warn.mockRestore();
   });
 });
 

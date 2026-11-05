@@ -9,6 +9,7 @@ import {
   type SlackThreadMessage,
   type SlackThreadReadResult,
 } from "./client.js";
+import { normalizeSlackEvent } from "./events.js";
 import { createSlackTriggerProvider } from "./provider.js";
 import { isAcceptedTriggerProviderMatch } from "../index.js";
 
@@ -240,6 +241,80 @@ describe("Slack Phase 1 trigger provider", () => {
       status: "succeeded",
     });
     assert.deepEqual(client.reactions, []);
+    assert.deepEqual(client.statuses, []);
+  });
+
+  it("shows a short status while an assistant thread runs and clears it when the run finishes", async () => {
+    const database = createMemoryDatabase();
+    const base = configuration();
+    const { project, revision, store } = await createActiveProjectConfiguration(
+      database,
+      {
+        ...base,
+        triggers: [
+          {
+            ...base.triggers[0]!,
+            on: "slack.message",
+            filters: { workspace: "T1", from_users: ["U1"] },
+          },
+        ],
+      },
+      { organizationId: "org-1" },
+    );
+    const client = new RecordingSlackClient();
+    const provider = createSlackTriggerProvider({
+      configurationStoreForProject: () => store,
+      botUserIdForWorkspace: () => Promise.resolve("UBOT"),
+      client,
+    });
+    const payload = normalizeSlackEvent({
+      type: "event_callback",
+      team_id: "T1",
+      api_app_id: "A1",
+      event_id: "Ev-assistant",
+      event_time: 1_729_999_328,
+      event: {
+        type: "message",
+        user: "U1",
+        channel: "D1",
+        channel_type: "im",
+        text: "qual o estado?",
+        ts: "1729999328.000100",
+        thread_ts: "1729999327.187299",
+        event_ts: "1729999328.000100",
+      },
+    });
+    if (payload === undefined) throw new Error("expected an assistant message");
+    const match = (
+      await provider.match({
+        ...external(project.id, revision.id),
+        source: "slack.message",
+        payload,
+      })
+    )[0];
+    if (!isAcceptedTriggerProviderMatch(match)) throw new Error("expected accepted match");
+
+    assert.equal(match.outputContext.channelId, "D1");
+    assert.equal(match.outputContext.threadTs, "1729999327.187299");
+    assert.equal(match.triggerContext.event.slack.assistant_thread, true);
+    assert.deepEqual(match.triggerContext.event.slack.trigger_message.thread, {
+      ts: "1729999327.187299",
+    });
+
+    await provider.onAgentExecutionStarted?.(match.triggerContext, match.outputContext);
+    await provider.onAgentExecutionCompleted?.(match.triggerContext, match.outputContext, {
+      status: "succeeded",
+    });
+    await provider.onAgentExecutionFailed?.(match.triggerContext, match.outputContext, "boom");
+
+    assert.deepEqual(client.statuses, [
+      { channelId: "D1", threadTs: "1729999327.187299", status: "is thinking..." },
+      { channelId: "D1", threadTs: "1729999327.187299", status: "" },
+      { channelId: "D1", threadTs: "1729999327.187299", status: "" },
+    ]);
+    assert.equal(client.messages[0]?.threadTs, "1729999327.187299");
+    assert.equal(client.messages[0]?.channelId, "D1");
+    assert.match(client.messages[0]?.content ?? "", /boom/u);
   });
 
   it("keeps a root Slack mention as the reply thread root", async () => {
@@ -914,6 +989,7 @@ function external(
 
 class RecordingSlackClient implements SlackBotClient {
   reactions: string[] = [];
+  statuses: Array<{ channelId: string; threadTs: string; status: string }> = [];
   messages: Array<{
     organizationId: string;
     teamId: string;
@@ -938,6 +1014,19 @@ class RecordingSlackClient implements SlackBotClient {
     } = {},
   ) {
     this.threadMessages = options.threadMessages ?? [];
+  }
+
+  setAssistantStatus(input: {
+    channelId: string;
+    threadTs: string;
+    status: string;
+  }): Promise<void> {
+    this.statuses.push({
+      channelId: input.channelId,
+      threadTs: input.threadTs,
+      status: input.status,
+    });
+    return Promise.resolve();
   }
 
   sendMessage(input: (typeof this.messages)[number]): Promise<void> {
