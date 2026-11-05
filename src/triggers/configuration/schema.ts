@@ -108,28 +108,164 @@ export const TriggerOutputSchema = z
   })
   .strict();
 
+const AgentReactionFields = {
+  agent: TriggerAgentSelectionSchema,
+  continuation: ContinuationSchema.default({ mode: "conversation" }),
+  /** Workspace title template: literal text plus `${{ paseo.execution.id }}`. */
+  title: z.string().min(1).optional(),
+  prompt: z.string().min(1),
+  max_runtime: z.string().min(1).default("2h"),
+  idle_timeout: z.string().min(1).default("10m"),
+  startup_timeout: z.string().min(1).optional(),
+  env: z.record(z.string().min(1), z.string()).optional(),
+  github: AuthoredGitHubAuthoritySchema.optional(),
+  output: z
+    .object({ schema: z.record(z.string(), z.unknown()) })
+    .strict()
+    .optional(),
+  outputs: z.record(z.string().regex(EVENT_NAME), TriggerOutputSchema).optional(),
+  auto_archive: z.boolean().default(true),
+  background: z.boolean().default(false),
+};
+
 export const TriggerRunSchema = z
   .object({
     target: TriggerTargetSchema,
-    agent: TriggerAgentSelectionSchema,
-    continuation: ContinuationSchema.default({ mode: "conversation" }),
-    /** Workspace title template: literal text plus `${{ paseo.execution.id }}`. */
-    title: z.string().min(1).optional(),
-    prompt: z.string().min(1),
-    max_runtime: z.string().min(1).default("2h"),
-    idle_timeout: z.string().min(1).default("10m"),
-    startup_timeout: z.string().min(1).optional(),
-    env: z.record(z.string().min(1), z.string()).optional(),
-    github: AuthoredGitHubAuthoritySchema.optional(),
-    output: z
-      .object({ schema: z.record(z.string(), z.unknown()) })
-      .strict()
-      .optional(),
-    outputs: z.record(z.string().regex(EVENT_NAME), TriggerOutputSchema).optional(),
-    auto_archive: z.boolean().default(true),
-    background: z.boolean().default(false),
+    ...AgentReactionFields,
   })
   .strict();
+
+export const AgentReactionSchema = z
+  .object({
+    id: z.string().regex(IDENTIFIER).optional(),
+    ...AgentReactionFields,
+  })
+  .strict();
+
+export const WaitReactionSchema = z
+  .object({
+    id: z.string().regex(IDENTIFIER).optional(),
+    wait: z
+      .object({
+        for: z.string().min(1),
+      })
+      .strict(),
+  })
+  .strict();
+
+export type AgentReaction = z.infer<typeof AgentReactionSchema>;
+export type WaitReaction = z.infer<typeof WaitReactionSchema>;
+
+export interface ConditionReaction {
+  id?: string | undefined;
+  if: {
+    condition: string;
+    then: TriggerReaction[];
+    else: TriggerReaction[];
+  };
+}
+
+export type TriggerReaction = AgentReaction | WaitReaction | ConditionReaction;
+
+/**
+ * The true branch of a condition. The field name is the YAML key, not a Promise.
+ *
+ * @param value - Reactions or a schema that run when the condition is true
+ * @returns That value under the document field
+ */
+export function trueBranch<T>(value: T): { then: T } {
+  // eslint-disable-next-line unicorn/no-thenable -- YAML field, not a Promise
+  return { then: value };
+}
+
+export const TriggerReactionSchema: z.ZodType<TriggerReaction> = z.lazy(() =>
+  z.union([AgentReactionSchema, WaitReactionSchema, ConditionReactionSchema]),
+);
+
+const ConditionReactionSchema: z.ZodType<ConditionReaction> = z.lazy(() =>
+  z
+    .object({
+      id: z.string().regex(IDENTIFIER).optional(),
+      if: z
+        .object({
+          condition: z.string().min(1),
+          ...trueBranch(z.array(TriggerReactionSchema)),
+          else: z.array(TriggerReactionSchema).default([]),
+        })
+        .strict()
+        .superRefine((branch, context) => {
+          if (branch.then.length === 0 && branch.else.length === 0) {
+            context.addIssue({
+              code: "custom",
+              path: ["then"],
+              message: "A condition needs a true or a false branch.",
+            });
+          }
+        }),
+    })
+    .strict(),
+);
+
+export const FlowRunSchema = z
+  .object({
+    target: TriggerTargetSchema,
+    reactions: z.array(TriggerReactionSchema).min(1),
+  })
+  .strict();
+
+type DocumentRun = z.infer<typeof FlowRunSchema> | z.infer<typeof TriggerRunSchema>;
+
+/**
+ * True when the run is a reaction flow rather than one agent.
+ *
+ * @param run - Authored run block
+ * @returns Whether the block lists reactions
+ */
+export function isFlowRun(run: DocumentRun): run is z.infer<typeof FlowRunSchema> {
+  return "reactions" in run;
+}
+
+/**
+ * The single-agent run, or an error when the document lists reactions.
+ *
+ * @param run - Authored run block
+ * @returns The agent run
+ */
+export function singleAgentRun(run: DocumentRun): z.infer<typeof TriggerRunSchema> {
+  if ("reactions" in run) throw new Error("expected a single agent run");
+  return run;
+}
+
+/**
+ * Parses one run shape and keeps that shape's field errors.
+ *
+ * A union reports only "Invalid input" when both shapes fail, which hides `run.background`
+ * and the other fields a single-agent document already validates.
+ *
+ * @param value - Raw `run` block
+ * @param context - Document parse context
+ * @returns The parsed run, or `z.NEVER` when the chosen shape rejects it
+ */
+function parseDocumentRun(value: unknown, context: z.RefinementCtx): DocumentRun {
+  const schema =
+    typeof value === "object" && value !== null && "reactions" in value
+      ? FlowRunSchema
+      : TriggerRunSchema;
+  const parsed = schema.safeParse(value);
+  if (!parsed.success) {
+    for (const issue of parsed.error.issues) {
+      context.addIssue({
+        code: "custom",
+        message: issue.message,
+        path: [...issue.path],
+      });
+    }
+    return z.NEVER;
+  }
+  return parsed.data;
+}
+
+const RunSchema = z.unknown().transform((value, context) => parseDocumentRun(value, context));
 
 export const TriggerDocumentSchema = z
   .object({
@@ -139,7 +275,7 @@ export const TriggerDocumentSchema = z
     inputs: z.record(z.string().regex(IDENTIFIER), TriggerInputSchema).optional(),
     /** A distinct whole-trigger deadline; new one-run triggers normally omit it. */
     max_runtime: z.string().min(1).optional(),
-    run: TriggerRunSchema,
+    run: RunSchema,
   })
   .strict()
   .superRefine((trigger, context) => {
@@ -153,7 +289,11 @@ export const TriggerDocumentSchema = z
         message: "at least one event is required",
       });
     }
-    if ("choices" in trigger.run.agent && Object.keys(trigger.run.agent.choices).length === 0) {
+    if (
+      "agent" in trigger.run &&
+      "choices" in trigger.run.agent &&
+      Object.keys(trigger.run.agent.choices).length === 0
+    ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["run", "agent", "choices"],

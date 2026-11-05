@@ -2,6 +2,7 @@ import { scheduleYaml } from "./test-fixture.js";
 import { describe, expect, it } from "vitest";
 import { RecurrenceSchema, nextOccurrence, type Recurrence } from "./recurrence.js";
 import { compileTriggerDocument, parseTriggerDocument } from "../configuration/index.js";
+import { singleAgentRun } from "../configuration/schema.js";
 import { patchTriggerYaml, projectTriggerForm } from "../configuration/editor.js";
 
 const daily: Recurrence = {
@@ -72,7 +73,7 @@ it("round trips recurrence through YAML, compiler and the existing execution for
     rule: "FREQ=WEEKLY;BYDAY=MO,FR;BYHOUR=8,16;BYMINUTE=15,45;BYSETPOS=1,4,5,8",
     timezone: "America/New_York",
   });
-  expect(parsed.run.agent).toEqual({
+  expect(singleAgentRun(parsed.run).agent).toEqual({
     provider: "codex",
     mode: "full-access",
     thinkingOptionId: "low",

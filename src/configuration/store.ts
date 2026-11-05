@@ -313,7 +313,7 @@ export function parseProjectConfiguration(
   // Migrate the newly introduced default at the authored-document boundary. Existing
   // execution launch intents remain untouched and finish with their original contract.
   const document = triggerDocument(revision);
-  if (document !== undefined) {
+  if (document !== undefined && "agent" in document.run) {
     const policy = document.run.continuation;
     return toProjectConfiguration({
       ...configuration,

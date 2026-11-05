@@ -995,6 +995,58 @@ class PgDatabase implements Database {
     }
   }
 
+  async beginWorkflowWait(triggerRunId: string, stepId: string, startedAt: Date, resumeAt: Date) {
+    try {
+      await this.pool.transaction(async (client) => {
+        const updated = await client.query(
+          `update workflow_step_runs
+           set started_at = coalesce(started_at, $3)
+           where trigger_run_id = $1 and step_id = $2 and status = 'pending'`,
+          [triggerRunId, stepId, startedAt],
+        );
+        if (updated.rowCount === 0) return;
+        // Replace the wakeup time. least() would keep the earlier claim and the wait would not delay.
+        await client.query(
+          `insert into workflow_wakeups (trigger_run_id, available_at, lease_expires_at)
+           values ($1, $2, null)
+           on conflict (trigger_run_id) do update
+           set available_at = excluded.available_at, lease_expires_at = null`,
+          [triggerRunId, resumeAt],
+        );
+      });
+    } catch (error) {
+      throw toDatabaseError(error);
+    }
+  }
+
+  async succeedWorkflowStep(
+    triggerRunId: string,
+    stepId: string,
+    output: unknown,
+    completedAt: Date,
+  ) {
+    try {
+      await this.pool.transaction(async (client) => {
+        const updated = await client.query(
+          `update workflow_step_runs
+           set status = 'succeeded', output = $3, completed_at = $4
+           where trigger_run_id = $1 and step_id = $2 and status = 'pending'`,
+          [triggerRunId, stepId, output, completedAt],
+        );
+        if (updated.rowCount === 0) return;
+        await client.query(
+          `insert into workflow_wakeups (trigger_run_id, available_at, lease_expires_at)
+           values ($1, $2, null)
+           on conflict (trigger_run_id) do update
+           set available_at = excluded.available_at, lease_expires_at = null`,
+          [triggerRunId, completedAt],
+        );
+      });
+    } catch (error) {
+      throw toDatabaseError(error);
+    }
+  }
+
   async markWorkflowStepSkipped(triggerRunId: string, stepId: string, reason: string) {
     try {
       return await this.pool.transaction(async (client) => {

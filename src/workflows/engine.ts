@@ -13,7 +13,14 @@ import type {
   WorkflowDeadlineRecovery,
 } from "../db/types.js";
 import type { AgentExecutionStatus } from "../db/schema.js";
-import { parseCompiledHubConfig, type JsonPrimitive, type JsonValue } from "../config/compiler.js";
+import {
+  isCompiledWaitStep,
+  parseCompiledHubConfig,
+  type CompiledAgentSelection,
+  type CompiledStep,
+  type JsonPrimitive,
+  type JsonValue,
+} from "../config/compiler.js";
 import { triggerDocumentName, type CompiledProjectConfiguration } from "../configuration/store.js";
 import { logger as defaultLogger } from "../logger.js";
 import { reportFailure } from "../failures/index.js";
@@ -289,10 +296,7 @@ export class DurableWorkflowEngine {
       if (failed?.transitioned === true) await this.notifyWorkflowRunTerminal(failed.run);
       return;
     }
-    if (!shouldRun) {
-      await database.markWorkflowStepSkipped(run.id, step.id, "condition_false");
-      return;
-    }
+    if (await this.pauseOrSkipStep(database, run.id, step, next.startedAt, shouldRun)) return;
     const startedAt = this.now();
     const deadlineAt = new Date(
       Math.min(run.deadlineAt.getTime(), startedAt.getTime() + step.maxRuntimeMs),
@@ -365,6 +369,52 @@ export class DurableWorkflowEngine {
     }
     await this.dispatchWorkflowExecution(intent, created.execution.id, next.id);
     await database.deleteWorkflowWakeup(run.id);
+  }
+
+  /**
+   * Skips a false condition or parks a wait. Either way the agent is not launched.
+   *
+   * @param database - Workflow store
+   * @param runId - Run that owns the step
+   * @param step - Step being woken
+   * @param startedAt - When the wait first started, if it already had
+   * @param shouldRun - Whether the step condition passed
+   * @returns True when the step was skipped or is a wait
+   */
+  private async pauseOrSkipStep(
+    database: Database,
+    runId: string,
+    step: CompiledStep,
+    startedAt: Date | null,
+    shouldRun: boolean,
+  ): Promise<boolean> {
+    if (!shouldRun) {
+      await database.markWorkflowStepSkipped(runId, step.id, "condition_false");
+      return true;
+    }
+    if (!isCompiledWaitStep(step)) return false;
+    await this.processWaitStep(runId, step, startedAt);
+    return true;
+  }
+
+  private async processWaitStep(
+    triggerRunId: string,
+    step: CompiledStep,
+    startedAt: Date | null,
+  ): Promise<void> {
+    const database = this.options.database;
+    if (database === null) return;
+    const waitMs = step.waitMs;
+    if (waitMs === undefined) return;
+    const started = startedAt ?? this.now();
+    const resumeAt = new Date(started.getTime() + waitMs);
+    // The wakeup stays in the future until the wait elapses, then the step succeeds
+    // and the next reaction is claimed on the following pass.
+    if (this.now().getTime() < resumeAt.getTime()) {
+      await database.beginWorkflowWait(triggerRunId, step.id, started, resumeAt);
+      return;
+    }
+    await database.succeedWorkflowStep(triggerRunId, step.id, { waitedMs: waitMs }, this.now());
   }
 
   private async dispatchWorkflowExecution(
@@ -942,6 +992,9 @@ function buildStepIntent(
   deadlineAt: Date,
   executionId: string,
 ): LaunchMachineIntent {
+  if (isCompiledWaitStep(step)) {
+    throw new Error(`step ${step.id} does not launch an agent`);
+  }
   const environmentName = authorityString(
     renderExpressionTemplate(step.environment, context),
     "environment",
@@ -1020,10 +1073,7 @@ function buildStepIntent(
   };
 }
 
-function materializeAgent(
-  selection: CompiledProjectConfiguration["triggers"][number]["steps"][number]["agent"],
-  context: ExpressionContext,
-) {
+function materializeAgent(selection: CompiledAgentSelection, context: ExpressionContext) {
   const agent =
     "selector" in selection
       ? selection.choices[
@@ -1056,6 +1106,7 @@ function workflowContext(
 function stepUsesTriggerContext(
   step: CompiledProjectConfiguration["triggers"][number]["steps"][number],
 ): boolean {
+  if (isCompiledWaitStep(step)) return false;
   return step.prompt.some((block) =>
     expressionPathsInTemplate(block.kind === "text" ? block.value : block.content).some(
       (path) => path.namespace === "paseo" && path.path === "context",

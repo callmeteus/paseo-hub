@@ -1282,6 +1282,18 @@ export interface Database {
     stepId: string,
     reason: string,
   ): Promise<{ stepRun: WorkflowStepRunRecord; run: TriggerRunRecord } | undefined>;
+  beginWorkflowWait(
+    triggerRunId: string,
+    stepId: string,
+    startedAt: Date,
+    resumeAt: Date,
+  ): Promise<void>;
+  succeedWorkflowStep(
+    triggerRunId: string,
+    stepId: string,
+    output: unknown,
+    completedAt: Date,
+  ): Promise<void>;
   succeedTriggerRun(triggerRunId: string): Promise<TransitionTriggerRunResult | undefined>;
   failWorkflowRun(
     triggerRunId: string,

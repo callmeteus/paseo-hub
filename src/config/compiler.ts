@@ -177,7 +177,7 @@ const EnvironmentSchema = z.discriminatedUnion("kind", [
 
 const AuthoredAgentSelectionSchema = z.union([AgentSchema, z.string().min(1)]);
 
-const StepSchema = z
+const AgentStepSchema = z
   .object({
     id: z.string().min(1),
     environment: z.string().min(1),
@@ -196,6 +196,16 @@ const StepSchema = z
     background: z.boolean().optional(),
   })
   .strict();
+
+const WaitStepSchema = z
+  .object({
+    id: z.string().min(1),
+    wait: z.string().min(1),
+    if: z.string().min(1).optional(),
+  })
+  .strict();
+
+const StepSchema = z.union([WaitStepSchema, AgentStepSchema]);
 
 const AuthoredTriggerSchema = z
   .object({
@@ -274,6 +284,21 @@ export interface CompiledStep {
   allowOutputs: readonly { type: string; max?: number | undefined; required: boolean }[];
   autoArchive: boolean;
   background: boolean;
+  /** Set when this step pauses the run instead of launching its agent. */
+  waitMs?: number | undefined;
+}
+
+/** An agent step. A wait uses the same shape and sets `waitMs`. */
+export type CompiledAgentStep = CompiledStep;
+
+/**
+ * Whether this compiled step pauses the run instead of launching an agent.
+ *
+ * @param step - Step from a compiled trigger
+ * @returns True when the step is a wait
+ */
+export function isCompiledWaitStep(step: CompiledStep): boolean {
+  return step.waitMs !== undefined;
 }
 
 export type CompiledSteps = readonly CompiledStep[];
@@ -434,6 +459,7 @@ const CompiledStepSchema: z.ZodType<CompiledStep> = z
     ),
     autoArchive: z.boolean(),
     background: z.boolean().default(false),
+    waitMs: z.number().int().positive().max(MAX_DURATION_MS).optional(),
   })
   .strict();
 
@@ -576,6 +602,35 @@ function compileStep(
   namedAgents: Readonly<Record<string, CompiledAgent>>,
 ): CompiledStep {
   const stepPath = ["triggers", trigger.name, "steps", step.id] as const;
+  if ("wait" in step) {
+    const waitMs = compileAt([...stepPath, "wait"], () =>
+      parseDurationMs(step.wait, `trigger ${trigger.name} step ${step.id} wait`),
+    );
+    const authoredCondition = step.if;
+    const condition =
+      authoredCondition === undefined
+        ? undefined
+        : compileAt([...stepPath, "if"], () => parseExpression(authoredCondition));
+    const environment = [...environmentNames][0];
+    if (environment === undefined) {
+      throw new Error(`step ${step.id} wait requires a daemon environment`);
+    }
+    // The agent fields stay present so a wait is still a workflow step. The engine
+    // sees waitMs and does not launch them.
+    return {
+      id: step.id,
+      waitMs,
+      environment,
+      maxRuntimeMs: waitMs,
+      idleTimeoutMs: waitMs,
+      agent: { provider: "codex" },
+      prompt: [{ kind: "text", value: "wait" }],
+      allowOutputs: [],
+      autoArchive: false,
+      background: false,
+      ...(condition === undefined ? {} : { condition }),
+    };
+  }
   compileAt([...stepPath, "environment"], () => {
     if (!environmentNames.has(step.environment) && !step.environment.includes(EXPRESSION_START)) {
       throw new Error(`step ${step.id} references unknown environment ${step.environment}`);
@@ -596,10 +651,11 @@ function compileStep(
   if (idleTimeoutMs > maxRuntimeMs) {
     throw new Error(`step ${step.id} idle_timeout must not exceed max_runtime`);
   }
+  const authoredCondition = step.if;
   const condition =
-    step.if === undefined
+    authoredCondition === undefined
       ? undefined
-      : compileAt([...stepPath, "if"], () => parseExpression(step.if!));
+      : compileAt([...stepPath, "if"], () => parseExpression(authoredCondition));
   const outputDeclaration =
     step.output === undefined ? undefined : { schema: cloneJsonValue(step.output.schema) };
   if (outputDeclaration !== undefined)
@@ -648,7 +704,7 @@ function compileStep(
 function compileAgentSelection(
   triggerName: string,
   stepId: string,
-  authored: AuthoredStep["agent"],
+  authored: Extract<AuthoredStep, { agent: unknown }>["agent"],
   namedAgents: Readonly<Record<string, CompiledAgent>>,
 ): CompiledAgentSelection {
   if (typeof authored === "string") {
@@ -696,7 +752,7 @@ function cloneAgent(agent: CompiledAgent): CompiledAgent {
 function compilePromptBlocks(
   triggerName: string,
   stepId: string,
-  blocks: AuthoredStep["prompt"],
+  blocks: Extract<AuthoredStep, { prompt: unknown }>["prompt"],
   resolvedPromptPartials: ResolvedPromptPartials | undefined,
 ): readonly CompiledPromptBlock[] {
   return blocks.map((block, index) => {
@@ -811,6 +867,7 @@ function validateEnvironmentInputChoices(
   environments: ReadonlyMap<string, AuthoredEnvironment>,
 ): void {
   for (const step of trigger.steps) {
+    if ("wait" in step) continue;
     const reference = DYNAMIC_INPUT_REFERENCE.exec(step.environment);
     if (reference === null) continue;
     const input = inputs[reference[1]!];
@@ -878,6 +935,7 @@ function validateExpressionContract(
       compileAt(["triggers", triggerName, "steps", step.id, "if"], () =>
         validateExpression(step.condition!, ordinal, `step ${step.id} if`, false),
       );
+    if (isCompiledWaitStep(step)) continue;
     compileAt(["triggers", triggerName, "steps", step.id, "environment"], () => {
       validateTemplate(step.environment, ordinal, `step ${step.id} environment`, true);
       validateEnvironmentSelection(step.environment, ordinal, step.id);
@@ -991,7 +1049,9 @@ function validateExpressionContract(
     }
     const referencedOrdinal = stepOrdinals.get(reference.stepId);
     if (referencedOrdinal === undefined || referencedOrdinal >= ordinal) return undefined;
-    const output = trigger.steps[referencedOrdinal]?.output;
+    const referenced = trigger.steps[referencedOrdinal];
+    const output =
+      referenced !== undefined && "output" in referenced ? referenced.output : undefined;
     return output === undefined ? undefined : finiteSchemaChoices(output.schema, reference.path);
   }
 
@@ -1084,7 +1144,11 @@ function validateExpressionContract(
       throw new Error(`${path} cannot reference forward step ${reference.stepId}`);
     }
     const referencedStep = trigger.steps[referencedOrdinal];
-    if (referencedStep?.output === undefined) {
+    if (
+      referencedStep === undefined ||
+      !("output" in referencedStep) ||
+      referencedStep.output === undefined
+    ) {
       throw new Error(
         `${path} references output from step ${reference.stepId} without an output schema`,
       );
@@ -1118,11 +1182,12 @@ function validateExpressionContract(
     }
     const referencedOrdinal = stepOrdinals.get(reference.stepId);
     const step = referencedOrdinal === undefined ? undefined : trigger.steps[referencedOrdinal];
-    return step?.output !== undefined && hasFiniteSchemaChoices(step.output.schema, reference.path);
+    if (step === undefined || isCompiledWaitStep(step) || step.output === undefined) return false;
+    return hasFiniteSchemaChoices(step.output.schema, reference.path);
   }
 
   if (
-    trigger.steps.some((step) => step.environment.includes("${{")) &&
+    trigger.steps.some((step) => !isCompiledWaitStep(step) && step.environment.includes("${{")) &&
     environmentNames.size === 0
   ) {
     throw new Error(`trigger ${triggerName} has no configured environments`);
@@ -1203,6 +1268,12 @@ function validateCompiledContract(config: CompiledHubConfig): void {
     for (const step of trigger.steps) {
       if (stepIds.has(step.id)) throw new Error(`duplicate step id: ${step.id}`);
       stepIds.add(step.id);
+      if (isCompiledWaitStep(step)) {
+        if (step.condition !== undefined && !isExpression(step.condition)) {
+          throw new Error(`step ${step.id} contains an invalid condition`);
+        }
+        continue;
+      }
       if (!environmentIds.has(step.environment) && !step.environment.includes(EXPRESSION_START)) {
         throw new Error(`step ${step.id} references unknown environment ${step.environment}`);
       }
@@ -1261,7 +1332,7 @@ function validateEnvironmentTemplates(
 }
 
 function validateCompiledStepEnvironment(
-  step: CompiledStep,
+  step: CompiledAgentStep,
   inputs: Readonly<Record<string, CompiledInput>>,
   environments: ReadonlyMap<string, CompiledEnvironment>,
 ): void {
@@ -1308,7 +1379,7 @@ function validateStepEnvironmentContract(
   }
 }
 
-function validateCompiledPromptBlocks(step: CompiledStep): void {
+function validateCompiledPromptBlocks(step: CompiledAgentStep): void {
   for (const block of step.prompt) {
     if (block.kind !== "partial") continue;
     try {

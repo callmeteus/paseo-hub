@@ -122,7 +122,10 @@ export interface ProjectedEvents {
  * @returns `"true"`, `"false"`, or empty when the provider is not Cursor
  */
 export function cursorFastValue(
-  agent: Extract<TriggerDocument["run"]["agent"], { provider: string }>,
+  agent: Extract<
+    Extract<TriggerDocument["run"], { agent: unknown }>["agent"],
+    { provider: string }
+  >,
 ): string {
   if (agent.provider !== "cursor") return "";
   return agent.features?.["fast"] === "true" ? "true" : "false";

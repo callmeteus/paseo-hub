@@ -17,6 +17,7 @@ import {
   type TriggerDocumentIssue,
 } from "./configuration/index.js";
 import { supportsUnattendedRuns, unattendedProviderRefusal } from "./configuration/unattended.js";
+import type { AgentReaction, TriggerReaction } from "./configuration/schema.js";
 
 export interface SaveTriggerInput {
   triggerId?: string;
@@ -26,7 +27,7 @@ export interface SaveTriggerInput {
   sourceEvidence?: unknown;
 }
 
-type AuthoredAgent = Extract<TriggerDocument["run"]["agent"], { provider: string }>;
+type AuthoredAgent = Extract<AgentReaction["agent"], { provider: string }>;
 
 export class OrganizationTriggerStore {
   constructor(
@@ -162,7 +163,8 @@ export class OrganizationTriggerStore {
 /** Every agent the document may launch, each addressed by where it is written. */
 function authoredAgents(
   trigger: TriggerDocument,
-): readonly { path: readonly string[]; agent: AuthoredAgent }[] {
+): readonly { path: readonly (string | number)[]; agent: AuthoredAgent }[] {
+  if ("reactions" in trigger.run) return agentsIn(trigger.run.reactions, ["run", "reactions"]);
   if ("choices" in trigger.run.agent) {
     return Object.entries(trigger.run.agent.choices).map(([name, agent]) => ({
       path: ["run", "agent", "choices", name],
@@ -170,6 +172,29 @@ function authoredAgents(
     }));
   }
   return [{ path: ["run", "agent"], agent: trigger.run.agent }];
+}
+
+function agentsIn(
+  reactions: readonly TriggerReaction[],
+  path: readonly (string | number)[],
+): { path: readonly (string | number)[]; agent: AuthoredAgent }[] {
+  const found: { path: readonly (string | number)[]; agent: AuthoredAgent }[] = [];
+  for (const [index, reaction] of reactions.entries()) {
+    if ("wait" in reaction) continue;
+    if ("if" in reaction) {
+      found.push(...agentsIn(reaction.if.then, [...path, index, "if", "then"]));
+      found.push(...agentsIn(reaction.if.else, [...path, index, "if", "else"]));
+      continue;
+    }
+    if ("choices" in reaction.agent) {
+      for (const [name, agent] of Object.entries(reaction.agent.choices)) {
+        found.push({ path: [...path, index, "agent", "choices", name], agent });
+      }
+      continue;
+    }
+    found.push({ path: [...path, index, "agent"], agent: reaction.agent });
+  }
+  return found;
 }
 
 /** The daemon names fields by its own wire contract; the document names them by its schema. */
@@ -199,7 +224,12 @@ function runtimeChanged(previousYaml: string, compiled: CompiledTriggerDocument)
     return true;
   }
   const runtime = (document: TriggerDocument) =>
-    JSON.stringify({ target: document.run.target, agent: document.run.agent });
+    JSON.stringify({
+      target: document.run.target,
+      ...("reactions" in document.run
+        ? { reactions: document.run.reactions }
+        : { agent: document.run.agent }),
+    });
   return runtime(previous) !== runtime(compiled.authored);
 }
 

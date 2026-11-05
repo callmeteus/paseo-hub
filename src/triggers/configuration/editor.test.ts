@@ -1,7 +1,8 @@
 import { EDITOR_EVENTS } from "./events.js";
 import { describe, expect, test } from "vitest";
 import { parseDocument } from "yaml";
-import { TriggerDocumentSchema } from "./schema.js";
+import { ReactionFlow } from "./reaction-form.js";
+import { singleAgentRun, TriggerDocumentSchema } from "./schema.js";
 import {
   changeTriggerEvent,
   createTriggerYaml,
@@ -86,12 +87,13 @@ describe("trigger form YAML bridge", () => {
     });
     expect(yaml).toContain("# keep this heading");
     const value = TriggerDocumentSchema.parse(parseDocument(yaml).toJS());
+    const run = singleAgentRun(value.run);
     expect(value.run.target).toEqual({
       daemon: "office",
       cwd: "/new-workspace",
       worktree: { mode: "branch-off", newBranch: "hub-work" },
     });
-    expect(value.run.agent).toEqual({
+    expect(run.agent).toEqual({
       provider: "pi",
       model: "gateway/vendor/model-v1",
       mode: "safe",
@@ -100,15 +102,15 @@ describe("trigger form YAML bridge", () => {
     });
     expect(value.inputs).toBeDefined();
     expect(value.max_runtime).toBe("4h");
-    expect(value.run.startup_timeout).toBe("3m");
-    expect(value.run.env).toEqual({ TEAM: "core" });
-    expect(value.run.github).toEqual({
+    expect(run.startup_timeout).toBe("3m");
+    expect(run.env).toEqual({ TEAM: "core" });
+    expect(run.github).toEqual({
       connection: "company-github",
       repositories: ["paseo/hub"],
     });
-    expect(value.run.output).toBeDefined();
-    expect(value.run.outputs).toEqual({ "slack.reply": { max: 3 } });
-    expect(value.run.auto_archive).toBe(false);
+    expect(run.output).toBeDefined();
+    expect(run.outputs).toEqual({ "slack.reply": { max: 3 } });
+    expect(run.auto_archive).toBe(false);
     expect(value.on["slack.mention"]?.filters?.channels).toEqual(["engineering"]);
   });
 
@@ -120,9 +122,10 @@ describe("trigger form YAML bridge", () => {
       providerOptions: '{"sandbox_mode":"read-only"}',
     });
     const value = TriggerDocumentSchema.parse(parseDocument(yaml).toJS());
-    if ("choices" in value.run.agent) throw new Error("expected an inline agent");
-    expect(value.run.agent.options).toEqual({ sandbox_mode: "read-only" });
-    expect(value.run.agent.thinkingOptionId).toBe("xhigh");
+    const run = singleAgentRun(value.run);
+    if ("choices" in run.agent) throw new Error("expected an inline agent");
+    expect(run.agent.options).toEqual({ sandbox_mode: "read-only" });
+    expect(run.agent.thinkingOptionId).toBe("xhigh");
   });
 
   test("keeps advanced YAML added before a new trigger's first save", () => {
@@ -132,9 +135,10 @@ describe("trigger form YAML bridge", () => {
     if (merged.status !== "ok") throw new Error(merged.reason);
     expect(merged.yaml).toContain("# keep this heading");
     const value = TriggerDocumentSchema.parse(parseDocument(merged.yaml).toJS());
-    expect(value.run.prompt).toBe("Changed.");
-    expect(value.run.target.worktree).toBeDefined();
-    expect(value.run.outputs).toBeDefined();
+    const run = singleAgentRun(value.run);
+    expect(run.prompt).toBe("Changed.");
+    expect(run.target.worktree).toBeDefined();
+    expect(run.outputs).toBeDefined();
   });
 
   test("edits two Slack events, bot messages, and Cursor Fast in the form", () => {
@@ -189,13 +193,15 @@ run:
     const parsed = TriggerDocumentSchema.parse(parseDocument(withoutMention).toJS());
     expect(Object.keys(parsed.on)).toEqual(["slack.message"]);
     expect(parsed.on["slack.message"]?.filters?.include_bots).toBe(true);
-    if ("choices" in parsed.run.agent) throw new Error("expected one agent");
-    expect(parsed.run.agent.features).toEqual({ fast: "false" });
+    const parsedRun = singleAgentRun(parsed.run);
+    if ("choices" in parsedRun.agent) throw new Error("expected one agent");
+    expect(parsedRun.agent.features).toEqual({ fast: "false" });
 
     const fast = patchTriggerYaml(yaml, { ...projection.value, cursorFast: "true" });
     const spedUp = TriggerDocumentSchema.parse(parseDocument(fast).toJS());
-    if ("choices" in spedUp.run.agent) throw new Error("expected one agent");
-    expect(spedUp.run.agent.features).toEqual({ fast: "true" });
+    const spedRun = singleAgentRun(spedUp.run);
+    if ("choices" in spedRun.agent) throw new Error("expected one agent");
+    expect(spedRun.agent.features).toEqual({ fast: "true" });
     expect(spedUp.on["slack.mention"]?.filters?.channels).toEqual(["C096XDA2478"]);
   });
 
@@ -665,4 +671,70 @@ test("a trigger row names the event kind before what narrows it", () => {
     kind: "Manual run",
   });
   expect(describeTriggerEvent(null, "github.push")).toEqual({ kind: "GitHub push" });
+});
+
+const reactionYaml = `
+name: pause-then-reply
+enabled: true
+on:
+  manual.run: {}
+run:
+  target:
+    daemon: office
+    cwd: /workspace
+  reactions:
+    - id: pause
+      wait:
+        for: 5m
+    - id: check
+      if:
+        condition: "\${{ paseo.prompt != '' }}"
+        then:
+          - id: run
+            agent:
+              provider: codex
+              mode: agent
+            prompt: Reply.
+        else:
+          - id: later
+            wait:
+              for: 1h
+`;
+
+test("projects a wait and a condition, then patches the wait", () => {
+  const projection = projectTriggerForm(reactionYaml);
+  if (projection.status !== "editable") throw new Error(projection.reason);
+  const flow = projection.value.flow;
+  if (flow === undefined) throw new Error("expected a reaction flow");
+  expect(flow.map((reaction) => reaction.type)).toEqual(["wait", "if"]);
+  const pause = flow[0];
+  const check = flow[1];
+  if (pause?.type !== "wait" || check?.type !== "if")
+    throw new Error("expected wait then condition");
+  expect(pause.duration).toBe("5m");
+  expect(check.then.map((reaction) => reaction.type)).toEqual(["agent"]);
+  expect(check.else.map((reaction) => reaction.type)).toEqual(["wait"]);
+
+  const yaml = patchTriggerYaml(reactionYaml, {
+    ...projection.value,
+    flow: ReactionFlow.update(flow, pause.id, { duration: "10m" }),
+  });
+  const value = TriggerDocumentSchema.parse(parseDocument(yaml).toJS());
+  if (!("reactions" in value.run)) throw new Error("expected reactions");
+  const wait = value.run.reactions[0];
+  if (wait === undefined || !("wait" in wait)) throw new Error("expected a wait");
+  expect(wait.wait.for).toBe("10m");
+});
+
+test("rejects a wait duration the form cannot store", () => {
+  const projection = projectTriggerForm(reactionYaml);
+  if (projection.status !== "editable") throw new Error(projection.reason);
+  const flow = projection.value.flow;
+  const pause = flow?.[0];
+  if (flow === undefined || pause?.type !== "wait") throw new Error("expected a wait");
+  const errors = triggerFormErrors({
+    ...projection.value,
+    flow: ReactionFlow.update(flow, pause.id, { duration: "soon" }),
+  });
+  expect(errors["flow.pause.duration"]).toBe("Use a duration such as 30s, 5m, or 2h.");
 });

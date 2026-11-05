@@ -2,13 +2,17 @@ import { createHash } from "node:crypto";
 import { dump, load } from "js-yaml";
 import {
   compileHubConfig,
+  isCompiledWaitStep,
   type AuthoredStep,
   type AuthoredTrigger,
+  type CompiledAgentStep,
   type CompiledEnvironment,
   type CompiledTrigger,
 } from "../../config/compiler.js";
+import type { Continuation } from "../continuation.js";
 import { appendSlackReactGrant } from "../slack/react.js";
-import { TriggerDocumentSchema, type TriggerDocument } from "./schema.js";
+import { flattenTriggerReactions, type FlattenedReactions } from "./reactions.js";
+import { isFlowRun, TriggerDocumentSchema, type TriggerDocument } from "./schema.js";
 
 export { TriggerDocumentSchema, type TriggerDocument } from "./schema.js";
 export {
@@ -38,19 +42,25 @@ export interface CompiledTriggerDocument {
 
 export function compileTriggerDocument(yaml: string): CompiledTriggerDocument {
   const authored = parseTriggerDocument(yaml);
-  const namedAgents = "choices" in authored.run.agent ? authored.run.agent.choices : undefined;
-  const agent = "choices" in authored.run.agent ? authored.run.agent.select : authored.run.agent;
+  const flattened = flattenTriggerReactions(authored);
+  const namedAgents = documentNamedAgents(authored, flattened);
   const environment = {
     name: "target",
     kind: "daemon" as const,
     ...authored.run.target,
   };
-  const allowOutputs: NonNullable<AuthoredStep["allow_outputs"]> = [];
-  for (const [type, output] of Object.entries(authored.run.outputs ?? {})) {
-    const grant: NonNullable<AuthoredStep["allow_outputs"]>[number] = { type };
-    if (output.max !== undefined) grant.max = output.max;
-    if (output.required !== undefined) grant.required = output.required;
-    allowOutputs.push(grant);
+  const allowOutputs: NonNullable<
+    Extract<AuthoredStep, { allow_outputs?: unknown }>["allow_outputs"]
+  > = [];
+  if (!isFlowRun(authored.run)) {
+    for (const [type, output] of Object.entries(authored.run.outputs ?? {})) {
+      const grant: NonNullable<
+        Extract<AuthoredStep, { allow_outputs?: unknown }>["allow_outputs"]
+      >[number] = { type };
+      if (output.max !== undefined) grant.max = output.max;
+      if (output.required !== undefined) grant.required = output.required;
+      allowOutputs.push(grant);
+    }
   }
   const triggers: AuthoredTrigger[] = [];
   const events = Object.entries(authored.on);
@@ -64,28 +74,9 @@ export function compileTriggerDocument(yaml: string): CompiledTriggerDocument {
     const compiledTrigger: AuthoredTrigger = {
       name: internalEventName(authored.name, index, named),
       on: event,
-      max_runtime: authored.max_runtime ?? authored.run.max_runtime,
+      max_runtime: authored.max_runtime ?? documentDeadline(authored, flattened),
       filters: authoredFilters(event, definition),
-      steps: [
-        {
-          id: "run",
-          environment: "target",
-          max_runtime: authored.run.max_runtime,
-          idle_timeout: authored.run.idle_timeout,
-          ...(authored.run.startup_timeout === undefined
-            ? {}
-            : { startup_timeout: authored.run.startup_timeout }),
-          agent,
-          ...(authored.run.title === undefined ? {} : { title: authored.run.title }),
-          prompt: [{ text: authored.run.prompt }],
-          ...(authored.run.env === undefined ? {} : { env: authored.run.env }),
-          ...(authored.run.github === undefined ? {} : { github: authored.run.github }),
-          ...(authored.run.output === undefined ? {} : { output: authored.run.output }),
-          ...(allowOutputs.length === 0 ? {} : { allow_outputs: allowOutputs }),
-          auto_archive: authored.run.auto_archive,
-          background: authored.run.background,
-        },
-      ],
+      steps: flattened === undefined ? [legacyAgentStep(authored, allowOutputs)] : flattened.steps,
     };
     if (authored.inputs !== undefined) compiledTrigger.inputs = authored.inputs;
     triggers.push(compiledTrigger);
@@ -114,7 +105,10 @@ export function compileTriggerDocument(yaml: string): CompiledTriggerDocument {
     events: compiled.triggers.map((trigger) =>
       withAutomaticReply({
         ...trigger,
-        steps: trigger.steps.map((step) => ({ ...step, continuation: authored.run.continuation })),
+        steps: trigger.steps.map((step) => {
+          if (isCompiledWaitStep(step)) return step;
+          return { ...step, continuation: continuationFor(authored, flattened, step.id) };
+        }),
       }),
     ),
     authoredHash: createHash("sha256").update(yaml).digest("hex"),
@@ -126,18 +120,21 @@ function withAutomaticReply(trigger: CompiledTrigger): CompiledTrigger {
   if (replyType === undefined) return trigger;
   return {
     ...trigger,
-    steps: trigger.steps.map((step) => ({
-      ...step,
-      allowOutputs: automaticAllowOutputs(step.allowOutputs, replyType, trigger.on),
-    })),
+    steps: trigger.steps.map((step) => {
+      if (isCompiledWaitStep(step)) return step;
+      return {
+        ...step,
+        allowOutputs: automaticAllowOutputs(step.allowOutputs, replyType, trigger.on),
+      };
+    }),
   };
 }
 
 function automaticAllowOutputs(
-  allowOutputs: CompiledTrigger["steps"][number]["allowOutputs"],
+  allowOutputs: CompiledAgentStep["allowOutputs"],
   replyType: string,
   event: string,
-): CompiledTrigger["steps"][number]["allowOutputs"] {
+): CompiledAgentStep["allowOutputs"] {
   const withReply = allowOutputs.some((output) => output.type === replyType)
     ? allowOutputs
     : [...allowOutputs, { type: replyType, required: false }];
@@ -193,6 +190,67 @@ export function parseTriggerDocument(yaml: string): TriggerDocument {
 
 export function serializeTriggerDocument(trigger: TriggerDocument): string {
   return dump(trigger, { noRefs: true, lineWidth: -1, sortKeys: false });
+}
+
+/**
+ * Named agent choices for this document, from the flow or the single run.
+ *
+ * @param authored - Parsed trigger document
+ * @param flattened - Steps from a reaction flow, when the run has one
+ * @returns Choices the compiler resolves, or undefined when the agent is inline
+ */
+function documentNamedAgents(authored: TriggerDocument, flattened: FlattenedReactions | undefined) {
+  if (isFlowRun(authored.run)) return flattened?.namedAgents;
+  if ("choices" in authored.run.agent) return authored.run.agent.choices;
+  return undefined;
+}
+
+function documentDeadline(
+  authored: TriggerDocument,
+  flattened: FlattenedReactions | undefined,
+): string {
+  if (flattened !== undefined) return flattened.deadline;
+  if (isFlowRun(authored.run)) return "2h";
+  return authored.run.max_runtime;
+}
+
+function continuationFor(
+  authored: TriggerDocument,
+  flattened: FlattenedReactions | undefined,
+  stepId: string,
+): Continuation {
+  const fromFlow = flattened?.continuations.get(stepId);
+  if (fromFlow !== undefined) return fromFlow;
+  if (isFlowRun(authored.run)) return { mode: "conversation" };
+  return authored.run.continuation;
+}
+
+function legacyAgentStep(
+  authored: TriggerDocument,
+  allowOutputs: NonNullable<Extract<AuthoredStep, { allow_outputs?: unknown }>["allow_outputs"]>,
+): AuthoredStep {
+  if (isFlowRun(authored.run)) {
+    throw new Error("a reaction flow has no single agent step");
+  }
+  const agent = "choices" in authored.run.agent ? authored.run.agent.select : authored.run.agent;
+  return {
+    id: "run",
+    environment: "target",
+    max_runtime: authored.run.max_runtime,
+    idle_timeout: authored.run.idle_timeout,
+    ...(authored.run.startup_timeout === undefined
+      ? {}
+      : { startup_timeout: authored.run.startup_timeout }),
+    agent,
+    ...(authored.run.title === undefined ? {} : { title: authored.run.title }),
+    prompt: [{ text: authored.run.prompt }],
+    ...(authored.run.env === undefined ? {} : { env: authored.run.env }),
+    ...(authored.run.github === undefined ? {} : { github: authored.run.github }),
+    ...(authored.run.output === undefined ? {} : { output: authored.run.output }),
+    ...(allowOutputs.length === 0 ? {} : { allow_outputs: allowOutputs }),
+    auto_archive: authored.run.auto_archive,
+    background: authored.run.background,
+  };
 }
 
 function internalEventName(name: string, index: number, named: number): string {

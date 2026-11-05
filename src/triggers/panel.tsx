@@ -49,6 +49,8 @@ import { AudienceFields } from "./audience-fields.js";
 import { EventFields } from "./event-fields.js";
 import { AutomationTemplates, automationTemplateFromLocation } from "./templates.js";
 import { EDITOR_EVENTS, eventDefinition, parseEditorEvent } from "./configuration/events.js";
+import { ReactionFlow } from "./configuration/reaction-form.js";
+import { AddReaction, ReactionFlowEditor } from "./reaction-flow.js";
 import { selectedProviderModel } from "./provider-catalog.js";
 import { supportsUnattendedRuns } from "./configuration/unattended.js";
 
@@ -588,6 +590,34 @@ function fieldError(errors: TriggerFieldErrors, key: keyof TriggerFormValue) {
   return error === undefined ? {} : { error };
 }
 
+function applyReactionFlow(
+  form: TriggerFormValue,
+  flow: ReactionFlow.Reaction[],
+): TriggerFormValue {
+  if (ReactionFlow.isSingleAgent(flow)) {
+    const [agent] = flow;
+    if (agent?.type === "agent") {
+      const { flow: _flow, ...withoutFlow } = form;
+      return {
+        ...withoutFlow,
+        agent: agent.agent,
+        mode: agent.mode,
+        thinkingOptionId: agent.thinkingOptionId,
+        cursorFast: agent.cursorFast,
+        providerOptions: agent.providerOptions,
+        continuationMode: agent.continuationMode,
+        continuationKey: agent.continuationKey,
+        githubConnection: agent.githubConnection,
+        githubRepositories: agent.githubRepositories,
+        githubPermissions: agent.githubPermissions,
+        githubDuration: agent.githubDuration,
+        prompt: agent.prompt,
+      };
+    }
+  }
+  return { ...form, flow };
+}
+
 function TriggerForm({
   form,
   errors,
@@ -833,11 +863,19 @@ function TriggerForm({
         */}
         <Card
           title={EDITOR_STEPS.agent.title}
-          description={
-            selectedDaemon === undefined ? NO_AGENT_DESCRIPTION : EDITOR_STEPS.agent.description
-          }
+          description={agentCardDescription(selectedDaemon !== undefined, form.flow !== undefined)}
         >
-          {selectedDaemon === undefined ? null : (
+          {selectedDaemon !== undefined && form.flow !== undefined ? (
+            <ReactionFlowEditor
+              flow={form.flow}
+              errors={errors}
+              entries={providerCatalog.entries}
+              loading={providerCatalog.loading}
+              githubConnectionOptions={githubConnectionOptions}
+              onChange={(flow) => onChange(applyReactionFlow(form, flow))}
+            />
+          ) : null}
+          {selectedDaemon !== undefined && form.flow === undefined ? (
             <>
               <div className="grid gap-4 sm:grid-cols-2">
                 <ProviderCatalogFields
@@ -980,8 +1018,34 @@ function TriggerForm({
                   ) : null}
                 </div>
               </Disclosure>
+              <AddReaction
+                onAdd={(kind) =>
+                  onChange({
+                    ...form,
+                    flow: ReactionFlow.start(
+                      {
+                        agent: form.agent,
+                        mode: form.mode,
+                        thinkingOptionId: form.thinkingOptionId,
+                        cursorFast: form.cursorFast,
+                        providerOptions: form.providerOptions,
+                        continuationMode: form.continuationMode,
+                        continuationKey: form.continuationKey,
+                        githubConnection: form.githubConnection,
+                        githubRepositories: form.githubRepositories,
+                        githubPermissions: form.githubPermissions,
+                        githubDuration: form.githubDuration,
+                        prompt: form.prompt,
+                        maxRuntime: form.maxRuntime,
+                        idleTimeout: form.idleTimeout,
+                      },
+                      kind,
+                    ),
+                  })
+                }
+              />
             </>
-          )}
+          ) : null}
         </Card>
       </Steps>
 
@@ -1094,9 +1158,25 @@ const EDITOR_STEPS = {
   },
   agent: {
     title: "What runs there",
-    description: "The agent, its model, and the instructions it is given.",
+    description:
+      "The agent, its model, and the instructions it is given. Add a wait or a condition when the run needs more than the agent.",
   },
 } as const;
+
+/**
+ * Copy for the reaction card. A flow explains order; a single agent keeps the original sentence.
+ *
+ * @param hasDaemon - Whether a daemon is selected
+ * @param hasFlow - Whether the form is editing more than one reaction
+ * @returns The card description
+ */
+function agentCardDescription(hasDaemon: boolean, hasFlow: boolean): string {
+  if (!hasDaemon) return NO_AGENT_DESCRIPTION;
+  if (hasFlow) {
+    return "Reactions run in order. A condition takes the true branch or the false branch.";
+  }
+  return EDITOR_STEPS.agent.description;
+}
 
 /** What the step says while the decision above it is still missing. */
 const NO_DAEMON_DESCRIPTION =

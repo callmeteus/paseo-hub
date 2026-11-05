@@ -868,6 +868,50 @@ class MemoryDatabase implements Database {
     return recoveries;
   }
 
+  async beginWorkflowWait(triggerRunId: string, stepId: string, startedAt: Date, resumeAt: Date) {
+    const step = (await this.listWorkflowStepRunsForTriggerRun(triggerRunId)).find(
+      (candidate) => candidate.stepId === stepId,
+    );
+    if (step === undefined || step.status !== "pending") return;
+    this.workflowStepRuns.set(step.id, {
+      ...step,
+      startedAt: step.startedAt ?? startedAt,
+    });
+    // A wait replaces the wakeup time. `wakeWorkflowRun` keeps the earlier time and would not delay.
+    this.workflowWakeups.set(triggerRunId, {
+      triggerRunId,
+      availableAt: resumeAt,
+      leaseExpiresAt: null,
+      leasedBeforeClaim: false,
+    });
+  }
+
+  async succeedWorkflowStep(
+    triggerRunId: string,
+    stepId: string,
+    output: unknown,
+    completedAt: Date,
+  ) {
+    const run = this.triggerRuns.get(triggerRunId);
+    const step = (await this.listWorkflowStepRunsForTriggerRun(triggerRunId)).find(
+      (candidate) => candidate.stepId === stepId,
+    );
+    if (run === undefined || step === undefined || step.status !== "pending") return;
+    const now = completedAt;
+    this.workflowStepRuns.set(step.id, {
+      ...step,
+      status: "succeeded",
+      output,
+      completedAt: now,
+    });
+    this.workflowWakeups.set(run.id, {
+      triggerRunId: run.id,
+      availableAt: now,
+      leaseExpiresAt: null,
+      leasedBeforeClaim: false,
+    });
+  }
+
   async markWorkflowStepSkipped(triggerRunId: string, stepId: string, reason: string) {
     const run = this.triggerRuns.get(triggerRunId);
     const step = (await this.listWorkflowStepRunsForTriggerRun(triggerRunId)).find(

@@ -3,14 +3,14 @@ import { compileHubBundle, type HubBundleFile } from "../../config/bundle.js";
 import type {
   CompiledAgent,
   CompiledAgentSelection,
+  CompiledAgentStep,
   CompiledEnvironment,
   CompiledHubConfig,
   CompiledInput,
-  CompiledStep,
   CompiledTrigger,
   JsonPrimitive,
 } from "../../config/compiler.js";
-import { parseCompiledHubConfig } from "../../config/compiler.js";
+import { isCompiledWaitStep, parseCompiledHubConfig } from "../../config/compiler.js";
 import type { TriggerDocument } from "./schema.js";
 import { compileTriggerDocument, serializeTriggerDocument } from "./index.js";
 
@@ -98,6 +98,8 @@ function convertSingleRun(
   if (Object.keys(trigger.values).length > 0) blockers.push("trigger defines workflow values");
   const step = trigger.steps[0];
   if (step === undefined) return { success: false, blockers };
+  if (isCompiledWaitStep(step)) blockers.push("step waits");
+  if (isCompiledWaitStep(step)) return { success: false, blockers };
   if (step.condition !== undefined) blockers.push("run is conditional");
   if (hasNullableInputs(trigger.inputs)) blockers.push("trigger inputs allow null values");
   const environment = configuration.environments.find(
@@ -116,7 +118,7 @@ function convertSingleRun(
 
 function singleRunDocument(
   trigger: CompiledTrigger,
-  step: CompiledStep,
+  step: CompiledAgentStep,
   environment: Extract<CompiledEnvironment, { kind: "daemon" }>,
 ): TriggerDocument {
   const filters = trigger.filters === undefined ? undefined : authoredFilters(trigger.filters);
@@ -182,7 +184,9 @@ function singleRunDocument(
   };
 }
 
-function authoredAgent(agent: CompiledAgentSelection): TriggerDocument["run"]["agent"] {
+function authoredAgent(
+  agent: CompiledAgentSelection,
+): Extract<TriggerDocument["run"], { agent: unknown }>["agent"] {
   if (!("selector" in agent)) return cloneAgent(agent);
   return {
     select: agent.selector,
@@ -261,7 +265,7 @@ function asJsonObject(value: JsonPrimitive | readonly unknown[] | object): Recor
   return Object.fromEntries(Object.entries(value));
 }
 
-function hasDuplicateOutputs(step: CompiledStep): boolean {
+function hasDuplicateOutputs(step: CompiledAgentStep): boolean {
   return new Set(step.allowOutputs.map(({ type }) => type)).size !== step.allowOutputs.length;
 }
 

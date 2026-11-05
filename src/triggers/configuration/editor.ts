@@ -7,7 +7,14 @@ import {
 import { ContinuationSchema } from "../continuation.js";
 import { parseDocument, stringify, type Document } from "yaml";
 import { z } from "zod";
-import { IDENTIFIER, TriggerDocumentSchema, type TriggerDocument } from "./schema.js";
+import {
+  IDENTIFIER,
+  isFlowRun,
+  trueBranch,
+  TriggerDocumentSchema,
+  type TriggerDocument,
+} from "./schema.js";
+import { preservedReactionFields, ReactionFlow } from "./reaction-form.js";
 
 import {
   eventDefinition,
@@ -21,6 +28,7 @@ import {
   clearEmptyMap,
   commaSeparated,
   cursorFastValue,
+  deleteIfPresent,
   eventAudience,
   formEventDefinition,
   projectEditorEvents,
@@ -69,6 +77,8 @@ export interface TriggerFormValue {
   prompt: string;
   channels: string;
   webhookSecret: string;
+  /** Ordered reactions. Absent while the trigger is still the single agent above. */
+  flow?: ReactionFlow.Reaction[];
 }
 
 export type TriggerFormProjection =
@@ -84,6 +94,7 @@ export function projectTriggerForm(yaml: string): TriggerFormProjection {
   const trigger = parsed.data;
   const projected = projectEditorEvents(trigger);
   if (projected.status !== "editable") return projected;
+  if (isFlowRun(trigger.run)) return projectFlowForm(trigger, projected);
   if ("choices" in trigger.run.agent) {
     return { status: "yaml_only", reason: "Agent choices can only be edited in YAML." };
   }
@@ -94,14 +105,51 @@ export function projectTriggerForm(yaml: string): TriggerFormProjection {
   }
   return {
     status: "editable",
-    value: toFormValue(trigger, projected, agent),
+    value: toFormValue(trigger, trigger.run, projected, agent),
+  };
+}
+
+function projectFlowForm(
+  trigger: TriggerDocument,
+  projected: ProjectedEvents,
+): TriggerFormProjection {
+  if (!isFlowRun(trigger.run))
+    return { status: "yaml_only", reason: "Trigger has no reaction flow." };
+  const flow = ReactionFlow.project(trigger.run.reactions);
+  if (flow.status !== "editable") return flow;
+  const event = projected.events[0];
+  if (event === undefined)
+    return { status: "yaml_only", reason: "The form supports at least one event." };
+  const definition = trigger.on[event];
+  if (definition === undefined)
+    return { status: "yaml_only", reason: "The form supports at least one event." };
+  return {
+    status: "editable",
+    value: {
+      name: trigger.name,
+      enabled: trigger.enabled,
+      event,
+      events: projected.events,
+      includeBots: projected.includeBots,
+      eventUsers: projected.eventUsers,
+      containsAll: projected.containsAll,
+      containsAny: projected.containsAny,
+      ...eventFormFields(event, definition),
+      daemon: trigger.run.target.daemon,
+      cwd: trigger.run.target.cwd,
+      ...flow.agent,
+      maxRuntime: flow.maxRuntime,
+      idleTimeout: flow.idleTimeout,
+      flow: flow.flow,
+    },
   };
 }
 
 function toFormValue(
   trigger: TriggerDocument,
+  run: SingleRun,
   projected: ProjectedEvents,
-  agent: Extract<TriggerDocument["run"]["agent"], { provider: string }>,
+  agent: Extract<SingleRun["agent"], { provider: string }>,
 ): TriggerFormValue {
   const event = projected.events[0];
   if (event === undefined) {
@@ -121,7 +169,7 @@ function toFormValue(
     containsAll: projected.containsAll,
     containsAny: projected.containsAny,
     ...eventFormFields(event, definition),
-    ...runFormFields(trigger, agent),
+    ...runFormFields(run, agent),
   };
 }
 
@@ -142,9 +190,11 @@ function eventFormFields(
   };
 }
 
+type SingleRun = Extract<TriggerDocument["run"], { agent: unknown }>;
+
 function runFormFields(
-  trigger: TriggerDocument,
-  agent: Extract<TriggerDocument["run"]["agent"], { provider: string }>,
+  run: SingleRun,
+  agent: Extract<SingleRun["agent"], { provider: string }>,
 ): Pick<
   TriggerFormValue,
   | "daemon"
@@ -165,25 +215,23 @@ function runFormFields(
   | "prompt"
 > {
   return {
-    daemon: trigger.run.target.daemon,
-    cwd: trigger.run.target.cwd,
+    daemon: run.target.daemon,
+    cwd: run.target.cwd,
     agent: joinAgentId(agent.provider, agent.model),
     mode: agent.mode ?? "",
     thinkingOptionId: agent.thinkingOptionId ?? "",
     cursorFast: cursorFastValue(agent),
     providerOptions: agent.options === undefined ? "" : JSON.stringify(agent.options, null, 2),
-    continuationMode: trigger.run.continuation.mode,
-    continuationKey: trigger.run.continuation.mode === "key" ? trigger.run.continuation.key : "",
-    maxRuntime: trigger.run.max_runtime,
-    idleTimeout: trigger.run.idle_timeout,
-    githubConnection: trigger.run.github?.connection ?? "",
-    githubRepositories: trigger.run.github?.repositories?.join(", ") ?? "",
+    continuationMode: run.continuation.mode,
+    continuationKey: run.continuation.mode === "key" ? run.continuation.key : "",
+    maxRuntime: run.max_runtime,
+    idleTimeout: run.idle_timeout,
+    githubConnection: run.github?.connection ?? "",
+    githubRepositories: run.github?.repositories?.join(", ") ?? "",
     githubPermissions:
-      trigger.run.github?.permissions === undefined
-        ? ""
-        : JSON.stringify(trigger.run.github.permissions, null, 2),
-    githubDuration: trigger.run.github?.duration ?? "",
-    prompt: trigger.run.prompt,
+      run.github?.permissions === undefined ? "" : JSON.stringify(run.github.permissions, null, 2),
+    githubDuration: run.github?.duration ?? "",
+    prompt: run.prompt,
   };
 }
 
@@ -225,6 +273,12 @@ export function patchTriggerYaml(yaml: string, value: TriggerFormValue): string 
 
   setIfChanged(document, ["run", "target", "daemon"], value.daemon);
   setIfChanged(document, ["run", "target", "cwd"], value.cwd);
+  if (value.flow !== undefined) {
+    writeReactionFlow(document, value);
+    return document.toString({ lineWidth: 0 });
+  }
+  restorePreservedAgent(document);
+  deleteIfPresent(document, ["run", "reactions"]);
   const agent = splitAgentId(value.agent);
   setIfChanged(document, ["run", "agent", "provider"], agent.provider);
   setOptional(document, ["run", "agent", "model"], agent.model);
@@ -284,9 +338,6 @@ function incompleteReason(cause: unknown): string {
 
 export function createTriggerYaml(value: TriggerFormValue): string {
   validateFormValue(value);
-  const agent = splitAgentId(value.agent);
-  const providerOptions = parseProviderOptions(value.providerOptions);
-  const github = githubAuthority(value);
   return stringify(
     {
       name: value.name,
@@ -294,29 +345,170 @@ export function createTriggerYaml(value: TriggerFormValue): string {
       on: Object.fromEntries(
         selectedTriggerEvents(value).map((event) => [event, formEventDefinition(value, event)]),
       ),
-      run: {
-        target: { daemon: value.daemon, cwd: value.cwd },
-        agent: {
-          provider: agent.provider,
-          ...(agent.model === undefined ? {} : { model: agent.model }),
-          mode: value.mode.trim(),
-          ...(blankToUndefined(value.thinkingOptionId) === undefined
-            ? {}
-            : { thinkingOptionId: value.thinkingOptionId.trim() }),
-          ...(agent.provider === "cursor" && blankToUndefined(value.cursorFast) !== undefined
-            ? { features: { fast: value.cursorFast.trim() } }
-            : {}),
-          ...(providerOptions === undefined ? {} : { options: providerOptions }),
-        },
-        continuation: formContinuation(value),
-        max_runtime: value.maxRuntime.trim(),
-        idle_timeout: value.idleTimeout.trim(),
-        ...(github === undefined ? {} : { github }),
-        prompt: value.prompt,
-      },
+      run: value.flow === undefined ? legacyRun(value) : flowRun(value),
     },
     { lineWidth: 0, compat: ["timestamp"] },
   );
+}
+
+function legacyRun(value: TriggerFormValue) {
+  const agent = splitAgentId(value.agent);
+  const providerOptions = parseProviderOptions(value.providerOptions);
+  const github = githubAuthority(value);
+  return {
+    target: { daemon: value.daemon, cwd: value.cwd },
+    agent: {
+      provider: agent.provider,
+      ...(agent.model === undefined ? {} : { model: agent.model }),
+      mode: value.mode.trim(),
+      ...(blankToUndefined(value.thinkingOptionId) === undefined
+        ? {}
+        : { thinkingOptionId: value.thinkingOptionId.trim() }),
+      ...(agent.provider === "cursor" && blankToUndefined(value.cursorFast) !== undefined
+        ? { features: { fast: value.cursorFast.trim() } }
+        : {}),
+      ...(providerOptions === undefined ? {} : { options: providerOptions }),
+    },
+    continuation: formContinuation(value),
+    max_runtime: value.maxRuntime.trim(),
+    idle_timeout: value.idleTimeout.trim(),
+    ...(github === undefined ? {} : { github }),
+    prompt: value.prompt,
+  };
+}
+
+function flowRun(value: TriggerFormValue) {
+  return {
+    target: { daemon: value.daemon, cwd: value.cwd },
+    reactions: ReactionFlow.toYaml(value.flow ?? [], {
+      maxRuntime: value.maxRuntime,
+      idleTimeout: value.idleTimeout,
+    }),
+  };
+}
+
+const LEGACY_RUN_KEYS = [
+  "agent",
+  "prompt",
+  "continuation",
+  "max_runtime",
+  "idle_timeout",
+  "startup_timeout",
+  "env",
+  "github",
+  "output",
+  "outputs",
+  "title",
+  "auto_archive",
+  "background",
+] as const;
+
+function writeReactionFlow(document: Document, value: TriggerFormValue): void {
+  if (value.flow === undefined) return;
+  const preserved = preservedById(document, value.flow);
+  for (const key of LEGACY_RUN_KEYS) deleteIfPresent(document, ["run", key]);
+  setIfChanged(
+    document,
+    ["run", "reactions"],
+    mergePreserved(
+      ReactionFlow.toYaml(value.flow, {
+        maxRuntime: value.maxRuntime,
+        idleTimeout: value.idleTimeout,
+      }),
+      preserved,
+    ),
+  );
+}
+
+function restorePreservedAgent(document: Document): void {
+  const run = readRun(document);
+  if (run === undefined || !Array.isArray(run["reactions"])) return;
+  const preserved = new Map<string, Record<string, unknown>>();
+  collectPreserved(run["reactions"], preserved);
+  const extra = preserved.values().next().value;
+  if (extra === undefined) return;
+  for (const [key, preservedValue] of Object.entries(extra)) {
+    setIfChanged(document, ["run", key], preservedValue);
+  }
+}
+
+function preservedById(
+  document: Document,
+  flow: readonly ReactionFlow.Reaction[],
+): Map<string, Record<string, unknown>> {
+  const preserved = new Map<string, Record<string, unknown>>();
+  const run = readRun(document);
+  if (run === undefined) return preserved;
+  if (Array.isArray(run["reactions"])) {
+    collectPreserved(run["reactions"], preserved);
+    return preserved;
+  }
+  const extra = preservedReactionFields(run);
+  const first = ReactionFlow.firstAgent(flow);
+  if (first !== undefined && Object.keys(extra).length > 0) preserved.set(first.id, extra);
+  return preserved;
+}
+
+function collectPreserved(
+  reactions: unknown,
+  preserved: Map<string, Record<string, unknown>>,
+): void {
+  if (!Array.isArray(reactions)) return;
+  for (const reaction of reactions) {
+    if (!isRecord(reaction)) continue;
+    const branch = reaction["if"];
+    if (isRecord(branch)) {
+      collectPreserved(branch["then"], preserved);
+      collectPreserved(branch["else"], preserved);
+      continue;
+    }
+    if (!("agent" in reaction)) continue;
+    const id = reaction["id"];
+    if (typeof id !== "string") continue;
+    const extra = preservedReactionFields(reaction);
+    if (Object.keys(extra).length > 0) preserved.set(id, extra);
+  }
+}
+
+function mergePreserved(
+  reactions: unknown[],
+  preserved: ReadonlyMap<string, Record<string, unknown>>,
+): unknown[] {
+  return reactions.map((reaction) => {
+    if (!isRecord(reaction)) return reaction;
+    const branch = reaction["if"];
+    if (isRecord(branch)) {
+      const elseReactions = branch["else"];
+      return {
+        ...reaction,
+        if: {
+          ...branch,
+          ...trueBranch(mergePreserved(arrayOf(branch["then"]), preserved)),
+          ...(elseReactions === undefined
+            ? {}
+            : { else: mergePreserved(arrayOf(elseReactions), preserved) }),
+        },
+      };
+    }
+    if (!("agent" in reaction) || typeof reaction["id"] !== "string") return reaction;
+    const extra = preserved.get(reaction["id"]);
+    return extra === undefined ? reaction : { ...extra, ...reaction };
+  });
+}
+
+function readRun(document: Document): Record<string, unknown> | undefined {
+  const value: unknown = document.toJS();
+  if (!isRecord(value)) return undefined;
+  const run = value["run"];
+  return isRecord(run) ? run : undefined;
+}
+
+function arrayOf(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function workingDirectoryErrors(value: TriggerFormValue): TriggerFieldErrors {
@@ -367,7 +559,7 @@ function parsePermissions(value: string): Record<string, "read" | "write" | "adm
 
 /** What is wrong with each field, keyed by the field that has to change. */
 export type TriggerFieldErrors = Partial<
-  Record<keyof TriggerFormValue | `qualifiers.${QualifierKey}`, string>
+  Record<keyof TriggerFormValue | `qualifiers.${QualifierKey}` | `flow.${string}`, string>
 >;
 
 /**
@@ -400,6 +592,10 @@ export function triggerFormErrors(value: TriggerFormValue): TriggerFieldErrors {
   Object.assign(errors, workingDirectoryErrors(value));
   if (value.maxRuntime.trim().length === 0) errors.maxRuntime = "Maximum runtime is required.";
   if (value.idleTimeout.trim().length === 0) errors.idleTimeout = "Idle timeout is required.";
+  if (value.flow !== undefined) {
+    Object.assign(errors, ReactionFlow.errors(value.flow));
+    return errors;
+  }
   const agent = refused(() => splitAgentId(value.agent));
   if (agent !== undefined) errors.agent = agent;
   if (value.mode.trim().length === 0) errors.mode = "Execution mode is required.";

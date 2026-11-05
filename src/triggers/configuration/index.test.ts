@@ -8,6 +8,7 @@ import {
   serializeTriggerDocument,
   TriggerDocumentError,
 } from "./index.js";
+import { singleAgentRun } from "./schema.js";
 
 function reportsMissingEvent(error: unknown): boolean {
   return (
@@ -93,10 +94,11 @@ describe("self-contained trigger documents", () => {
   background: ${background}`,
           );
     const compiled = compileTriggerDocument(yaml);
-    assert.equal(compiled.authored.run.background, background ?? false);
+    assert.equal(singleAgentRun(compiled.authored.run).background, background ?? false);
     assert.equal(compiled.events[0]?.steps[0]?.background, background ?? false);
     assert.equal(
-      parseTriggerDocument(serializeTriggerDocument(compiled.authored)).run.background,
+      singleAgentRun(parseTriggerDocument(serializeTriggerDocument(compiled.authored)).run)
+        .background,
       background ?? false,
     );
   });
@@ -113,7 +115,8 @@ describe("self-contained trigger documents", () => {
     const compiled = compileTriggerDocument(yaml);
     assert.equal(compiled.events[0]?.steps[0]?.startupTimeoutMs, 180_000);
     assert.equal(
-      parseTriggerDocument(serializeTriggerDocument(compiled.authored)).run.startup_timeout,
+      singleAgentRun(parseTriggerDocument(serializeTriggerDocument(compiled.authored)).run)
+        .startup_timeout,
       "3m",
     );
   });
@@ -124,7 +127,7 @@ describe("self-contained trigger documents", () => {
     const compiled = compileTriggerDocument(yaml);
     assert.equal(compiled.events[0]?.steps[0]?.title, title);
     assert.equal(
-      parseTriggerDocument(serializeTriggerDocument(compiled.authored)).run.title,
+      singleAgentRun(parseTriggerDocument(serializeTriggerDocument(compiled.authored)).run).title,
       title,
     );
   });
@@ -320,13 +323,14 @@ run:
   const parsed = parseTriggerDocument(yaml);
 
   // A single agent, not a named choice
-  if ("choices" in parsed.run.agent) {
+  const run = singleAgentRun(parsed.run);
+  if ("choices" in run.agent) {
     assert.fail("expected one agent");
   }
 
-  assert.equal(parsed.run.agent.model, "grok-4.7");
-  assert.equal(parsed.run.agent.thinkingOptionId, "high");
-  assert.deepEqual(parsed.run.agent.features, { fast: "false" });
+  assert.equal(run.agent.model, "grok-4.7");
+  assert.equal(run.agent.thinkingOptionId, "high");
+  assert.deepEqual(run.agent.features, { fast: "false" });
 
   const compiled = compileTriggerDocument(yaml);
   const agent = compiled.events[0]?.steps[0]?.agent;
@@ -360,4 +364,77 @@ run:
 `;
 
   assert.throws(() => parseTriggerDocument(yaml), TriggerDocumentError);
+});
+
+const reactionFlow = `
+name: pause-then-reply
+enabled: true
+on:
+  manual.run: {}
+run:
+  target:
+    daemon: office
+    cwd: /workspace
+  reactions:
+    - id: pause
+      wait:
+        for: 5m
+    - id: check
+      if:
+        condition: "\${{ paseo.prompt == 'later' }}"
+        then:
+          - id: run
+            agent:
+              provider: codex
+              mode: agent
+            prompt: Reply now.
+        else:
+          - id: later
+            wait:
+              for: 1h
+`;
+
+it("compiles a wait and a condition into ordered steps", () => {
+  const compiled = compileTriggerDocument(reactionFlow);
+  const steps = compiled.events[0]?.steps;
+  assert.equal(steps?.length, 3);
+  assert.equal(steps?.[0]?.id, "pause");
+  assert.equal(steps?.[0]?.waitMs, 5 * 60 * 1000);
+  assert.equal(steps?.[0]?.condition, undefined);
+
+  const reply = steps?.[1];
+  const delayed = steps?.[2];
+  assert.equal(reply?.id, "run");
+  assert.equal(reply?.waitMs, undefined);
+  assert.equal(reply?.condition?.kind, "binary");
+  assert.equal(delayed?.id, "later");
+  assert.equal(delayed?.waitMs, 60 * 60 * 1000);
+  assert.equal(delayed?.condition?.kind, "not");
+});
+
+it("rejects a condition with no branch and a wait with a bad duration", () => {
+  assert.throws(
+    () =>
+      parseTriggerDocument(`
+name: empty-check
+enabled: true
+on:
+  manual.run: {}
+run:
+  target:
+    daemon: office
+    cwd: /workspace
+  reactions:
+    - id: check
+      if:
+        condition: "\${{ paseo.prompt != '' }}"
+        then: []
+        else: []
+`),
+    /true or a false branch/u,
+  );
+  assert.throws(
+    () => compileTriggerDocument(reactionFlow.replace("for: 5m", "for: soon")),
+    TriggerDocumentError,
+  );
 });

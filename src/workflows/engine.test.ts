@@ -8,6 +8,7 @@ import {
   type CompiledHubConfig,
 } from "../config/compiler.js";
 import { compileHubBundle } from "../config/bundle.js";
+import { compileTriggerDocument } from "../triggers/configuration/index.js";
 import {
   hashPromptPartialContent,
   type ResolvedPromptPartials,
@@ -1642,6 +1643,120 @@ describe("durable multi-step workflow engine", () => {
     const execution = await fixture.database.findAgentExecutionByWorkflowStepRunId(steps[0]!.id);
     assert.equal(execution?.launchIntent?.prompt, 'Context: {"ambient":"once"}\nTrigger: run');
   });
+
+  it("holds the run until a wait elapses, then launches the agent", async () => {
+    let now = new Date(Date.now() + 60_000);
+    const compiled = compileTriggerDocument(`
+name: pause-then-reply
+enabled: true
+on:
+  manual.run: {}
+run:
+  target:
+    daemon: office
+    cwd: /workspace
+  reactions:
+    - id: pause
+      wait:
+        for: 5m
+    - id: run
+      agent:
+        provider: codex
+        mode: agent
+      prompt: Reply now.
+`);
+    const fixture = await workflowFixture({
+      compiledConfiguration: {
+        environments: [compiled.environment],
+        triggers: [...compiled.events],
+      },
+    });
+    const intents: LaunchMachineIntent[] = [];
+    const { handler, engine } = createDurableWorkflowHandler({
+      database: fixture.database,
+      entitlements: fixture.entitlements,
+      providers: [providerMatch(fixture.configuration, fixture.revisionId)],
+      now: () => now,
+      dispatchLaunchMachineIntent: async (intent) => {
+        intents.push(intent);
+        const execution = await fixture.database.findAgentExecutionByWorkflowStepRunId(
+          intent.workflowStepRunId!,
+        );
+        assert.ok(execution);
+        return { execution };
+      },
+    });
+
+    await handler(fixture.trigger("hello"));
+    await engine.processAvailable();
+    assert.equal(intents.length, 0);
+    const waiting = await stepStatuses(fixture);
+    assert.equal(waiting.get("pause"), "pending");
+    assert.equal(waiting.get("run"), "pending");
+
+    now = new Date(now.getTime() + 5 * 60 * 1000);
+    await engine.processAvailable();
+    assert.equal(intents.length, 1);
+    const finished = await stepStatuses(fixture);
+    assert.equal(finished.get("pause"), "succeeded");
+    assert.equal(finished.get("run"), "running");
+  });
+
+  it("takes the false branch of a condition and skips the true branch", async () => {
+    const now = new Date(Date.now() + 60_000);
+    const compiled = compileTriggerDocument(`
+name: branch
+enabled: true
+on:
+  manual.run: {}
+run:
+  target:
+    daemon: office
+    cwd: /workspace
+  reactions:
+    - id: check
+      if:
+        condition: "\${{ paseo.prompt == 'later' }}"
+        then:
+          - id: run
+            agent:
+              provider: codex
+              mode: agent
+            prompt: Reply now.
+        else:
+          - id: later
+            wait:
+              for: 1h
+`);
+    const fixture = await workflowFixture({
+      compiledConfiguration: {
+        environments: [compiled.environment],
+        triggers: [...compiled.events],
+      },
+    });
+    const intents: LaunchMachineIntent[] = [];
+    const { handler, engine } = createDurableWorkflowHandler({
+      database: fixture.database,
+      entitlements: fixture.entitlements,
+      providers: [providerMatch(fixture.configuration, fixture.revisionId)],
+      now: () => now,
+      dispatchLaunchMachineIntent: async (intent) => {
+        intents.push(intent);
+        const execution = await fixture.database.findAgentExecutionByWorkflowStepRunId(
+          intent.workflowStepRunId!,
+        );
+        assert.ok(execution);
+        return { execution };
+      },
+    });
+
+    await handler(fixture.trigger("now"));
+    await engine.processAvailable();
+    assert.equal(intents.length, 0);
+    const statuses = await stepStatuses(fixture);
+    assert.equal(statuses.get("run"), "skipped");
+    assert.equal(statuses.get("later"), "pending");
+  });
 });
 
 interface Fixture {
@@ -1653,6 +1768,16 @@ interface Fixture {
   revisionId: string;
   configuration: CompiledHubConfig;
   trigger(message: string): DurableProviderEvent;
+}
+
+async function stepStatuses(fixture: Fixture): Promise<Map<string, string>> {
+  const runs = await fixture.database.findTriggerRunsByProviderEventReceiptId(
+    fixture.providerEventReceiptId,
+  );
+  const run = runs[0];
+  if (run === undefined) throw new Error("expected a trigger run");
+  const steps = await fixture.database.listWorkflowStepRunsForTriggerRun(run.id);
+  return new Map(steps.map((step) => [step.stepId, step.status]));
 }
 
 async function workflowFixture(
