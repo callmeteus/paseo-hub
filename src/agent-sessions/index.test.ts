@@ -213,6 +213,25 @@ test("session tools keep each arrival's destination and reject stale or foreign 
   ).toMatchObject({ result: { isError: true } });
 });
 
+test("a tool change on the same daemon starts a new agent instead of sticking the thread", async () => {
+  const f = await fixture();
+  const first = await f.arrival("conversation", "daemon");
+  const original = await first.dispatch();
+  const changed = await f.arrival("conversation", "daemon", {}, "follow-up", {
+    continuation: { key: "conversation", compatibility: { target: "daemon", tools: "react" } },
+  });
+  const next = await changed.dispatch();
+  expect(next.agentId).not.toBe(original.agentId);
+  expect(next.action).toBe("created");
+  expect(f.connection.creates).toHaveLength(2);
+  const firstExecution = await f.execution(first.executionId);
+  const retired = await f.database.findAgentSession(firstExecution.agentSessionId ?? "");
+  expect(retired?.continuationKey).toBeNull();
+  const current = await f.database.findAgentSessionByKey("project", "conversation");
+  expect(current?.id).not.toBe(retired?.id);
+  expect(current?.agentId).toBe(next.agentId);
+});
+
 test("new-agent policy isolates arrivals and incompatible targets fail without replacement", async () => {
   const f = await fixture();
   const a = await f.arrival(null);

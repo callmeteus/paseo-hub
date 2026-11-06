@@ -75,11 +75,11 @@ export class AgentSessions {
       !storedSession || (await isFinishedCredentialedSession(storedSession))
         ? await input.createOptions()
         : undefined;
+    const tools = executionToolDefinitions(
+      input.intent.outputSchema,
+      this.outputs.materialize(input.intent.allowOutputs, input.intent.outputContext),
+    );
     const dispatched = await this.database.withAdvisoryLock(`agent-session:${lockId}`, async () => {
-      const tools = executionToolDefinitions(
-        input.intent.outputSchema,
-        this.outputs.materialize(input.intent.allowOutputs, input.intent.outputContext),
-      );
       const compatibility = fingerprint({ settings: policy?.compatibility, tools });
       let session = await findSession();
       if (session && (await isFinishedCredentialedSession(session))) {
@@ -88,12 +88,8 @@ export class AgentSessions {
         await this.database.saveAgentSession({ ...session, continuationKey: null });
         session = undefined;
       }
+      session = await this.releaseIncompatibleSession(session, compatibility, input.intent);
       const id = session?.id ?? deriveSessionId(projectId, `execution:${input.executionId}`);
-      if (session && session.compatibility !== compatibility) {
-        throw new AgentSessionError(
-          "Continuation settings differ from the existing agent; use a different key or choose a new agent",
-        );
-      }
       if (!session) {
         if (!options) return undefined;
         const token = deriveAgentExecutionCompletionToken(this.secret, `session:${id}`);
@@ -163,6 +159,32 @@ export class AgentSessions {
       return { agentId: session.agentId, unsubscribe, action };
     });
     return dispatched ?? this.dispatch(input);
+  }
+
+  /**
+   * Drops a same-daemon session whose tools or target no longer match.
+   *
+   * Reusing it would run the arrival with the old tool set. Refusing it leaves
+   * every later mention on that thread stuck. A different daemon still fails closed.
+   *
+   * @param session - Stored session for this continuation, when one exists
+   * @param compatibility - Fingerprint of the arrival
+   * @param intent - Launch that names the daemon this arrival must use
+   * @returns The session to keep, or undefined when the key was released
+   */
+  private async releaseIncompatibleSession(
+    session: AgentSessionRecord | undefined,
+    compatibility: string,
+    intent: LaunchMachineIntent,
+  ): Promise<AgentSessionRecord | undefined> {
+    if (!session || session.compatibility === compatibility) return session;
+    if (session.daemonId !== intent.environment.daemonId) {
+      throw new AgentSessionError(
+        "Continuation settings differ from the existing agent; use a different key or choose a new agent",
+      );
+    }
+    await this.database.saveAgentSession({ ...session, continuationKey: null });
+    return undefined;
   }
 
   private async deliver(
@@ -256,6 +278,7 @@ function deriveSessionId(projectId: string, key: string): string {
     .digest("hex");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
+
 function fingerprint(value: unknown): string {
   return createHash("sha256")
     .update(
