@@ -66,6 +66,8 @@ export interface SlackMergeData {
         };
     /** Present when this event is an app-agent thread, not a channel post. */
     assistant_thread?: true;
+    /** Present when the person wrote in a one-to-one direct message. */
+    direct_message?: true;
   };
 }
 
@@ -245,15 +247,7 @@ export function createSlackTriggerProvider(options: {
         }
         if (invocation.status === "rejected") {
           matches.push({
-            conversation: {
-              key: JSON.stringify([
-                "slack",
-                rawEvent.teamId,
-                rawEvent.channelId,
-                rawEvent.threadTs ?? rawEvent.messageTs,
-              ]),
-              label: "Slack thread",
-            },
+            conversation: slackConversation(rawEvent),
             triggerName: match.trigger.name,
             triggerContext,
             outputContext,
@@ -264,15 +258,7 @@ export function createSlackTriggerProvider(options: {
           continue;
         }
         matches.push({
-          conversation: {
-            key: JSON.stringify([
-              "slack",
-              rawEvent.teamId,
-              rawEvent.channelId,
-              rawEvent.threadTs ?? rawEvent.messageTs,
-            ]),
-            label: "Slack thread",
-          },
+          conversation: slackConversation(rawEvent),
           triggerName: match.trigger.name,
           triggerContext,
           outputContext,
@@ -547,7 +533,25 @@ function buildSlackMergeData(
               before: { ts: event.messageTs },
             },
       ...(assistantThread ? { assistant_thread: true as const } : {}),
+      ...(event.channelType === "im" ? { direct_message: true as const } : {}),
     },
+  };
+}
+
+/**
+ * The continuation scope for this Slack arrival.
+ *
+ * A channel uses the thread, or the message that opened it. A direct message uses the
+ * conversation itself, so the next line from that person continues the same agent.
+ *
+ * @param event - Normalized Slack event
+ * @returns The conversation key and label stored on the match
+ */
+function slackConversation(event: NormalizedSlackMentionEvent): { key: string; label: string } {
+  const scope = event.channelType === "im" ? event.channelId : (event.threadTs ?? event.messageTs);
+  return {
+    key: JSON.stringify(["slack", event.teamId, event.channelId, scope]),
+    label: event.channelType === "im" ? "Slack direct message" : "Slack thread",
   };
 }
 

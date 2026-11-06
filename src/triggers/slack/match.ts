@@ -93,6 +93,8 @@ function matchesAudience(
   if (filters.connectionId !== undefined && filters.connectionId !== connectionId) return false;
   const workspace = readString(filters, "workspace");
   if (workspace !== undefined && workspace !== event.teamId) return false;
+  // A direct message is not a channel. The channel allowlist stays for posts, and this flag opts in.
+  if (event.channelType === "im") return filters.direct_messages === true;
   const channels = readStrings(filters, "channels");
   if (channels !== undefined && !channels.includes(event.channelId)) return false;
   return true;

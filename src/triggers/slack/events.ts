@@ -115,6 +115,8 @@ export const NormalizedSlackMentionEventSchema = z.object({
   content: z.string(),
   /** The Slack thread is an app-agent thread, not a channel post. */
   assistantThread: z.boolean().optional(),
+  /** Slack conversation kind. Absent on events stored before direct messages were kept. */
+  channelType: z.enum(["channel", "group", "im", "mpim"]).optional(),
   lead: z.string().default(""),
   forwards: z
     .array(
@@ -235,8 +237,13 @@ function slackEventDropReason(
 
   const channelType = event["channel_type"];
 
-  if (channelType === "im" || channelType === "mpim") {
+  // A group conversation stays out. A one-to-one message is kept, and the trigger filter decides.
+  if (channelType === "mpim") {
     return "direct_message";
+  }
+
+  if (channelType === "im") {
+    return undefined;
   }
 
   const threadTs = event["thread_ts"];
@@ -347,6 +354,7 @@ export function normalizeSlackEvent(
       threadTs: started.threadTs,
       user: started.userId,
       assistantThread: true,
+      channelType: "im",
     });
   }
 
@@ -377,6 +385,9 @@ export function normalizeSlackEvent(
     if (message.data.bot_id !== undefined || message.data.subtype === "bot_message") {
       return undefined;
     }
+    const channelType = assistantThread.channelId.startsWith("D")
+      ? ("im" as const)
+      : message.data.channel_type;
     return normalizedSlackEvent(envelope, "message", message.data, {
       channel: assistantThread.channelId,
       ts: message.data.ts,
@@ -384,9 +395,10 @@ export function normalizeSlackEvent(
       threadTs: assistantThread.threadTs,
       user: message.data.user,
       assistantThread: true,
+      ...(channelType === undefined ? {} : { channelType }),
     });
   }
-  if (message.data.channel_type === "im" || message.data.channel_type === "mpim") return undefined;
+  if (message.data.channel_type === "mpim") return undefined;
   // A thread reply carries a parent timestamp. The message that opened the thread uses its own.
   if (message.data.thread_ts !== undefined && message.data.thread_ts !== message.data.ts) {
     return undefined;
@@ -398,6 +410,7 @@ export function normalizeSlackEvent(
     threadTs: null,
     user: message.data.user,
     fromBot: message.data.bot_id !== undefined || message.data.subtype === "bot_message",
+    ...(message.data.channel_type === undefined ? {} : { channelType: message.data.channel_type }),
   });
 }
 
@@ -413,6 +426,7 @@ function normalizedSlackEvent(
     user: string;
     fromBot?: boolean;
     assistantThread?: boolean;
+    channelType?: "channel" | "group" | "im" | "mpim";
   },
 ): NormalizedSlackMentionEvent {
   // A forward keeps the original text on the attachment. `text` itself is often empty.
@@ -433,6 +447,7 @@ function normalizedSlackEvent(
     author: { id: event.user },
     ...(event.fromBot === true ? { fromBot: true } : {}),
     ...(event.assistantThread === true ? { assistantThread: true } : {}),
+    ...(event.channelType === undefined ? {} : { channelType: event.channelType }),
     createdAt: new Date(Number(event.ts) * 1_000).toISOString(),
     attachments: files.map((file) => ({
       id: file.id,

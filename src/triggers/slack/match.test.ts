@@ -76,6 +76,41 @@ describe("Slack trigger matching", () => {
     assert.equal(matchSlackTriggers(config, { ...event, content: "run tests" }, "UBOT").length, 0);
   });
 
+  it("lets a direct message through only when the trigger opts in", () => {
+    const optedIn = compileHubConfig({
+      environments: [{ name: "runner", kind: "daemon", daemon: "runner", cwd: "/repo" }],
+      triggers: [
+        {
+          name: "channel",
+          on: "slack.message",
+          max_runtime: "2h",
+          filters: { from_users: ["*"], channels: ["C1"], direct_messages: true },
+          steps: [
+            {
+              id: "run",
+              environment: "runner",
+              max_runtime: "1h",
+              idle_timeout: "5m",
+              agent: { provider: "opencode", mode: "default" },
+              prompt: [{ text: "Read the message" }],
+            },
+          ],
+        },
+      ],
+    });
+    const closed = channelConfig(false);
+    const direct = {
+      ...channelMessage("logs do tenant"),
+      channelId: "D1",
+      channelType: "im" as const,
+      threadTs: null,
+    };
+
+    assert.equal(matchSlackTriggers(optedIn, direct, "UBOT").length, 1);
+    assert.equal(matchSlackTriggers(optedIn, channelMessage("no canal"), "UBOT").length, 1);
+    assert.equal(matchSlackTriggers(closed, direct, "UBOT").length, 0);
+  });
+
   it("matches a channel message without a mention and leaves mentions on slack.mention", () => {
     const message = compileHubConfig({
       environments: [{ name: "runner", kind: "daemon", daemon: "runner", cwd: "/repo" }],

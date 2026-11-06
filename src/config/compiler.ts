@@ -154,6 +154,11 @@ const AuthoredTriggerFilterSchema = z
     assignees: z.array(z.string().min(1)).min(1).optional(),
     channels: z.array(z.string().min(1)).optional(),
     from_users: z.array(z.string().min(1)).optional(),
+    /**
+     * When true, a one-to-one Slack direct message can run this trigger.
+     * A channel allowlist does not have to name that conversation. Off when omitted.
+     */
+    direct_messages: z.boolean().optional(),
     /** When true, a Slack message from another app can run this trigger. Off when omitted. */
     include_bots: z.boolean().optional(),
     webhook_secret: z.string().min(32).optional(),

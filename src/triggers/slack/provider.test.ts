@@ -301,7 +301,7 @@ describe("Slack Phase 1 trigger provider", () => {
           {
             ...base.triggers[0]!,
             on: "slack.message",
-            filters: { workspace: "T1", from_users: ["U1"] },
+            filters: { workspace: "T1", from_users: ["U1"], direct_messages: true },
           },
         ],
       },
@@ -423,7 +423,7 @@ describe("Slack Phase 1 trigger provider", () => {
           {
             ...base.triggers[0]!,
             on: "slack.message",
-            filters: { workspace: "T1", from_users: ["U1"] },
+            filters: { workspace: "T1", from_users: ["U1"], direct_messages: true },
             steps: [
               {
                 ...base.triggers[0]!.steps[0]!,

@@ -184,7 +184,7 @@ describe("normalizeSlackEvent", () => {
     assert.equal(marked?.threadTs, "1729999327.187299");
   });
 
-  it("still drops a plain direct message and the bot reply inside an assistant thread", () => {
+  it("keeps a one-to-one direct message and still drops a group direct message", () => {
     const direct = {
       type: "message",
       user: "U1",
@@ -194,9 +194,22 @@ describe("normalizeSlackEvent", () => {
       ts: "1729999328.000100",
       event_ts: "1729999328.000100",
     };
-    assert.equal(normalizeSlackEvent({ ...envelope, event: direct }), undefined);
-    assert.equal(describeDroppedSlackEvent(direct)?.reason, "direct_message");
+    const kept = normalizeSlackEvent({ ...envelope, event: direct });
+    assert.equal(kept?.channelId, "D1");
+    assert.equal(kept?.channelType, "im");
+    assert.equal(kept?.content, "oi");
+    assert.equal(describeDroppedSlackEvent(direct), undefined);
 
+    const group = {
+      ...direct,
+      channel: "G1",
+      channel_type: "mpim",
+    };
+    assert.equal(normalizeSlackEvent({ ...envelope, event: group }), undefined);
+    assert.equal(describeDroppedSlackEvent(group)?.reason, "direct_message");
+  });
+
+  it("still drops the bot reply inside an assistant thread", () => {
     const botReply = {
       type: "message",
       user: "UBOT",
