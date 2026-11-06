@@ -220,7 +220,7 @@ export const reauthorizeSlackConnection = createServerFn({ method: "POST" })
       return respondOk(reauthorizeSlackResultSchema.parse(await response.json()));
     } catch (error) {
       return respondWithFailure(error, connectionContext("connection.reauthorize", data), {
-        fallback: "Hub couldn't reauthorize Slack with the saved credentials. Try again.",
+        fallback: "Hub couldn't reauthorize Slack. Try again.",
       });
     }
   });
@@ -242,8 +242,14 @@ function slackReauthorizeFailure(code: unknown, status: number): string {
   if (code === "not_found") {
     return "That Slack workspace is not connected to this organization.";
   }
+  if (code === "provider_not_configured") {
+    return "Slack isn't set up on this Hub. Save the app credentials, then try again.";
+  }
   if (status === 403) return "You don't have permission to reauthorize Slack.";
-  return "Hub couldn't reauthorize Slack with the saved credentials. Try again.";
+  if (code === "connection_unavailable" || status === 503) {
+    return "Hub couldn't reach Slack to refresh this workspace. Try again.";
+  }
+  return "Hub couldn't reauthorize Slack. Try again.";
 }
 
 function connectionContext(

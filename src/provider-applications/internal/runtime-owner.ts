@@ -595,7 +595,11 @@ function emptySlot(): Slot {
 }
 
 function actionNames(provider: Provider): readonly string[] {
+  // The stable registration forwards only this list. A handler that exists on the provider
+  // registration and is missing here never runs, and the caller hears that the provider is
+  // not configured.
   if (provider === "github") return ["start", "disconnect", "setup", "callback"];
+  if (provider === "slack") return ["start", "disconnect", "reauthorize", "callback"];
   return ["start", "disconnect", "callback"];
 }
 

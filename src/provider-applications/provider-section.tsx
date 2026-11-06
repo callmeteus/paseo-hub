@@ -73,6 +73,7 @@ export function ProviderSection({
   open,
   onOpenChange,
   returned,
+  editingCredentials = false,
 }: {
   guide: ProviderGuide;
   view: ProviderApplicationView;
@@ -83,13 +84,15 @@ export function ProviderSection({
   onOpenChange: (open: boolean) => void;
   /** The outcome of an install or authorization that just came back to this section. */
   returned: SectionReturn | undefined;
+  /** Open straight onto the credential form. The connections page sends an operator here. */
+  editingCredentials?: boolean;
 }) {
   const queryClient = useQueryClient();
   const savedSlackTransport = view.identifiers["transport"] === "webhook" ? "webhook" : "socket";
   const [slackTransport, setSlackTransport] = useState<"socket" | "webhook">(savedSlackTransport);
   const activeGuide =
     guide.provider === "slack" && slackTransport === "webhook" ? SLACK_WEBHOOK_GUIDE : guide;
-  const [replacing, setReplacing] = useState(false);
+  const [replacing, setReplacing] = useState(editingCredentials);
   const [errors, setErrors] = useState<Readonly<Record<string, string>>>({});
   const [outcome, setOutcome] = useState<Outcome | undefined>(returned);
   const result = useRef<HTMLDivElement>(null);

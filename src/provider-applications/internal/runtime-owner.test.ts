@@ -528,6 +528,57 @@ describe("dynamic provider runtime", () => {
     assert.equal(runtime.identity("slack")?.id, "A1");
   });
 
+  it("forwards Slack reauthorize to the registration that holds the saved token", async () => {
+    const seen: string[] = [];
+    const runtime = new DynamicProviderRuntime({
+      database: createMemoryDatabase(),
+      auth: testAuth(),
+      applicationBaseUrl: "https://hub.test",
+      registrationFactory: ({ configuration }) => {
+        const id = providerConfigurationId(configuration);
+        const registration = connectionRegistration("slack", id);
+        return {
+          ...registration,
+          connection: {
+            ...registration.connection,
+            actions: {
+              ...registration.connection.actions,
+              reauthorize: () => {
+                seen.push(id);
+                return Promise.resolve(
+                  Response.json({ complete: true, teamName: "Even Tecnologia" }),
+                );
+              },
+            },
+          },
+        };
+      },
+    });
+    const stable = runtime
+      .registrations()
+      .find((registration) => registration.connection.name === "slack");
+    assert.ok(stable);
+    await stable.sources[0]!.start(() => Promise.resolve());
+    const candidate = await runtime.prepare(
+      "slack",
+      slackConfiguration("A1"),
+      "https://hub.test",
+      { provider: "slack", id: "A1", name: "A1" },
+      1,
+    );
+    await candidate.start();
+    candidate.publish();
+
+    const reauthorize = stable.connection.actions["reauthorize"];
+    assert.ok(reauthorize);
+    const response = await reauthorize(
+      new Request("https://hub.test/reauthorize", { method: "POST" }),
+    );
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { complete: true, teamName: "Even Tecnologia" });
+    assert.deepEqual(seen, ["A1"]);
+  });
+
   for (const provider of ["github", "slack", "discord"] as const) {
     it(`activates ${provider} for new connection actions without a restart`, async () => {
       const runtime = new DynamicProviderRuntime({

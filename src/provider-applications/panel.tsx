@@ -46,19 +46,25 @@ function connectedProviderCount(overview: ProviderApplicationOverview): number {
 function ProviderApplications({
   surface,
   organizationId,
+  credentialEditor,
 }: {
   surface: ProviderApplicationSurface;
   organizationId: string;
+  /** Open this provider on the credential form. Set from the connections page. */
+  credentialEditor?: Provider;
 }) {
   const [returned] = useConnectionReturn();
-  const [open, setOpen] = useState<Partial<Record<Provider, boolean>>>(() =>
-    returned === undefined ? {} : { [returned.provider]: true },
-  );
+  const [open, setOpen] = useState<Partial<Record<Provider, boolean>>>(() => ({
+    ...(returned === undefined ? {} : { [returned.provider]: true }),
+    ...(credentialEditor === undefined ? {} : { [credentialEditor]: true }),
+  }));
   const query = useProviderApplicationsOverview();
   const section = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (returned !== undefined) section.current?.scrollIntoView({ block: "start" });
-  }, [returned]);
+    if (returned !== undefined || credentialEditor !== undefined) {
+      section.current?.scrollIntoView({ block: "start" });
+    }
+  }, [credentialEditor, returned]);
 
   if (query.status === "pending") return <OverviewLoading />;
   if (query.status === "error") {
@@ -77,7 +83,9 @@ function ProviderApplications({
         <div
           key={guide.provider}
           className="min-w-0"
-          {...(returned?.provider === guide.provider ? { ref: section } : {})}
+          {...(returned?.provider === guide.provider || credentialEditor === guide.provider
+            ? { ref: section }
+            : {})}
         >
           <ProviderSection
             guide={guide}
@@ -89,6 +97,7 @@ function ProviderApplications({
             // something to show them. Three open manuals is not a choice, it is a wall.
             open={open[guide.provider] ?? false}
             onOpenChange={(next) => setOpen((current) => ({ ...current, [guide.provider]: next }))}
+            editingCredentials={credentialEditor === guide.provider}
             {...(returned?.provider === guide.provider
               ? { returned: connectionReturnCopy(returned) }
               : { returned: undefined })}
@@ -186,7 +195,7 @@ function ExitFailure({ error, onRetry }: { error: Failure; onRetry: () => void }
 }
 
 /** Instance → Apps. The same sections, later, with no journey wrapped around them. */
-export function AppsPanel() {
+export function AppsPanel({ credentialEditor }: { credentialEditor?: Provider }) {
   const account = useActiveAccount();
   return (
     <>
@@ -194,7 +203,11 @@ export function AppsPanel() {
         title="Apps"
         description="The GitHub, Slack, Discord, and Linear apps Hub uses to reach your workspaces."
       />
-      <ProviderApplications surface="apps" organizationId={account.organization.id} />
+      <ProviderApplications
+        surface="apps"
+        organizationId={account.organization.id}
+        {...(credentialEditor === undefined ? {} : { credentialEditor })}
+      />
     </>
   );
 }

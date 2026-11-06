@@ -188,13 +188,11 @@ export function OrganizationConnectionsPanel() {
     );
     if (provider === "slack" && slackReauthorization !== undefined) {
       return (
-        <Button
-          disabled={busy}
-          size="sm"
-          onClick={() => reauthorizeWorkspace(slackReauthorization.id)}
-        >
-          Reauthorize
-        </Button>
+        <SlackReauthorizeActions
+          busy={busy}
+          canReplaceCredentials={isInstanceOperator}
+          onReauthorize={() => reauthorizeWorkspace(slackReauthorization.id)}
+        />
       );
     }
     if (status.data[provider].status === "notConfigured") {
@@ -267,6 +265,35 @@ export function OrganizationConnectionsPanel() {
         <ActivityTable activity={data.unroutedEvents} label="Unrouted events" showReason />
       </Section>
     </>
+  );
+}
+
+/**
+ * Reauthorize reads the bot token Hub already stored. Replace credentials opens the Slack app
+ * form, which is where that token is changed.
+ */
+function SlackReauthorizeActions({
+  busy,
+  canReplaceCredentials,
+  onReauthorize,
+}: {
+  busy: boolean;
+  canReplaceCredentials: boolean;
+  onReauthorize: () => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-end gap-2">
+      {canReplaceCredentials ? (
+        <Button variant="outline" size="sm" asChild>
+          <Link to={"/apps" as never} search={{ provider: "slack", edit: "credentials" } as never}>
+            Replace credentials
+          </Link>
+        </Button>
+      ) : null}
+      <Button disabled={busy} size="sm" onClick={onReauthorize}>
+        Reauthorize
+      </Button>
+    </div>
   );
 }
 
