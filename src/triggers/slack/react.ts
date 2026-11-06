@@ -11,7 +11,15 @@ const SlackEmojiNameSchema = z
   .transform((value) => stripSlackEmojiColons(value))
   .pipe(z.string().regex(/^[a-z0-9_+-]{1,100}$/u));
 
-const SlackReactArgsSchema = z.object({ name: SlackEmojiNameSchema }).strict();
+const SlackReactArgsSchema = z
+  .object({
+    name: SlackEmojiNameSchema,
+    ts: z
+      .string()
+      .regex(/^\d+\.\d+$/u)
+      .optional(),
+  })
+  .strict();
 
 /**
  * Reaction names that mean the work on this message is finished.
@@ -24,6 +32,7 @@ const SlackReactOutputContextSchema = z.object({
   teamId: z.string().min(1),
   channelId: z.string().min(1),
   messageTs: z.string().min(1),
+  threadTs: z.string().min(1).optional(),
 });
 
 /**
@@ -33,7 +42,7 @@ const SlackReactOutputContextSchema = z.object({
 export const reactOutputTool: OutputToolDefinition = {
   name: "react",
   description:
-    "Adds one emoji reaction to the Slack message that started this run. Pass the emoji name without colons, such as eyes. Adding white_check_mark, heavy_check_mark, or check also removes eyes from that message. Hub does not add a reaction unless this tool is called.",
+    "Adds one emoji reaction to a Slack message in this thread. Pass the emoji name without colons, such as eyes. Omit ts to react to the message that started this run. Pass ts only for that message or for the thread root. Adding white_check_mark, heavy_check_mark, or check also removes eyes from that same message. Hub does not add a reaction unless this tool is called.",
   inputSchema: {
     type: "object",
     properties: {
@@ -42,6 +51,12 @@ export const reactOutputTool: OutputToolDefinition = {
         minLength: 1,
         description: "Slack emoji name, without surrounding colons.",
       },
+      ts: {
+        type: "string",
+        minLength: 1,
+        description:
+          "Slack ts of the message to react to. The triggering message, or the thread root. Omit for the triggering message.",
+      },
     },
     required: ["name"],
     additionalProperties: false,
@@ -49,7 +64,7 @@ export const reactOutputTool: OutputToolDefinition = {
 };
 
 /**
- * Adds the emoji the agent asked for on the triggering Slack message.
+ * Adds the emoji the agent asked for on one message in this thread.
  *
  * @param options - Slack client that performs `reactions.add`
  * @returns Executor for the `slack.react` output
@@ -67,7 +82,7 @@ export function createSlackReactExecutor(options: {
       organizationId: context.organizationId,
       teamId: context.teamId,
       channelId: context.channelId,
-      messageTs: context.messageTs,
+      messageTs: reactionMessageTs(args.ts, context),
     };
     await options.client.addReaction({ ...target, name: args.name });
     if (!DONE_REACTION_NAMES.has(args.name)) return;
@@ -124,6 +139,26 @@ interface SlackReactionInput {
  */
 function isMissingReaction(error: unknown): boolean {
   return error instanceof Error && error.message.includes("no_reaction");
+}
+
+/**
+ * The message this reaction lands on.
+ *
+ * The default is the message that started the run. A caller may also name the
+ * thread root, which is the first message of a triage thread. Any other ts is
+ * refused so a run cannot react outside that pair.
+ *
+ * @param requested - `ts` from the tool call, when the agent sent one
+ * @param context - Channel message and thread root for this run
+ * @returns The Slack ts `reactions.add` should use
+ */
+function reactionMessageTs(
+  requested: string | undefined,
+  context: { messageTs: string; threadTs?: string | undefined },
+): string {
+  if (requested === undefined || requested === context.messageTs) return context.messageTs;
+  if (requested === context.threadTs) return requested;
+  throw new Error("react ts must be the triggering message or the thread root");
 }
 
 /**

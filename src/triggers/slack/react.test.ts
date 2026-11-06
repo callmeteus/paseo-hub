@@ -65,6 +65,66 @@ describe("Slack react output", () => {
     );
   });
 
+  it("reacts to the thread root when the agent names that message", async () => {
+    const client = new RecordingSlackClient();
+    const execute = createSlackReactExecutor({ client });
+
+    await execute({
+      agentExecutionId: "execution-1",
+      toolType: "slack.react",
+      args: { name: "eyes", ts: "1700000000.000001" },
+      outputContext: {
+        ...slackContext(),
+        threadTs: "1700000000.000001",
+        messageTs: "1700000000.000010",
+      },
+    });
+
+    assert.equal(client.reactions[0]?.messageTs, "1700000000.000001");
+    assert.equal(client.reactions[0]?.name, "eyes");
+  });
+
+  it("removes eyes from the thread root when that message is marked finished", async () => {
+    const client = new RecordingSlackClient();
+    const execute = createSlackReactExecutor({ client });
+
+    await execute({
+      agentExecutionId: "execution-1",
+      toolType: "slack.react",
+      args: { name: "white_check_mark", ts: "1700000000.000001" },
+      outputContext: {
+        ...slackContext(),
+        threadTs: "1700000000.000001",
+        messageTs: "1700000000.000010",
+      },
+    });
+
+    assert.equal(client.reactions[0]?.messageTs, "1700000000.000001");
+    assert.equal(client.removed[0]?.messageTs, "1700000000.000001");
+    assert.equal(client.removed[0]?.name, "eyes");
+  });
+
+  it("refuses a reaction on a message that is neither the mention nor the thread root", async () => {
+    const client = new RecordingSlackClient();
+    const execute = createSlackReactExecutor({ client });
+
+    await assert.rejects(
+      () =>
+        execute({
+          agentExecutionId: "execution-1",
+          toolType: "slack.react",
+          args: { name: "eyes", ts: "1700000000.000099" },
+          outputContext: {
+            ...slackContext(),
+            threadTs: "1700000000.000001",
+            messageTs: "1700000000.000010",
+          },
+        }),
+      /thread root/u,
+    );
+    assert.deepEqual(client.reactions, []);
+  });
+
   it("rejects an emoji name Slack would not accept", async () => {
     const client = new RecordingSlackClient();
     const execute = createSlackReactExecutor({ client });
