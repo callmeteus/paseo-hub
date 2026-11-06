@@ -8,7 +8,7 @@ import {
   type Page,
   type Request,
 } from "@playwright/test";
-import AxeBuilder from "@axe-core/playwright";
+import { AxeBuilder } from "@axe-core/playwright";
 import { Client as McpClient } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { WebSocket, type RawData } from "ws";
@@ -122,13 +122,8 @@ const ORGANIZATION_DESTINATIONS = [
   "Settings",
 ] as const;
 /** Instance surfaces sit outside `/o/`, so the path is what says the sidebar is in instance scope. */
-const INSTANCE_ROUTES: readonly string[] = ["/apps", "/operator"];
-const ORGANIZATION_SETTINGS_SECTIONS: readonly OrganizationSettingsSection[] = [
-  "Team",
-  "API keys",
-  "Usage",
-  "Billing",
-];
+const INSTANCE_ROUTES = new Set<string>(["/apps", "/operator"]);
+const ORGANIZATION_SETTINGS_SECTIONS = new Set<string>(["Team", "API keys", "Usage", "Billing"]);
 
 interface TeamExpectation {
   membersPresent: string[];
@@ -504,7 +499,12 @@ export class PaseoHub {
             password: "blocked-signup-password",
           }),
         });
-        return { status: result.status, body: await result.json() };
+        return {
+          status: result.status,
+          // Response.json() is typed as any by the DOM lib. The expect below checks the body.
+          // eslint-disable-next-line typescript-eslint/no-unsafe-assignment -- DOM Response.json()
+          body: await result.json(),
+        };
       }, application.origin);
       expect(response).toEqual({ status: 403, body: { error: "registration_closed" } });
     } finally {
@@ -537,7 +537,12 @@ export class PaseoHub {
           headers: { "content-type": "application/json", origin },
           body: JSON.stringify({ name: "Blocked Organization" }),
         });
-        return { status: result.status, body: await result.json() };
+        return {
+          status: result.status,
+          // Response.json() is typed as any by the DOM lib. The expect below checks the body.
+          // eslint-disable-next-line typescript-eslint/no-unsafe-assignment -- DOM Response.json()
+          body: await result.json(),
+        };
       }, application.origin);
       expect(response).toEqual({ status: 403, body: { error: "organization_creation_disabled" } });
     } finally {
@@ -712,7 +717,9 @@ export class PaseoHub {
       ),
     );
     expect(reasons).toHaveLength(1);
-    expect(reasons[0]!.dropped_reason).toBe("trigger_filters_rejected");
+    expect(defined(reasons[0], "missing dropped reason").dropped_reason).toBe(
+      "trigger_filters_rejected",
+    );
     expect(JSON.stringify(reasons)).not.toMatch(/PRIVATE-|TOKEN|SIGNATURE/u);
   }
 
@@ -923,7 +930,9 @@ export class PaseoHub {
 
     // Re-tagging in Stripe brings the plan back: the mirror is a reconciled snapshot, not a
     // one-way delete.
-    await application.setBillingProduct(FIXTURE_BILLING_PRODUCTS[1]!);
+    await application.setBillingProduct(
+      defined(FIXTURE_BILLING_PRODUCTS[1], "missing hosted plan"),
+    );
     await this.deliverBillingWebhook(application, "product.updated", "prod_fixture_hosted");
     await this.expectPublicBillingPlans(application, FIXTURE_BILLING_PLAN_EXPECTATIONS);
     return application.origin;
@@ -944,7 +953,7 @@ export class PaseoHub {
    * plan onto it — the whole migration mechanism for a plan change.
    */
   async raiseFreeExecutionAllowance(limit: number): Promise<void> {
-    const free = FIXTURE_BILLING_PRODUCTS[0]!;
+    const free = defined(FIXTURE_BILLING_PRODUCTS[0], "missing free plan");
     await this.primary.setBillingProduct({
       ...free,
       metadata: { ...free.metadata, ent_executions_monthly_limit: String(limit) },
@@ -1990,12 +1999,13 @@ export class PaseoHub {
         ),
       );
     expect(identity).toBeDefined();
+    const owner = defined(identity, "missing trigger owner");
     await this.queryDatabase(
       this.primary,
       `insert into organization_triggers
          (id, organization_id, name, enabled, format, runtime_project_id)
        values ($1, $2, $3, true, 'legacy_multistep', null)`,
-      [triggerId, identity!.organization_id, name],
+      [triggerId, owner.organization_id, name],
     );
     await this.queryDatabase(
       this.primary,
@@ -2008,10 +2018,10 @@ export class PaseoHub {
       [
         revisionId,
         triggerId,
-        identity!.organization_id,
+        owner.organization_id,
         yaml,
         `browser-${randomUUID()}`,
-        identity!.user_id,
+        owner.user_id,
       ],
     );
     await this.queryDatabase(
@@ -2385,7 +2395,11 @@ export class PaseoHub {
 
     expect((await post("/api/auth/organization/create", {})).status()).toBe(404);
 
-    const originFailures = [
+    const originFailures: {
+      name: string;
+      headers: Record<string, string>;
+      error: { message: string; code: string };
+    }[] = [
       {
         name: "hostile origin",
         headers: { origin: HOSTILE_ORIGIN },
@@ -2443,7 +2457,11 @@ export class PaseoHub {
       origin: HOSTILE_ORIGIN,
     });
 
-    for (const contract of [
+    const cookieOriginFailures: {
+      name: string;
+      headers: Record<string, string>;
+      body: string;
+    }[] = [
       {
         name: "Better Auth rejects a hostile cookie origin",
         headers: { "content-type": "application/json", origin: HOSTILE_ORIGIN },
@@ -2459,7 +2477,8 @@ export class PaseoHub {
         headers: { "content-type": "application/json", origin: "null" },
         body: '{"message":"Missing or null Origin","code":"MISSING_OR_NULL_ORIGIN"}',
       },
-    ]) {
+    ];
+    for (const contract of cookieOriginFailures) {
       await this.verifyExactContract(application, {
         name: contract.name,
         request: {
@@ -2576,7 +2595,7 @@ export class PaseoHub {
         ),
       (rows) => rows.length === 1,
     );
-    return { executionId: execution[0]!.id };
+    return { executionId: defined(execution[0], "missing execution").id };
   }
 
   private async completeExecution(
@@ -2592,8 +2611,9 @@ export class PaseoHub {
     try {
       // The SDK's getter is typed `string | undefined` while its Transport interface uses an
       // exact-optional `sessionId?: string`; the runtime class is the SDK's official transport.
-      // @ts-expect-error upstream SDK exactOptionalPropertyTypes mismatch
-      await client.connect(transport);
+      // The assertion is redundant when exactOptionalPropertyTypes is off.
+      // eslint-disable-next-line typescript-eslint/no-unnecessary-type-assertion -- e2e project keeps the flag on
+      await client.connect(transport as Parameters<McpClient["connect"]>[0]);
       const result = await client.callTool({ name: "finish_execution", arguments: {} });
       expect(result.isError).toBeUndefined();
       expect(result.content).toEqual([{ type: "text", text: "Execution finished" }]);
@@ -4101,11 +4121,16 @@ class HubUser {
     await expect(this.page.getByRole("heading", { name: "Team", exact: true })).toBeVisible();
   }
 
-  /** Tabs from the organization switcher through the sidebar's destinations, asserting order. */
+  /**
+   * Tabs from the organization switcher through the sidebar's destinations, asserting order.
+   * The locator stays inside that nav: the breadcrumb repeats an ancestor, such as Settings,
+   * as its own link, and a page-wide query would match both.
+   */
   private async tabThroughOrganizationDestinations(): Promise<void> {
+    const navigation = this.page.getByRole("navigation", { name: "Organization", exact: true });
     for (const destination of ORGANIZATION_DESTINATIONS) {
       await this.page.keyboard.press("Tab");
-      await expect(this.page.getByRole("link", { name: destination, exact: true })).toBeFocused();
+      await expect(navigation.getByRole("link", { name: destination, exact: true })).toBeFocused();
     }
   }
 
@@ -5257,20 +5282,18 @@ class HubUser {
   private async openOrganizationSection(
     name: OrganizationSection | OrganizationSettingsSection,
   ): Promise<void> {
-    const settings = ORGANIZATION_SETTINGS_SECTIONS.includes(name as OrganizationSettingsSection);
+    const settings = isOrganizationSettingsSection(name);
     await this.returnToOrganizationScope();
     const mobile = await this.page
       .getByRole("button", { name: "Toggle Sidebar" })
       .isVisible()
       .catch(() => false);
     if (settings) {
-      const section = name as OrganizationSettingsSection;
-      if (mobile) await this.navigation.openMobileOrganizationSettings(section);
-      else await this.navigation.openOrganizationSettings(section);
+      if (mobile) await this.navigation.openMobileOrganizationSettings(name);
+      else await this.navigation.openOrganizationSettings(name);
     } else {
-      const section = name as OrganizationSection;
-      if (mobile) await this.navigation.openMobileOrganizationSection(section);
-      else await this.navigation.openOrganizationSection(section);
+      if (mobile) await this.navigation.openMobileOrganizationSection(name);
+      else await this.navigation.openOrganizationSection(name);
     }
     await expect(this.page.getByRole("heading", { name, exact: true, level: 1 })).toBeVisible();
   }
@@ -5282,7 +5305,7 @@ class HubUser {
    */
   private async returnToOrganizationScope(): Promise<void> {
     const pathname = new URL(this.page.url()).pathname;
-    const instance = INSTANCE_ROUTES.includes(pathname);
+    const instance = INSTANCE_ROUTES.has(pathname);
     if (!instance && !/\/projects\/[^/]+\//u.test(pathname)) return;
     const mobileSidebar = this.page.getByRole("button", { name: "Toggle Sidebar" });
     if (await mobileSidebar.isVisible().catch(() => false)) await mobileSidebar.click();
@@ -5406,7 +5429,12 @@ async function expectAccessible(page: Page): Promise<void> {
 }
 
 function roleLabel(role: "owner" | "admin" | "member"): string {
-  return role[0]!.toUpperCase() + role.slice(1);
+  return defined(role[0], "empty role").toUpperCase() + role.slice(1);
+}
+
+function defined<T>(value: T | undefined, label: string): T {
+  if (value === undefined) throw new Error(label);
+  return value;
 }
 
 class ContractDaemon {
@@ -5769,7 +5797,10 @@ const browserProviderSnapshot = [
   },
 ] as const;
 
-type ExecutionCapability = { url: string; headers: Record<string, string> };
+interface ExecutionCapability {
+  url: string;
+  headers: Record<string, string>;
+}
 
 interface HttpContract {
   name: string;
@@ -6305,8 +6336,16 @@ function readSocketData(data: RawData): string {
   return Buffer.from(data).toString();
 }
 
+const ANSI_COLOR = new RegExp(`${String.fromCharCode(0x1b)}\\[[0-9;]*m`, "gu");
+
 function plainLogs(value: string): string {
-  return value.replace(/\u001B\[[0-9;]*m/gu, "");
+  return value.replace(ANSI_COLOR, "");
+}
+
+function isOrganizationSettingsSection(
+  name: OrganizationSection | OrganizationSettingsSection,
+): name is OrganizationSettingsSection {
+  return ORGANIZATION_SETTINGS_SECTIONS.has(name);
 }
 
 async function retryUntil<T>(read: () => Promise<T>, done: (value: T) => boolean): Promise<T> {
