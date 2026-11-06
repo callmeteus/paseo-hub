@@ -109,7 +109,36 @@ describe("composeLaunchPrompt", () => {
   });
 });
 
+const LIVE_CATALOG_LINES = [
+  "ajuste-de-saldo.md — Use este arquivo só quando o pedido, em #tecnologia-triagem, for um ajuste de saldo, ou quando a pessoa estiver confirmando um plano de ajuste que você já publicou nessa thread. Em #tecnologia-operações-luckyops, não faça ajuste de saldo.",
+  "alteracao-de-infra.md — Use este arquivo quando o pedido for uma alteração de infraestrutura, ou quando a pessoa estiver confirmando um plano de infraestrutura que você já publicou nessa thread. Vale em #tecnologia-operações-luckyops e em #tecnologia-triagem. Ajuste de saldo não é este arquivo.",
+  "rastro-de-banco.md — Leia este arquivo antes de qualquer gravação no banco. Sem este rastro, a gravação não acontece.",
+];
+
 describe("instruction catalogs", () => {
+  it("keeps the current regras sentences whole", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "hub-instruction-catalog-"));
+    try {
+      for (const line of LIVE_CATALOG_LINES) {
+        const [name, sentence] = line.split(" — ");
+        await writeFile(
+          path.join(directory, name ?? ""),
+          `${sentence}\nO corpo fica de fora.\n`,
+          "utf8",
+        );
+      }
+      const prompt = await composeLaunchPrompt({
+        blocks: [{ kind: "load", root: directory }],
+        cwd: "/workspace",
+        context,
+      });
+      for (const line of LIVE_CATALOG_LINES) assert.equal(prompt.prompt.includes(line), true);
+      assert.equal(prompt.prompt.includes("O corpo fica de fora."), false);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("injects the English index in place of load and keeps the file body out", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "hub-instruction-catalog-"));
     try {
@@ -120,7 +149,7 @@ describe("instruction catalogs", () => {
       );
       await writeFile(
         path.join(directory, "alteracao-de-infra.md"),
-        `${"a".repeat(250)}\nThe rest of the infra rule.\n`,
+        `${"a".repeat(450)}\nThe rest of the infra rule.\n`,
         "utf8",
       );
       await writeFile(path.join(directory, "notes.txt"), "not a catalog file", "utf8");
@@ -140,7 +169,7 @@ describe("instruction catalogs", () => {
           LOAD_INSTRUCTION_PROSE,
           "",
           "- ajuste-de-saldo.md — ajuste de saldo ${{ paseo.prompt }}",
-          `- alteracao-de-infra.md — ${"a".repeat(200)}`,
+          `- alteracao-de-infra.md — ${"a".repeat(400)}`,
           "Keep hello out of the catalog line.",
         ].join("\n"),
       );

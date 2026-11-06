@@ -33,7 +33,9 @@ export type PromptInstructionReader = (request: PromptInstructionRequest) => Pro
 export const LOAD_INSTRUCTION_PROSE =
   "Instruction files for this run. When one line describes the case, call load_instruction with that path and follow the file. When none match, do not call it.";
 
-const INSTRUCTION_WHEN_LIMIT = 200;
+// The catalog line is the file's first sentence. 400 keeps a channel exception at the end of
+// the lines that already live in regras/.
+const INSTRUCTION_WHEN_LIMIT = 400;
 
 export interface ComposedLaunchPrompt {
   prompt: string;
