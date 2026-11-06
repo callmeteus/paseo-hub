@@ -137,7 +137,7 @@ export function createSlackRegistration(
   });
   if (database === null) {
     return {
-      connection: slackConnectionStatus(true),
+      connection: slackConnectionStatus(true, configuration.transport),
       triggerProviders: [],
       sources: [events],
       outputs: [],
@@ -156,7 +156,7 @@ export function createSlackRegistration(
   bindSlackAgentClient(bot);
   const connection =
     options.auth === null
-      ? slackConnectionStatus(true)
+      ? slackConnectionStatus(true, configuration.transport)
       : createSlackConnection(
           {
             database,
@@ -275,10 +275,13 @@ function emptySlackRegistration(
   };
 }
 
-function slackConnectionStatus(configured: boolean): ProviderConnectionRegistration {
+function slackConnectionStatus(
+  configured: boolean,
+  transport?: "socket" | "webhook",
+): ProviderConnectionRegistration {
   return {
     name: "slack",
-    status: (connections) => slackStatus(configured, connections.slack),
+    status: (connections) => slackStatus(configured, transport, connections.slack),
     actions: {},
   };
 }
@@ -394,7 +397,8 @@ function createSlackConnection(
 
   return {
     name: "slack",
-    status: (connections) => slackStatus(configured, connections.slack),
+    status: (connections) =>
+      slackStatus(configured, options.configuration.transport, connections.slack),
     actions: {
       start,
       disconnect,
@@ -509,10 +513,14 @@ function slackBinding(
   };
 }
 
-function slackStatus(configured: boolean, bindings: readonly SlackConnectionRecord[]) {
-  if (!configured) return { status: "notConfigured" as const };
-  if (bindings.length === 0) return { status: "disconnected" as const };
+function slackStatus(
+  configured: boolean,
+  transport: "socket" | "webhook" | undefined,
+  bindings: readonly SlackConnectionRecord[],
+) {
+  if (!configured || transport === undefined) return { status: "notConfigured" as const };
+  if (bindings.length === 0) return { status: "disconnected" as const, transport };
   return bindings.some((binding) => !hasRequiredSlackScopes(binding.scopes))
-    ? { status: "requiresReauthorization" as const }
-    : { status: "connected" as const };
+    ? { status: "requiresReauthorization" as const, transport }
+    : { status: "connected" as const, transport };
 }

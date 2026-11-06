@@ -344,6 +344,7 @@ describe("Slack registration", () => {
     assert.ok(stored);
     assert.deepEqual(registration.connection.status(bindings(stored)), {
       status: "requiresReauthorization",
+      transport: "socket",
     });
 
     const response = await registration.connection.actions["reauthorize"]!(
@@ -357,7 +358,10 @@ describe("Slack registration", () => {
     const saved = (await database.organizationConnectionUsage("org")).slack[0];
     if (saved === undefined) throw new Error("missing slack connection");
     assert.equal(saved.teamName, "Even Tecnologia");
-    assert.deepEqual(registration.connection.status(bindings(saved)), { status: "connected" });
+    assert.deepEqual(registration.connection.status(bindings(saved)), {
+      status: "connected",
+      transport: "socket",
+    });
   });
 
   it("surfaces legacy Slack installations that need the expanded grant", () => {
@@ -387,7 +391,7 @@ describe("Slack registration", () => {
         ],
         linear: [],
       }),
-      { status: "requiresReauthorization" },
+      { status: "requiresReauthorization", transport: "webhook" },
     );
   });
 

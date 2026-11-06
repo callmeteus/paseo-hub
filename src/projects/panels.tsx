@@ -160,10 +160,7 @@ export function OrganizationConnectionsPanel() {
     });
   };
   const connectionActionLabel = (provider: ConnectionProviderName) => {
-    if (
-      (provider === "slack" || provider === "linear") &&
-      status.data[provider].status === "requiresReauthorization"
-    ) {
+    if (provider === "linear" && status.data.linear.status === "requiresReauthorization") {
       return "Reauthorize";
     }
     if (
@@ -182,19 +179,7 @@ export function OrganizationConnectionsPanel() {
     // instance operator can change that. Everyone else is told nothing about instance
     // credentials: a state they cannot act on is not news, and a card with only a name on it is
     // the page talking about work they cannot do.
-    const slackReauthorization = rows.find(
-      (connection) =>
-        connection.provider === "slack" && connection.status === "requiresReauthorization",
-    );
-    if (provider === "slack" && slackReauthorization !== undefined) {
-      return (
-        <SlackReauthorizeActions
-          busy={busy}
-          canReplaceCredentials={isInstanceOperator}
-          onReauthorize={() => reauthorizeWorkspace(slackReauthorization.id)}
-        />
-      );
-    }
+    if (provider === "slack") return slackAction();
     if (status.data[provider].status === "notConfigured") {
       if (!isInstanceOperator) return undefined;
       return (
@@ -207,6 +192,38 @@ export function OrganizationConnectionsPanel() {
       <Button disabled={busy} variant="outline" size="sm" onClick={() => connectProvider(provider)}>
         {connectionActionLabel(provider)} {providerLabel(provider)}
       </Button>
+    );
+  };
+  const slackAction = (): ReactNode => {
+    const slack = status.data.slack;
+    if (slack.status === "notConfigured") {
+      if (!isInstanceOperator) return undefined;
+      return (
+        <Button variant="outline" size="sm" asChild>
+          <Link to={"/apps" as never}>Set up the Slack app</Link>
+        </Button>
+      );
+    }
+    const reauthorization = rows.find(
+      (connection) =>
+        connection.provider === "slack" && connection.status === "requiresReauthorization",
+    );
+    const hasWorkspace = rows.some((connection) => connection.provider === "slack");
+    const connectLabel = slackConnectLabel(slack, hasWorkspace, reauthorization !== undefined);
+    if (!isInstanceOperator && reauthorization === undefined && connectLabel === undefined) {
+      return undefined;
+    }
+    return (
+      <SlackConnectionActions
+        busy={busy}
+        replaceCredentials={isInstanceOperator}
+        {...(reauthorization === undefined
+          ? {}
+          : { onReauthorize: () => reauthorizeWorkspace(reauthorization.id) })}
+        {...(connectLabel === undefined
+          ? {}
+          : { onConnect: () => connectProvider("slack"), connectLabel })}
+      />
     );
   };
   // A provider block that can neither be acted on nor list anything says only its own name.
@@ -269,30 +286,57 @@ export function OrganizationConnectionsPanel() {
 }
 
 /**
- * Reauthorize reads the bot token Hub already stored. Replace credentials opens the Slack app
- * form, which is where that token is changed.
+ * Socket Mode stores the bot token on the app, so there is no OAuth connect. A workspace that
+ * is already connected is changed by replacing that token. Webhook mode can install another
+ * workspace, under a label that does not say the existing one is disconnected.
  */
-function SlackReauthorizeActions({
+function slackConnectLabel(
+  slack: ConnectionStatus["slack"],
+  hasWorkspace: boolean,
+  needsReauthorization: boolean,
+): string | undefined {
+  if (slack.status === "notConfigured" || slack.transport === "socket") return undefined;
+  if (!hasWorkspace) return "Connect Slack";
+  if (slack.transport === "webhook" && !needsReauthorization) return "Add another workspace";
+  return undefined;
+}
+
+/**
+ * Replace credentials opens the Slack app form, which is where the saved bot token is changed.
+ * Reauthorize reads that token. Connect starts a webhook install.
+ */
+function SlackConnectionActions({
   busy,
-  canReplaceCredentials,
+  replaceCredentials,
   onReauthorize,
+  onConnect,
+  connectLabel,
 }: {
   busy: boolean;
-  canReplaceCredentials: boolean;
-  onReauthorize: () => void;
+  replaceCredentials: boolean;
+  onReauthorize?: () => void;
+  onConnect?: () => void;
+  connectLabel?: string;
 }) {
   return (
     <div className="flex flex-wrap items-center justify-end gap-2">
-      {canReplaceCredentials ? (
+      {replaceCredentials ? (
         <Button variant="outline" size="sm" asChild>
           <Link to={"/apps" as never} search={{ provider: "slack", edit: "credentials" } as never}>
             Replace credentials
           </Link>
         </Button>
       ) : null}
-      <Button disabled={busy} size="sm" onClick={onReauthorize}>
-        Reauthorize
-      </Button>
+      {onConnect === undefined ? null : (
+        <Button disabled={busy} variant="outline" size="sm" onClick={onConnect}>
+          {connectLabel}
+        </Button>
+      )}
+      {onReauthorize === undefined ? null : (
+        <Button disabled={busy} size="sm" onClick={onReauthorize}>
+          Reauthorize
+        </Button>
+      )}
     </div>
   );
 }

@@ -26,12 +26,17 @@ const discordStatusSchema = z.discriminatedUnion("status", [
     status: z.literal("connected"),
   }),
 ]);
+const slackTransportSchema = z.enum(["socket", "webhook"]);
 const slackStatusSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("notConfigured") }),
-  z.object({ status: z.literal("disconnected") }),
-  z.object({ status: z.literal("requiresReauthorization") }),
+  z.object({ status: z.literal("disconnected"), transport: slackTransportSchema.optional() }),
+  z.object({
+    status: z.literal("requiresReauthorization"),
+    transport: slackTransportSchema.optional(),
+  }),
   z.object({
     status: z.literal("connected"),
+    transport: slackTransportSchema.optional(),
   }),
 ]);
 const linearStatusSchema = z.discriminatedUnion("status", [
