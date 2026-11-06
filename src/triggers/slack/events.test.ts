@@ -74,6 +74,36 @@ describe("normalizeSlackEvent", () => {
     assert.equal(describeDroppedSlackEvent({ ...base, text: "hello" }), undefined);
   });
 
+  it("keeps a channel file share as the post", () => {
+    const raw = {
+      type: "message",
+      user: "U1",
+      channel: "C0BA6DKUQJJ",
+      text: "Bug não permite adicionar uma imagem",
+      subtype: "file_share",
+      ts: "1700000000.000009",
+      event_ts: "1700000000.000009",
+      channel_type: "channel",
+      files: [{ id: "F1", name: "image.png", mimetype: "image/png", size: 12 }],
+    };
+    const event = normalizeSlackEvent({ ...envelope, event: raw });
+
+    assert.equal(event?.type, "message");
+    assert.equal(event?.content, "Bug não permite adicionar uma imagem");
+    assert.equal(event?.threadTs, null);
+    assert.deepEqual(event?.attachments, [
+      { id: "F1", filename: "image.png", contentType: "image/png", size: 12 },
+    ]);
+    assert.equal(describeDroppedSlackEvent(raw), undefined);
+    assert.equal(
+      normalizeSlackEvent({
+        ...envelope,
+        event: { ...raw, thread_ts: "1700000000.000001" },
+      }),
+      undefined,
+    );
+  });
+
   it("keeps a channel message posted by another Slack app", () => {
     const raw = {
       type: "message",

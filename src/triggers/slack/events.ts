@@ -180,6 +180,17 @@ export function describeDroppedSlackEvent(event: unknown): DroppedSlackEvent | u
 }
 
 /**
+ * A channel post Slack tags with a subtype that is still the post.
+ * `file_share` is a person sending files. Every other subtype is an edit, a join, or a tombstone.
+ *
+ * @param subtype - Slack message subtype, when the event has one
+ * @returns Whether intake should refuse the event for its subtype
+ */
+function isDroppedMessageSubtype(subtype: unknown): boolean {
+  return typeof subtype === "string" && subtype !== "bot_message" && subtype !== "file_share";
+}
+
+/**
  * Another Slack app posted in the channel under its own bot user.
  * A webhook with no user stays dropped. The Hub's own user is filtered later.
  *
@@ -210,7 +221,7 @@ function slackEventDropReason(
     return "missing_user";
   }
 
-  if (event["subtype"] !== undefined && event["subtype"] !== "bot_message") {
+  if (isDroppedMessageSubtype(event["subtype"])) {
     return "subtype";
   }
 
@@ -356,9 +367,9 @@ export function normalizeSlackEvent(
   const message = SlackChannelMessageSchema.safeParse(envelope.event);
   if (!message.success) return undefined;
   if (message.data.user === undefined) return undefined;
-  // Joins and edits stay out. A card from another app arrives as bot_message and has a user.
-  if (message.data.subtype !== undefined && message.data.subtype !== "bot_message")
-    return undefined;
+  // Joins and edits stay out. A file_share is the post itself: Slack marks a message that
+  // carries files with that subtype. A card from another app arrives as bot_message and has a user.
+  if (isDroppedMessageSubtype(message.data.subtype)) return undefined;
   const assistantThread = isRecord(envelope.event)
     ? readAssistantMessageThread(envelope.event)
     : undefined;
