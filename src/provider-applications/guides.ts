@@ -742,6 +742,7 @@ settings:
 ${requestUrl}    bot_events:
       - app_mention
       - assistant_thread_started
+      - agent_session_stopped
       - message.channels
       - message.groups
       - message.im

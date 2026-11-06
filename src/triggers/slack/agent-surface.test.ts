@@ -9,6 +9,7 @@ import {
   noteSlackAgentSessionStopped,
   resetSlackAgentSurfaceForTests,
   setSlackAgentClockForTests,
+  setSlackAgentSessionStopHandler,
   SlackAgentSurfaceError,
   slackAgentOutputAvailable,
   type SlackAgentRunTarget,
@@ -21,6 +22,21 @@ const MINUTE = 60 * 1000;
 describe("Slack agent surface", () => {
   beforeEach(() => {
     resetSlackAgentSurfaceForTests();
+  });
+
+  it("asks the app to cancel the run when the person stops, even with no open stream", async () => {
+    const stopped: Array<{ threadTs: string; executionIds: readonly string[] }> = [];
+    setSlackAgentSessionStopHandler(async (stop) => {
+      stopped.push({ threadTs: stop.threadTs, executionIds: stop.executionIds });
+    });
+    await noteSlackAgentSessionStopped({ teamId: "T1", channelId: "C1", threadTs: "9.9" });
+    assert.deepEqual(stopped, [{ threadTs: "9.9", executionIds: [] }]);
+
+    const client = surfaceClient().client;
+    bindSlackAgentClient(client);
+    await runTool(client, "slack.agent.say", { text: "Working." });
+    await noteSlackAgentSessionStopped({ teamId: "T1", channelId: "C1", threadTs: "1.1" });
+    assert.deepEqual(stopped[1], { threadTs: "1.1", executionIds: ["exec-1"] });
   });
 
   it("hides the tools until the launch carries a Slack agent block", () => {

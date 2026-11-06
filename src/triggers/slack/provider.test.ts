@@ -543,6 +543,19 @@ describe("Slack Phase 1 trigger provider", () => {
         content: "Paseo agent failed: boom",
       },
     ]);
+
+    const stopped = new RecordingSlackClient();
+    const stoppedProvider = createSlackTriggerProvider({
+      configurationStoreForProject: () => store,
+      botUserIdForWorkspace: () => Promise.resolve("UBOT"),
+      client: stopped,
+    });
+    await stoppedProvider.onAgentExecutionFailed?.(
+      match.triggerContext,
+      match.outputContext,
+      "stopped_by_user",
+    );
+    assert.deepEqual(stopped.messages, []);
   });
 
   it("propagates a Slack failure notice without adding a reaction", async () => {

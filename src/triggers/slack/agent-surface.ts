@@ -178,6 +178,28 @@ const stoppedThreads = new Set<string>();
 let boundClient: SlackBotClient | undefined;
 let clock: () => number = () => Date.now();
 
+export interface SlackAgentSessionStop {
+  teamId: string;
+  channelId: string;
+  threadTs: string;
+  executionIds: readonly string[];
+}
+
+let sessionStopHandler: ((stop: SlackAgentSessionStop) => Promise<void>) | undefined;
+
+/**
+ * Registers who cancels the Hub run when a person stops the Slack session.
+ *
+ * The surface only knows the thread. The app handler finds the execution and interrupts it.
+ *
+ * @param handler - Called after the stream is closed, including when no stream was open
+ */
+export function setSlackAgentSessionStopHandler(
+  handler: ((stop: SlackAgentSessionStop) => Promise<void>) | undefined,
+): void {
+  sessionStopHandler = handler;
+}
+
 /**
  * Remembers the bot the intake path uses when Slack says the person stopped the session.
  *
@@ -193,6 +215,7 @@ export function resetSlackAgentSurfaceForTests(): void {
   streams.clear();
   stoppedThreads.clear();
   boundClient = undefined;
+  sessionStopHandler = undefined;
   clock = () => Date.now();
 }
 
@@ -356,11 +379,12 @@ async function closeOpenStreams(
 }
 
 /**
- * Slack told us the person stopped the session. The Hub execution is not cancelled.
+ * Slack told us the person stopped the session.
  *
- * Later surface tools on this thread tell the model the person stopped. A stream Slack has
- * already closed answers `stopped_by_user` or `message_not_in_streaming_state`, and that is
- * the normal end.
+ * The stream closes and the session leaves `processing`. The registered handler then
+ * cancels the Hub run. Later surface tools on this thread tell the model the person stopped.
+ * A stream Slack has already closed answers `stopped_by_user` or `message_not_in_streaming_state`,
+ * and that is the normal end.
  *
  * @param input - Channel and thread from `agent_session_stopped`
  */
@@ -371,6 +395,17 @@ export async function noteSlackAgentSessionStopped(input: {
 }): Promise<void> {
   const key = threadKey(input);
   stoppedThreads.add(key);
+  const executionIds = [...streams.values()]
+    .filter((stream) => stream.threadKey === key)
+    .map((stream) => stream.executionId);
+  try {
+    await closeStoppedSlackSession(key);
+  } finally {
+    await notifySlackAgentSessionStopped({ ...input, executionIds });
+  }
+}
+
+async function closeStoppedSlackSession(key: string): Promise<void> {
   const book = threads.get(key);
   const client = boundClient;
   if (book === undefined || client === undefined) return;
@@ -420,6 +455,20 @@ export async function noteSlackAgentSessionStopped(input: {
     forgetStreams(target);
   } catch (error) {
     reportSlackFailure(error, "slack.agent.session.stop", target);
+  }
+}
+
+async function notifySlackAgentSessionStopped(stop: SlackAgentSessionStop): Promise<void> {
+  const handler = sessionStopHandler;
+  if (handler === undefined) return;
+  try {
+    await handler(stop);
+  } catch (error) {
+    reportFailure(
+      error,
+      { operation: "slack.agent.session.stop", component: "triggers", provider: "slack" },
+      { diagnostic: { teamId: stop.teamId, channelId: stop.channelId } },
+    );
   }
 }
 

@@ -37,6 +37,8 @@ import type {
 } from "./daemons/lifecycle.js";
 import type { TriggerProviderFactory, TriggerProviderResources } from "./providers/registration.js";
 import type { TriggerProvider, TriggerSource } from "./triggers/index.js";
+import { setSlackAgentSessionStopHandler } from "./triggers/slack/agent-surface.js";
+import { slackExecutionTargetsSession } from "./triggers/slack/session-target.js";
 import {
   createManualTriggerSource,
   dispatchManualTrigger,
@@ -170,6 +172,7 @@ export function createHubApplication(options: HubRuntimeOptions): HubApplication
   ].filter((provider): provider is TriggerProvider => provider !== undefined);
   const outputRegistry = options.outputRegistry ?? new OutputExecutorRegistry();
   const daemonModule = createAppDaemonModule(options, daemons, providers, outputRegistry);
+  registerSlackSessionStop(daemonModule, options.database);
   const capabilityServer = createAppExecutionCapabilityServer(
     options,
     daemonModule,
@@ -478,6 +481,25 @@ function createAttachmentRegistry(
 
 function databaseUnavailable(): Promise<Response> {
   return Promise.resolve(Response.json({ error: "database_unavailable" }, { status: 503 }));
+}
+
+function registerSlackSessionStop(
+  daemonModule: DaemonModule | null,
+  database: Database | null,
+): void {
+  if (daemonModule === null || database === null) return;
+  setSlackAgentSessionStopHandler(async (stop) => {
+    const pending = await database.findPendingAgentExecutions();
+    const ids = [
+      ...new Set([
+        ...stop.executionIds,
+        ...pending
+          .filter((execution) => slackExecutionTargetsSession(execution, stop))
+          .map((execution) => execution.id),
+      ]),
+    ];
+    await daemonModule.lifecycle.interruptAgentExecutions(ids);
+  });
 }
 
 function connectDaemonLifecycle(

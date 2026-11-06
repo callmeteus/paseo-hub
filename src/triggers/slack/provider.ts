@@ -397,6 +397,7 @@ export function createSlackTriggerProvider(options: {
     },
     async onAgentExecutionFailed(context, outputContext, reason) {
       await finishSlackAgentLifecycle(options.client, context, outputContext, "failure");
+      if (reason === "stopped_by_user") return null;
       await failWithNotice(
         options.client,
         context.target,

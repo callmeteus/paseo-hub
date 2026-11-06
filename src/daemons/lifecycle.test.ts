@@ -392,6 +392,67 @@ describe("durable Hub action acknowledgement state", () => {
     assert.notEqual(execution?.hubActionCompletedAt, null);
     await fixture.lifecycle.stop();
   });
+
+  it("interrupts a live execution when Slack stops the session", async () => {
+    const database = createMemoryDatabase();
+    const executionId = "00000000-0000-4000-8000-0000000000f2";
+    const reasons: string[] = [];
+    const provider: TriggerProvider = {
+      name: "slack",
+      eventNames: ["slack.mention"],
+      match: () => Promise.resolve([]),
+      onAgentExecutionFailed: async (_triggerContext, _outputContext, reason) => {
+        reasons.push(reason);
+      },
+    };
+    await database.insertAgentExecution({
+      id: executionId,
+      organizationId: "org-stop",
+      projectId: "project-stop",
+      machineId: null,
+      daemonId: DAEMON_ID,
+      triggerContext: { provider: "slack" },
+      outputContext: { provider: "slack" },
+      configurationRevisionId: "revision-stop",
+    });
+    await database.saveAgentSession({
+      id: "session-stop",
+      organizationId: "org-stop",
+      projectId: "project-stop",
+      continuationKey: null,
+      daemonId: DAEMON_ID,
+      agentId: AGENT_ID,
+      workspaceId: "workspace",
+      compatibility: "test",
+      capabilityTokenHash: "test",
+      tools: [],
+      creationOptions: {
+        provider: "codex",
+        cwd: "/workspace",
+        env: {},
+        toolPolicy: { preapproved: [] },
+      },
+    });
+    await database.attachExecutionToSession(executionId, "session-stop");
+    await database.attachAgentToExecution(executionId, DAEMON_ID, AGENT_ID);
+    const connection = new AcknowledgementConnection();
+    const lifecycle = createDaemonDispatchLifecycle({
+      database,
+      publicBaseUrl: "http://hub.test",
+      completionTokenSecret: "test-secret",
+      providers: [provider],
+      connectionForDaemon: (daemonId) => (daemonId === DAEMON_ID ? connection : undefined),
+    });
+
+    await lifecycle.interruptAgentExecutions([executionId, "missing"]);
+
+    const execution = await database.findAgentExecutionById(executionId);
+    assert.equal(execution?.status, "failed");
+    assert.deepEqual(execution?.result, { status: "failed", reason: "stopped_by_user" });
+    assert.deepEqual(connection.actions, ["interrupt"]);
+    assert.deepEqual(reasons, ["stopped_by_user"]);
+    await lifecycle.stop();
+  });
 });
 
 async function acknowledgementFixture() {

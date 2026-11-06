@@ -318,7 +318,7 @@ const SlackAgentSessionStoppedSchema = z
 /**
  * The thread a person stopped, when this callback is `agent_session_stopped`.
  *
- * The event does not open an automation. The intake closes the Hub's stream for that thread.
+ * The event does not open an automation. The intake stops the run for that thread.
  *
  * @param envelope - Events API callback
  * @returns The channel and thread, or undefined when this is some other event

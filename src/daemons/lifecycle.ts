@@ -173,6 +173,23 @@ export class DaemonDispatchLifecycle {
     return this.executionSubscriptions.size;
   }
 
+  /**
+   * Stops runs a person cancelled from Slack.
+   *
+   * The execution fails as `stopped_by_user`. The daemon still receives the interrupt,
+   * so the turn ends. The Slack provider clears the working indicator and does not
+   * post the failure sentence.
+   *
+   * @param executionIds - Runs whose stream or Slack target is the stopped thread
+   */
+  async interruptAgentExecutions(executionIds: readonly string[]): Promise<void> {
+    for (const executionId of executionIds) {
+      const current = await this.options.database.findAgentExecutionById(executionId);
+      if (current === undefined || isTerminalExecutionStatus(current.status)) continue;
+      await this.failAgentExecution(executionId, "stopped_by_user");
+    }
+  }
+
   async stop(): Promise<void> {
     this.stopping = true;
     for (const unsubscribe of this.executionSubscriptions.values()) unsubscribe();
