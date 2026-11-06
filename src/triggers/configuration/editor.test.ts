@@ -14,7 +14,7 @@ import {
   triggerFormErrors,
 } from "./editor.js";
 import { emptyWorktree, textInstructions } from "./form-drafts.js";
-import { blankSlackAgentDraft, SLACK_AGENT_FEEDBACK_UNAVAILABLE } from "../slack/agent-block.js";
+import { blankSlackAgentDraft } from "../slack/agent-block.js";
 import { setEventAudience, setEventRegex, toggleTriggerEvent } from "./form-events.js";
 
 import {
@@ -1236,16 +1236,16 @@ test("drops slack_agent when the trigger event is no longer Slack", () => {
   expect(parsed.run).not.toHaveProperty("slack_agent");
 });
 
-test("leaves a Slack agent block the form cannot represent in YAML", () => {
+test("round-trips feedback buttons and leaves an unknown display in YAML", () => {
   const feedback = ADVANCED.replace(
     "  auto_archive: false\n",
     "  slack_agent:\n    display: plan\n    feedback: true\n  auto_archive: false\n",
   );
   const projected = projectTriggerForm(feedback);
-  expect(projected.status).toBe("yaml_only");
-  if (projected.status === "yaml_only") {
-    expect(projected.reason).toContain(SLACK_AGENT_FEEDBACK_UNAVAILABLE);
-  }
+  expect(projected.status).toBe("editable");
+  if (projected.status !== "editable") throw new Error(projected.reason);
+  expect(projected.value.slackAgent.feedback).toBe(true);
+  expect(patchTriggerYaml(feedback, projected.value)).toContain("feedback: true");
   const unknown = ADVANCED.replace(
     "  auto_archive: false\n",
     "  slack_agent:\n    display: board\n  auto_archive: false\n",

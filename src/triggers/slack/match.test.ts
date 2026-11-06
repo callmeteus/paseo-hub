@@ -3,6 +3,7 @@ import { describe, it } from "vitest";
 import { compileHubConfig, parseCompiledHubConfig } from "../../config/index.js";
 import { parseTriggerDocument } from "../configuration/index.js";
 import type { NormalizedSlackMentionEvent } from "./events.js";
+import { slackChoiceArrival } from "./feedback.js";
 import { matchSlackTriggers, readSlackPromptBody } from "./match.js";
 
 describe("Slack trigger matching", () => {
@@ -371,6 +372,28 @@ describe("Slack trigger matching", () => {
     event.author = { id: "U09FFH54LM9" };
     assert.equal(matchSlackTriggers(loaded, event, "UBOT").length, 1);
   });
+
+  it("matches a plan decision only on a Slack trigger that asks for feedback", () => {
+    const sentence = slackChoiceArrival({ label: "Ship it", value: "ship" });
+    const decision: NormalizedSlackMentionEvent = {
+      ...mention(),
+      type: "message",
+      content: sentence,
+      lead: sentence,
+      planDecision: "ship",
+    };
+    const withFeedback = feedbackConfig(true);
+    assert.equal(matchSlackTriggers(withFeedback, decision, "UBOT").length, 1);
+    assert.equal(matchSlackTriggers(feedbackConfig(false), decision, "UBOT").length, 0);
+    assert.equal(
+      matchSlackTriggers(withFeedback, { ...decision, author: { id: "U9" } }, "UBOT").length,
+      0,
+    );
+    assert.equal(
+      matchSlackTriggers(withFeedback, { ...decision, channelId: "C2" }, "UBOT").length,
+      0,
+    );
+  });
 });
 
 function monitoringConfig() {
@@ -491,6 +514,31 @@ function channelConfig(includeBots: boolean) {
             idle_timeout: "5m",
             agent: { provider: "opencode", mode: "default" },
             prompt: [{ text: "Read the channel" }],
+          },
+        ],
+      },
+    ],
+  });
+}
+
+function feedbackConfig(feedback: boolean) {
+  return compileHubConfig({
+    environments: [{ name: "runner", kind: "daemon", daemon: "runner", cwd: "/repo" }],
+    triggers: [
+      {
+        name: "slack-run",
+        on: "slack.mention",
+        max_runtime: "2h",
+        filters: { workspace: "T1", channels: ["C1"], from_users: ["U1"], pattern: "ALERTA" },
+        steps: [
+          {
+            id: "run",
+            environment: "runner",
+            max_runtime: "1h",
+            idle_timeout: "5m",
+            agent: { provider: "opencode", mode: "default" },
+            prompt: [{ text: "Run the request" }],
+            ...(feedback ? { slack_agent: { display: "plan" as const, feedback: true } } : {}),
           },
         ],
       },

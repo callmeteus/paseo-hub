@@ -24,7 +24,10 @@ const webhookManifestSchema = z.object({
     redirect_urls: z.array(z.string()),
     scopes: z.object({ bot: z.array(z.string()) }),
   }),
-  settings: z.object({ event_subscriptions: z.object({ request_url: z.string() }) }),
+  settings: z.object({
+    event_subscriptions: z.object({ request_url: z.string() }),
+    interactivity: z.object({ is_enabled: z.literal(true), request_url: z.string() }),
+  }),
 });
 
 function stepText(step: GuideStep): string {
@@ -41,10 +44,18 @@ test("the Slack manifest asks for exactly the scopes Hub checks installations ag
     manifest.settings.event_subscriptions.request_url,
     `${ORIGIN}/api/integrations/slack/events`,
   );
+  assert.equal(manifest.settings.interactivity.is_enabled, true);
+  assert.equal(
+    manifest.settings.interactivity.request_url,
+    `${ORIGIN}/api/integrations/slack/interactivity`,
+  );
   const socket = z
     .object({
       oauth_config: z.object({ scopes: z.object({ bot: z.array(z.string()) }) }),
-      settings: z.object({ socket_mode_enabled: z.literal(true) }),
+      settings: z.object({
+        socket_mode_enabled: z.literal(true),
+        interactivity: z.object({ is_enabled: z.literal(true) }).strict(),
+      }),
     })
     .parse(load(slackManifest(LOCAL, "socket")));
   assert.deepEqual(socket.oauth_config.scopes.bot, [...SLACK_REQUIRED_BOT_SCOPES]);

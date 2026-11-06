@@ -22,7 +22,7 @@ import {
   readSlackInvocationParserMessage,
   readSlackPromptBody,
 } from "./match.js";
-import { matchesInputFilters, parseInvocation } from "../invocation.js";
+import { defaultInputs, matchesInputFilters, parseInvocation } from "../invocation.js";
 
 export interface SlackAttachmentLocator {
   id: string;
@@ -227,13 +227,20 @@ export function createSlackTriggerProvider(options: {
           target: outputContext,
           event: buildSlackMergeData(event, botUserId, trigger.connectionId),
         };
-        const invocation = parseInvocation(
-          rawEvent.content,
-          compiledTrigger.inputs,
-          undefined,
-          readSlackInvocationParserMessage(rawEvent, botUserId, compiledTrigger.filters),
-        );
-        if (invocation.status === "accepted") {
+        const invocation =
+          rawEvent.planDecision === undefined
+            ? parseInvocation(
+                rawEvent.content,
+                compiledTrigger.inputs,
+                undefined,
+                readSlackInvocationParserMessage(rawEvent, botUserId, compiledTrigger.filters),
+              )
+            : {
+                status: "accepted" as const,
+                prompt: rawEvent.content,
+                inputs: defaultInputs(compiledTrigger.inputs),
+              };
+        if (rawEvent.planDecision === undefined && invocation.status === "accepted") {
           if (!matchesInputFilters(invocation.inputs, compiledTrigger.filters?.inputs)) continue;
         }
         if (invocation.status === "rejected") {

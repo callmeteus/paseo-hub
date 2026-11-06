@@ -625,7 +625,10 @@ function isSlackAgentDraft(value: unknown): value is SlackAgentDraft {
   if (!("planTitle" in value) || typeof value.planTitle !== "string") return false;
   if (!("promptsTitle" in value) || typeof value.promptsTitle !== "string") return false;
   if (!("prompts" in value) || !Array.isArray(value.prompts)) return false;
-  return value.prompts.every((item) => isPromptDraft(item));
+  if (!value.prompts.every((item) => isPromptDraft(item))) return false;
+  if ("feedback" in value && typeof value.feedback !== "boolean") return false;
+  if (!("feedback" in value)) Object.assign(value, { feedback: false });
+  return true;
 }
 
 function isPromptDraft(value: unknown): value is { id: string; title: string; message: string } {

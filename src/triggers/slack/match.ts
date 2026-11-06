@@ -5,7 +5,9 @@ import type {
 import type { NormalizedSlackMentionEvent } from "./events.js";
 import { compileSlackTextClauses } from "./text-filter.js";
 
-type MatchedTriggerDefinition = Pick<CompiledTrigger, "name" | "on" | "filters">;
+type MatchedTriggerDefinition = Pick<CompiledTrigger, "name" | "on" | "filters"> & {
+  steps?: CompiledTrigger["steps"];
+};
 
 export interface MatchedSlackTrigger {
   event: NormalizedSlackMentionEvent;
@@ -19,6 +21,17 @@ export function matchSlackTriggers(
   connectionId?: string | null,
 ): MatchedSlackTrigger[] {
   if (event.author.id === botUserId) return [];
+  if (event.planDecision !== undefined) {
+    return config.triggers.flatMap((trigger) => {
+      const slackTrigger = trigger.on === "slack.message" || trigger.on === "slack.mention";
+      return slackTrigger &&
+        triggerOffersFeedback(trigger) &&
+        acceptsBotMessage(event, trigger.filters) &&
+        matchesAudience(event, trigger.filters, connectionId)
+        ? [{ event, trigger }]
+        : [];
+    });
+  }
   const expectedOn = event.type === "message" ? "slack.message" : "slack.mention";
   return config.triggers.flatMap((trigger) => {
     return trigger.on === expectedOn &&
@@ -27,6 +40,10 @@ export function matchSlackTriggers(
       ? [{ event, trigger }]
       : [];
   });
+}
+
+function triggerOffersFeedback(trigger: MatchedTriggerDefinition): boolean {
+  return trigger.steps?.some((step) => step.slackAgent?.feedback === true) === true;
 }
 
 // Another app's message runs only the automations that opted in. The Hub's own user is already excluded.
@@ -43,8 +60,29 @@ function matchesFilters(
   botUserId: string,
   connectionId?: string | null,
 ): boolean {
-  if (filters === undefined) return false;
+  if (!matchesAudience(event, filters, connectionId)) return false;
   if (event.type === "mention" && !event.content.includes(`<@${botUserId}>`)) return false;
+  if (filters === undefined) return false;
+  return matchesMessageBody(event, filters);
+}
+
+/**
+ * Audience checks shared by a channel message and a plan-card click.
+ *
+ * A click skips the text, regex, and mention-token checks. The person still has to be
+ * allowed for this workspace, channel, and connection.
+ *
+ * @param event - Normalized Slack event
+ * @param filters - Trigger filters
+ * @param connectionId - Connection that delivered the event
+ * @returns Whether this person and place are allowed
+ */
+function matchesAudience(
+  event: NormalizedSlackMentionEvent,
+  filters: TriggerFilter | undefined,
+  connectionId?: string | null,
+): boolean {
+  if (filters === undefined) return false;
   if (
     filters.from_users === undefined ||
     (!filters.from_users.includes("*") &&
@@ -57,7 +95,7 @@ function matchesFilters(
   if (workspace !== undefined && workspace !== event.teamId) return false;
   const channels = readStrings(filters, "channels");
   if (channels !== undefined && !channels.includes(event.channelId)) return false;
-  return matchesMessageBody(event, filters);
+  return true;
 }
 
 /**

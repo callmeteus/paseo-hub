@@ -3,6 +3,7 @@ import { WebSocket, type RawData } from "ws";
 import { reportFailure } from "../../../../failures/index.js";
 import { logger } from "../../../../logger.js";
 import type { TriggerHandler, TriggerSource } from "../../../index.js";
+import { intakeSlackInteraction, type SlackInteractionIntakeOptions } from "../../interactivity.js";
 import {
   intakeSlackEvent,
   SlackEventIntakeValidationError,
@@ -39,6 +40,7 @@ export interface SlackSocketSource extends TriggerSource {
 }
 
 export interface SlackSocketSourceOptions extends SlackEventIntakeOptions {
+  settlePlanDecision?: SlackInteractionIntakeOptions["settlePlanDecision"];
   appToken: string;
   apiUrl?: string;
   random?: () => number;
@@ -309,6 +311,33 @@ export function createSlackSocketSource(options: SlackSocketSourceOptions): Slac
       reportInvalidFrame(bytes);
       const envelopeId = boundedEnvelopeId(value);
       if (envelopeId !== undefined) await sendAck(connection.socket, envelopeId);
+      return;
+    }
+    if (envelope.data.type === "interactive") {
+      const signatureHash = createHash("sha256").update(envelope.data.envelope_id).digest("hex");
+      let settlement: (() => Promise<void>) | undefined;
+      try {
+        settlement = (
+          await intakeSlackInteraction(envelope.data.payload, signatureHash, handlers, {
+            appId: options.appId,
+            accept: (input) => options.accept(input),
+            ...(options.settlePlanDecision === undefined
+              ? {}
+              : { settlePlanDecision: options.settlePlanDecision }),
+          })
+        ).settlement;
+      } catch (error) {
+        if (!(error instanceof SlackEventIntakeValidationError)) throw error;
+        reportInvalidFrame(bytes);
+      }
+      if (!stopped) await sendAck(connection.socket, envelope.data.envelope_id);
+      if (settlement !== undefined) {
+        try {
+          await settlement();
+        } catch (error) {
+          report(error, "slack.interaction.settle", "internal");
+        }
+      }
       return;
     }
     if (envelope.data.type === "events_api") {

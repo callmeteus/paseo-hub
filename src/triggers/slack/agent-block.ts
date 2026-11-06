@@ -1,12 +1,5 @@
 import { z } from "zod";
 
-/**
- * The sentence the form shows, and the schema returns, while feedback is refused.
- * The Hub app has interactivity turned off, so Slack would not deliver the click.
- */
-export const SLACK_AGENT_FEEDBACK_UNAVAILABLE =
-  "Feedback buttons need Slack interactivity, which this app does not have yet.";
-
 const SlackAgentPromptItemSchema = z
   .object({
     title: z.string().min(1),
@@ -17,8 +10,8 @@ const SlackAgentPromptItemSchema = z
 /**
  * The opt-in block on one agent reaction.
  *
- * Absent means the run keeps the legacy assistant status. `feedback: true` is refused
- * until the Slack app can receive block actions.
+ * Absent means the run keeps the legacy assistant status. `feedback: true` lets the
+ * agent put its own choices on the card when it finishes active or suspended.
  */
 export const SlackAgentBlockSchema = z
   .object({
@@ -36,13 +29,6 @@ export const SlackAgentBlockSchema = z
   })
   .strict()
   .superRefine((block, context) => {
-    if (block.feedback === true) {
-      context.addIssue({
-        code: "custom",
-        path: ["feedback"],
-        message: SLACK_AGENT_FEEDBACK_UNAVAILABLE,
-      });
-    }
     if (block.display === "timeline" && block.plan_title !== undefined) {
       context.addIssue({
         code: "custom",
@@ -82,6 +68,8 @@ export interface SlackAgentDraft {
   planTitle: string;
   promptsTitle: string;
   prompts: SlackAgentPromptDraft[];
+  /** Lets the agent send choice buttons. Off omits `feedback` from the YAML. */
+  feedback: boolean;
 }
 
 /**
@@ -110,6 +98,7 @@ export function blankSlackAgentDraft(): SlackAgentDraft {
     planTitle: "",
     promptsTitle: "",
     prompts: [],
+    feedback: false,
   };
 }
 
@@ -132,6 +121,7 @@ export function projectSlackAgentDraft(block: SlackAgentBlock | undefined): Slac
       title: item.title,
       message: item.message,
     })),
+    feedback: block.feedback === true,
   };
 }
 
@@ -169,6 +159,7 @@ export function slackAgentBlockFromDraft(
             items,
           },
         }),
+    ...(draft.feedback ? { feedback: true as const } : {}),
   };
 }
 

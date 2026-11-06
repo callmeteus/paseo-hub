@@ -67,7 +67,7 @@ describe("Slack registration", () => {
     );
     assert.deepEqual(
       registration.requests.map((request) => request.name),
-      ["slack.events"],
+      ["slack.events", "slack.interactivity"],
     );
 
     const response = await registration.connection.actions["start"]!(

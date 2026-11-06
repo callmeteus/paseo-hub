@@ -658,6 +658,57 @@ describe("Slack Web API client", () => {
     assert.deepEqual(result, { ok: false, error: "missing_scope" });
   });
 
+  it("sends plan buttons on stopStream and replaces a card with chat.update", async () => {
+    const requests: Array<{ url: string; body: unknown }> = [];
+    const client = createSlackBotClient({
+      tokenForWorkspace: () => Promise.resolve("xoxb-secret"),
+      fetch: async (input, init) => {
+        requests.push({
+          url: requestUrl(input),
+          body: typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
+        });
+        return Response.json({ ok: true });
+      },
+    });
+    const blocks = [{ type: "actions", block_id: "paseo_plan_feedback" }];
+    const stopped = await client.stopAgentStream?.({
+      organizationId: "org-1",
+      teamId: "T1",
+      channelId: "C1",
+      streamTs: "1729999328.000200",
+      sessionStatus: "active",
+      blocks,
+    });
+    const updated = await client.updateMessage?.({
+      organizationId: "org-1",
+      teamId: "T1",
+      channelId: "C1",
+      messageTs: "1729999328.000200",
+      text: "The plan",
+      blocks: [{ type: "context" }],
+    });
+    assert.equal(stopped?.ok, true);
+    assert.equal(updated?.ok, true);
+    assert.deepEqual(requests[0], {
+      url: "https://slack.com/api/chat.stopStream",
+      body: {
+        channel: "C1",
+        ts: "1729999328.000200",
+        session_status: "active",
+        blocks,
+      },
+    });
+    assert.deepEqual(requests[1], {
+      url: "https://slack.com/api/chat.update",
+      body: {
+        channel: "C1",
+        ts: "1729999328.000200",
+        text: "The plan",
+        blocks: [{ type: "context" }],
+      },
+    });
+  });
+
   it("sets suggested prompts without a thread timestamp", async () => {
     let body: unknown;
     const client = createSlackBotClient({

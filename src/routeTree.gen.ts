@@ -35,6 +35,7 @@ import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as AgentSessionsSessionIdMcpRouteImport } from './routes/agent-sessions/$sessionId/mcp'
 import { Route as AgentExecutionsExecutionIdMcpRouteImport } from './routes/agent-executions/$executionId/mcp'
 import { Route as ApiV1CliAuthorizationsPollRouteImport } from './routes/api/v1/cli-authorizations/poll'
+import { Route as ApiIntegrationsSlackInteractivityRouteImport } from './routes/api/integrations/slack/interactivity'
 import { Route as ApiIntegrationsSlackEventsRouteImport } from './routes/api/integrations/slack/events'
 import { Route as ApiIntegrationsSlackCallbackRouteImport } from './routes/api/integrations/slack/callback'
 import { Route as ApiIntegrationsLinearEventsRouteImport } from './routes/api/integrations/linear/events'
@@ -193,6 +194,12 @@ const ApiV1CliAuthorizationsPollRoute =
     id: '/poll',
     path: '/poll',
     getParentRoute: () => ApiV1CliAuthorizationsRoute,
+  } as any)
+const ApiIntegrationsSlackInteractivityRoute =
+  ApiIntegrationsSlackInteractivityRouteImport.update({
+    id: '/api/integrations/slack/interactivity',
+    path: '/api/integrations/slack/interactivity',
+    getParentRoute: () => rootRouteImport,
   } as any)
 const ApiIntegrationsSlackEventsRoute =
   ApiIntegrationsSlackEventsRouteImport.update({
@@ -391,6 +398,7 @@ export interface FileRoutesByFullPath {
   '/api/integrations/linear/events': typeof ApiIntegrationsLinearEventsRoute
   '/api/integrations/slack/callback': typeof ApiIntegrationsSlackCallbackRoute
   '/api/integrations/slack/events': typeof ApiIntegrationsSlackEventsRoute
+  '/api/integrations/slack/interactivity': typeof ApiIntegrationsSlackInteractivityRoute
   '/api/v1/cli-authorizations/poll': typeof ApiV1CliAuthorizationsPollRoute
   '/o/$organizationSlug/activity/$runId': typeof ShellOOrganizationSlugActivityRunIdRoute
   '/o/$organizationSlug/daemons/$daemonId': typeof ShellOOrganizationSlugDaemonsDaemonIdRoute
@@ -440,6 +448,7 @@ export interface FileRoutesByTo {
   '/api/integrations/linear/events': typeof ApiIntegrationsLinearEventsRoute
   '/api/integrations/slack/callback': typeof ApiIntegrationsSlackCallbackRoute
   '/api/integrations/slack/events': typeof ApiIntegrationsSlackEventsRoute
+  '/api/integrations/slack/interactivity': typeof ApiIntegrationsSlackInteractivityRoute
   '/api/v1/cli-authorizations/poll': typeof ApiV1CliAuthorizationsPollRoute
   '/o/$organizationSlug/activity/$runId': typeof ShellOOrganizationSlugActivityRunIdRoute
   '/o/$organizationSlug/daemons/$daemonId': typeof ShellOOrganizationSlugDaemonsDaemonIdRoute
@@ -495,6 +504,7 @@ export interface FileRoutesById {
   '/api/integrations/linear/events': typeof ApiIntegrationsLinearEventsRoute
   '/api/integrations/slack/callback': typeof ApiIntegrationsSlackCallbackRoute
   '/api/integrations/slack/events': typeof ApiIntegrationsSlackEventsRoute
+  '/api/integrations/slack/interactivity': typeof ApiIntegrationsSlackInteractivityRoute
   '/api/v1/cli-authorizations/poll': typeof ApiV1CliAuthorizationsPollRoute
   '/_shell/o/$organizationSlug/activity/$runId': typeof ShellOOrganizationSlugActivityRunIdRoute
   '/_shell/o/$organizationSlug/daemons/$daemonId': typeof ShellOOrganizationSlugDaemonsDaemonIdRoute
@@ -550,6 +560,7 @@ export interface FileRouteTypes {
     | '/api/integrations/linear/events'
     | '/api/integrations/slack/callback'
     | '/api/integrations/slack/events'
+    | '/api/integrations/slack/interactivity'
     | '/api/v1/cli-authorizations/poll'
     | '/o/$organizationSlug/activity/$runId'
     | '/o/$organizationSlug/daemons/$daemonId'
@@ -599,6 +610,7 @@ export interface FileRouteTypes {
     | '/api/integrations/linear/events'
     | '/api/integrations/slack/callback'
     | '/api/integrations/slack/events'
+    | '/api/integrations/slack/interactivity'
     | '/api/v1/cli-authorizations/poll'
     | '/o/$organizationSlug/activity/$runId'
     | '/o/$organizationSlug/daemons/$daemonId'
@@ -653,6 +665,7 @@ export interface FileRouteTypes {
     | '/api/integrations/linear/events'
     | '/api/integrations/slack/callback'
     | '/api/integrations/slack/events'
+    | '/api/integrations/slack/interactivity'
     | '/api/v1/cli-authorizations/poll'
     | '/_shell/o/$organizationSlug/activity/$runId'
     | '/_shell/o/$organizationSlug/daemons/$daemonId'
@@ -696,6 +709,7 @@ export interface RootRouteChildren {
   ApiIntegrationsLinearEventsRoute: typeof ApiIntegrationsLinearEventsRoute
   ApiIntegrationsSlackCallbackRoute: typeof ApiIntegrationsSlackCallbackRoute
   ApiIntegrationsSlackEventsRoute: typeof ApiIntegrationsSlackEventsRoute
+  ApiIntegrationsSlackInteractivityRoute: typeof ApiIntegrationsSlackInteractivityRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -881,6 +895,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/api/v1/cli-authorizations/poll'
       preLoaderRoute: typeof ApiV1CliAuthorizationsPollRouteImport
       parentRoute: typeof ApiV1CliAuthorizationsRoute
+    }
+    '/api/integrations/slack/interactivity': {
+      id: '/api/integrations/slack/interactivity'
+      path: '/api/integrations/slack/interactivity'
+      fullPath: '/api/integrations/slack/interactivity'
+      preLoaderRoute: typeof ApiIntegrationsSlackInteractivityRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/api/integrations/slack/events': {
       id: '/api/integrations/slack/events'
@@ -1229,6 +1250,8 @@ const rootRouteChildren: RootRouteChildren = {
   ApiIntegrationsLinearEventsRoute: ApiIntegrationsLinearEventsRoute,
   ApiIntegrationsSlackCallbackRoute: ApiIntegrationsSlackCallbackRoute,
   ApiIntegrationsSlackEventsRoute: ApiIntegrationsSlackEventsRoute,
+  ApiIntegrationsSlackInteractivityRoute:
+    ApiIntegrationsSlackInteractivityRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

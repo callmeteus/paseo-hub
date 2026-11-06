@@ -11,6 +11,7 @@ import {
 } from "./client.js";
 import { resetSlackAgentSurfaceForTests } from "./agent-surface.js";
 import { normalizeSlackEvent } from "./events.js";
+import { slackChoiceArrival } from "./feedback.js";
 import { createSlackTriggerProvider } from "./provider.js";
 import { isAcceptedTriggerProviderMatch } from "../index.js";
 
@@ -129,6 +130,50 @@ describe("Slack Phase 1 trigger provider", () => {
       prompt: "<@UBOT> repo=hub agent=opus investigate",
       inputs: { repo: "hub", agent: "opus" },
     });
+  });
+
+  it("sends a plan decision to the same thread without the message filters", async () => {
+    const database = createMemoryDatabase();
+    const base = inputConfiguration();
+    const trigger = base.triggers[0]!;
+    const { project, revision, store } = await createActiveProjectConfiguration(
+      database,
+      {
+        ...base,
+        triggers: [
+          {
+            ...trigger,
+            filters: { ...trigger.filters, pattern: "ALERTA" },
+            steps: [
+              {
+                ...trigger.steps[0]!,
+                slack_agent: { display: "plan", feedback: true },
+              },
+            ],
+          },
+        ],
+      },
+      { organizationId: "org-1" },
+    );
+    const provider = createSlackTriggerProvider({
+      configurationStoreForProject: () => store,
+      botUserIdForWorkspace: () => Promise.resolve("UBOT"),
+      client: new RecordingSlackClient(),
+    });
+    const sentence = slackChoiceArrival({ label: "Ship it", value: "ship" });
+    const match = (
+      await provider.match(
+        external(project.id, revision.id, { content: sentence, planDecision: "ship" }),
+      )
+    )[0];
+
+    if (!isAcceptedTriggerProviderMatch(match)) throw new Error("expected accepted match");
+    assert.equal(match.invocation.prompt, sentence);
+    assert.deepEqual(match.invocation.inputs, { agent: "codex" });
+    assert.equal(
+      match.conversation?.key,
+      JSON.stringify(["slack", "T1", "C1", "1700000000.000001"]),
+    );
   });
 
   it("parses typed inputs after a matched command marker", async () => {
@@ -1078,6 +1123,7 @@ function external(
     messageTs?: string;
     content?: string;
     authorId?: string;
+    planDecision?: string;
   } = {},
 ) {
   return {
@@ -1089,7 +1135,7 @@ function external(
     deliveryId: "slack-delivery-1",
     receivedAt: new Date(),
     payload: {
-      type: "mention",
+      type: overrides.planDecision === undefined ? "mention" : "message",
       id: "Ev1",
       teamId: "T1",
       appId: "A1",
@@ -1100,6 +1146,7 @@ function external(
       eventTime: 1_700_000_001,
       content: overrides.content ?? "<@UBOT> deploy now",
       author: { id: overrides.authorId ?? "U1" },
+      ...(overrides.planDecision === undefined ? {} : { planDecision: overrides.planDecision }),
       createdAt: new Date(1_700_000_000_000).toISOString(),
       attachments: [],
     },

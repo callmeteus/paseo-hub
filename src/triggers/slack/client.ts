@@ -130,6 +130,8 @@ export interface SlackBotClient {
     channelId: string;
     threadTs: string;
     content: string;
+    /** Block Kit on the message. Choice buttons use this when no stream is open. */
+    blocks?: readonly Record<string, unknown>[];
   }): Promise<void>;
   addReaction(input: {
     organizationId: string;
@@ -237,6 +239,17 @@ export interface SlackBotClient {
     streamTs: string;
     chunks?: SlackStreamChunk[];
     sessionStatus?: SlackAgentSessionStatus;
+    /** Rendered under the finalized message. Choice buttons use this. */
+    blocks?: readonly Record<string, unknown>[];
+  }): Promise<SlackApiResult>;
+  /** Replaces a message the app posted. `ok: false` is returned, not thrown. */
+  updateMessage?(input: {
+    organizationId: string;
+    teamId: string;
+    channelId: string;
+    messageTs: string;
+    text: string;
+    blocks: readonly Record<string, unknown>[];
   }): Promise<SlackApiResult>;
   /**
    * Replaces the suggested prompts on the latest message in the channel.
@@ -267,7 +280,7 @@ export function createSlackBotClient(options: {
     organizationId: string,
     teamId: string,
     method: string,
-    body: Record<string, string>,
+    body: Record<string, unknown>,
   ): Promise<void> {
     const token = await options.tokenForWorkspace(organizationId, teamId);
     if (token === undefined) throw new Error("Slack workspace is not connected");
@@ -677,6 +690,7 @@ export function createSlackBotClient(options: {
     streamTs: string;
     chunks?: SlackStreamChunk[];
     sessionStatus?: SlackAgentSessionStatus;
+    blocks?: readonly Record<string, unknown>[];
   }): Promise<SlackApiResult> {
     return postAgentJson(
       input.organizationId,
@@ -687,8 +701,25 @@ export function createSlackBotClient(options: {
         ts: input.streamTs,
         chunks: input.chunks,
         session_status: input.sessionStatus,
+        blocks: input.blocks,
       }),
     );
+  }
+
+  async function updateMessage(input: {
+    organizationId: string;
+    teamId: string;
+    channelId: string;
+    messageTs: string;
+    text: string;
+    blocks: readonly Record<string, unknown>[];
+  }): Promise<SlackApiResult> {
+    return postAgentJson(input.organizationId, input.teamId, "chat.update", {
+      channel: input.channelId,
+      ts: input.messageTs,
+      text: input.text,
+      blocks: input.blocks,
+    });
   }
 
   async function setSuggestedPrompts(input: {
@@ -716,6 +747,7 @@ export function createSlackBotClient(options: {
         channel: input.channelId,
         thread_ts: input.threadTs,
         text: input.content,
+        ...(input.blocks === undefined ? {} : { blocks: input.blocks }),
       }),
     setAssistantStatus,
     setAgentSessionStatus,
@@ -723,6 +755,7 @@ export function createSlackBotClient(options: {
     startAgentStream,
     appendAgentStream,
     stopAgentStream,
+    updateMessage,
     setSuggestedPrompts,
     addReaction: (input) =>
       call(input.organizationId, input.teamId, "reactions.add", {

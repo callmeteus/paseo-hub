@@ -24,15 +24,23 @@ import {
 } from "../../triggers/slack/agent-surface.js";
 import { SLACK_AGENT_OUTPUT_TYPES } from "../../triggers/slack/agent-block.js";
 import { createSlackBotClient, type SlackBotClient } from "../../triggers/slack/client.js";
+import { settleSlackPlanDecision } from "../../triggers/slack/interactivity.js";
 import { createSlackTriggerProvider } from "../../triggers/slack/provider.js";
 import { organizationBillingUrl } from "../../triggers/failure-notice.js";
 import { createSlackAttachmentResolver } from "../../triggers/slack/attachments.js";
 import { createSlackReactExecutor, reactOutputTool } from "../../triggers/slack/react.js";
 import { createSlackReplyExecutor } from "../../triggers/slack/reply.js";
 import { outputContextProvider, replyOutputTool } from "../../execution-capabilities/outputs.js";
-import { createSlackEventSource } from "../../triggers/slack/source/index.js";
+import {
+  createSlackEventSource,
+  type SlackEventSource,
+} from "../../triggers/slack/source/index.js";
 import type { SlackSocketSourceOptions } from "../../triggers/slack/source/internal/socket.js";
-import type { ProviderConnectionRegistration, ProviderRegistration } from "../registration.js";
+import type {
+  ProviderConnectionRegistration,
+  ProviderRegistration,
+  ProviderRequestRegistration,
+} from "../registration.js";
 import {
   createSlackConnectionClient,
   hasRequiredSlackScopes,
@@ -130,9 +138,14 @@ export function createSlackRegistration(
             providerApplicationId: configuration.appId,
             providerConfigurationVersion: options.configurationVersion ?? 0,
           });
+  const botHolder: { current?: SlackBotClient } = {};
   const events = createSlackEventSource({
     configuration: { provider: "slack", ...configuration },
     accept,
+    settlePlanDecision: (input) =>
+      botHolder.current === undefined
+        ? Promise.resolve()
+        : settleSlackPlanDecision(botHolder.current, input),
     ...slackSocketOptions(options),
   });
   if (database === null) {
@@ -141,8 +154,7 @@ export function createSlackRegistration(
       triggerProviders: [],
       sources: [events],
       outputs: [],
-      requests:
-        events.request === undefined ? [] : [{ name: "slack.events", handle: events.request }],
+      requests: slackRequests(events),
     };
   }
 
@@ -153,6 +165,7 @@ export function createSlackRegistration(
         (await findSlackBindingForOrganization(database, organizationId, teamId))?.botAccessToken,
       ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
     });
+  botHolder.current = bot;
   bindSlackAgentClient(bot);
   const connection =
     options.auth === null
@@ -213,12 +226,20 @@ export function createSlackRegistration(
         execute: createSlackAgentExecutor(bot, type),
       })),
     ],
-    requests:
-      events.request === undefined ? [] : [{ name: "slack.events", handle: events.request }],
+    requests: slackRequests(events),
     attachment: { provider: "slack", resolve: createSlackAttachmentResolver(bot) },
     slackDelivery: { status: () => events.status(), retry: () => events.retry() },
     slackNames: bot,
   };
+}
+
+function slackRequests(events: SlackEventSource): ProviderRequestRegistration[] {
+  return [
+    ...(events.request === undefined ? [] : [{ name: "slack.events", handle: events.request }]),
+    ...(events.interactivity === undefined
+      ? []
+      : [{ name: "slack.interactivity", handle: events.interactivity }]),
+  ];
 }
 
 function slackSocketOptions(

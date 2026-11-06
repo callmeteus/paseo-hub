@@ -15,6 +15,7 @@ import type {
   SlackStreamSource,
   SlackStreamTaskStatus,
 } from "./client.js";
+import { slackChoiceBlocks, SLACK_CHOICE_LIMIT, type SlackChoice } from "./feedback.js";
 
 const STREAM_ROTATE_AFTER_MS = 9 * 60 * 1000;
 const PROCESSING_RENEW_AFTER_MS = 50 * 60 * 1000;
@@ -64,10 +65,18 @@ const ToolArgsSchema = z
   })
   .strict();
 const SayArgsSchema = z.object({ text: z.string().min(1) }).strict();
+const ChoiceArgsSchema = z
+  .object({
+    label: z.string().min(1).max(75),
+    value: z.string().min(1).max(200).optional(),
+    style: z.enum(["primary", "danger"]).optional(),
+  })
+  .strict();
 const FinishArgsSchema = z
   .object({
     session: z.enum(["active", "suspended", "closed"]),
     text: z.string().min(1).optional(),
+    choices: z.array(ChoiceArgsSchema).min(1).max(SLACK_CHOICE_LIMIT).optional(),
   })
   .strict();
 const FailArgsSchema = z
@@ -128,6 +137,7 @@ interface SlackAgentApi {
   appendAgentStream: NonNullable<SlackBotClient["appendAgentStream"]>;
   stopAgentStream: NonNullable<SlackBotClient["stopAgentStream"]>;
   setSuggestedPrompts: NonNullable<SlackBotClient["setSuggestedPrompts"]>;
+  sendMessage: SlackBotClient["sendMessage"];
 }
 
 interface TaskState {
@@ -483,12 +493,34 @@ export const slackSayTool: OutputToolDefinition = {
 export const slackFinishTool: OutputToolDefinition = {
   name: "slack_finish",
   description:
-    "Stops the streaming Slack message and sets the session to active, suspended, or closed. Suspended waits for the person. Closed ends the session without archiving the channel.",
+    "Stops the streaming Slack message and sets the session to active, suspended, or closed. Suspended waits for the person. Closed ends the session without archiving the channel. Pass choices only when the person should pick one. Each choice is a button with the label you write. Omit choices and the card has no buttons.",
   inputSchema: {
     ...objectSchema,
     properties: {
       session: { type: "string", enum: ["active", "suspended", "closed"] },
       text: { type: "string", minLength: 1, description: "Optional final markdown." },
+      choices: {
+        type: "array",
+        minItems: 1,
+        maxItems: SLACK_CHOICE_LIMIT,
+        description:
+          "Optional buttons on the finished card. The trigger has to have feedback turned on, and the session has to stay active or suspended.",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            label: { type: "string", minLength: 1, maxLength: 75 },
+            value: {
+              type: "string",
+              minLength: 1,
+              maxLength: 200,
+              description: "Token the next turn receives. Defaults to the label.",
+            },
+            style: { type: "string", enum: ["primary", "danger"] },
+          },
+          required: ["label"],
+        },
+      },
     },
     required: ["session"],
   },
@@ -720,7 +752,15 @@ async function publishFinish(
   args: z.infer<typeof FinishArgsSchema>,
 ): Promise<void> {
   const stream = streams.get(executionId);
-  await closeModelStream(api, book, target, stream, args.session, args.text);
+  await closeModelStream(
+    api,
+    book,
+    target,
+    stream,
+    args.session,
+    args.text,
+    choicesForFinish(target, args.session, args.choices),
+  );
 }
 
 async function publishFail(
@@ -743,7 +783,7 @@ async function publishFail(
     });
     await deliver(api, book, target, stream, chunks);
   }
-  await closeModelStream(api, book, target, stream, session, undefined);
+  await closeModelStream(api, book, target, stream, session, undefined, undefined);
 }
 
 async function publishTitle(
@@ -804,7 +844,9 @@ async function closeModelStream(
   stream: ExecutionStream | undefined,
   session: SlackAgentSessionStatus,
   text: string | undefined,
+  choices: readonly SlackChoice[] | undefined,
 ): Promise<void> {
+  const blocks = choices === undefined ? undefined : slackChoiceBlocks(choices);
   if (stream?.ts !== undefined) {
     const chunks: SlackStreamChunk[] = text === undefined ? [] : [{ type: "markdown_text", text }];
     const stopped = await api.stopAgentStream({
@@ -814,6 +856,7 @@ async function closeModelStream(
       streamTs: stream.ts,
       ...(chunks.length === 0 ? {} : { chunks }),
       sessionStatus: session,
+      ...(blocks === undefined ? {} : { blocks }),
     });
     stream.ts = undefined;
     if (!stopped.ok && stopped.error === "stopped_by_user") {
@@ -821,6 +864,16 @@ async function closeModelStream(
       throw new SlackAgentSurfaceError("The person stopped this Slack session.");
     }
     if (!stopped.ok && stopped.error !== "message_not_in_streaming_state") refuseOrThrow(stopped);
+  } else if (blocks !== undefined) {
+    await api.sendMessage({
+      organizationId: target.organizationId,
+      teamId: target.teamId,
+      channelId: target.channelId,
+      threadTs: target.threadTs,
+      content: text ?? choices?.map((choice) => choice.label).join(" · ") ?? "",
+      blocks,
+    });
+    await setSession(api, target, session);
   } else {
     await setSession(api, target, session);
   }
@@ -1128,6 +1181,42 @@ function recipients(
   return { recipientUserId: userId, recipientTeamId: target.teamId };
 }
 
+/**
+ * The buttons for this finish, when the agent asked for them and the session can still answer.
+ *
+ * @param target - The run's Slack block
+ * @param session - The session this finish leaves behind
+ * @param choices - Options from `slack_finish`, when the agent sent any
+ * @returns The choices to render, or undefined when this finish stays plain
+ */
+function choicesForFinish(
+  target: SlackAgentRunTarget,
+  session: SlackAgentSessionStatus,
+  choices: ReadonlyArray<z.infer<typeof ChoiceArgsSchema>> | undefined,
+): readonly SlackChoice[] | undefined {
+  if (choices === undefined) return undefined;
+  if (target.block.feedback !== true) {
+    throw new SlackAgentSurfaceError(
+      "This trigger has feedback turned off, so a click would not come back.",
+    );
+  }
+  if (session !== "active" && session !== "suspended") {
+    throw new SlackAgentSurfaceError("Choices need the session to stay active or suspended.");
+  }
+  return choices.map((choice) => {
+    const label = choice.label.trim();
+    const value = (choice.value ?? choice.label).trim();
+    if (label.length === 0 || value.length === 0) {
+      throw new SlackAgentSurfaceError("Each choice needs a label.");
+    }
+    return {
+      label,
+      value,
+      ...(choice.style === undefined ? {} : { style: choice.style }),
+    };
+  });
+}
+
 function threadKey(input: { teamId: string; channelId: string; threadTs: string }): string {
   return `${input.teamId}\0${input.channelId}\0${input.threadTs}`;
 }
@@ -1158,6 +1247,7 @@ function agentApi(client: SlackBotClient): SlackAgentApi | undefined {
     appendAgentStream: client.appendAgentStream.bind(client),
     stopAgentStream: client.stopAgentStream.bind(client),
     setSuggestedPrompts: client.setSuggestedPrompts.bind(client),
+    sendMessage: (input) => client.sendMessage(input),
   };
 }
 

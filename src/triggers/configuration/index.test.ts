@@ -3,7 +3,6 @@ import { parseCompiledHubConfig } from "../../config/compiler.js";
 import { parseProjectConfiguration } from "../../configuration/store.js";
 import type { ProjectConfigurationRevisionRecord } from "../../db/types.js";
 import { describe, it } from "vitest";
-import { SLACK_AGENT_FEEDBACK_UNAVAILABLE } from "../slack/agent-block.js";
 import {
   compileTriggerDocument,
   parseTriggerDocument,
@@ -571,21 +570,11 @@ run:
   );
 });
 
-it("rejects a Slack agent block the app cannot host", () => {
-  assert.throws(
-    () =>
-      parseTriggerDocument(
-        slackAgentDocument.replace("plan_title: A tratar do pedido", "feedback: true"),
-      ),
-    (error: unknown) => {
-      assert.ok(error instanceof TriggerDocumentError);
-      assert.equal(
-        error.issues.some((issue) => issue.message === SLACK_AGENT_FEEDBACK_UNAVAILABLE),
-        true,
-      );
-      return true;
-    },
+it("accepts feedback buttons and still rejects a block the schema cannot host", () => {
+  const compiled = compileTriggerDocument(
+    slackAgentDocument.replace("plan_title: A tratar do pedido", "feedback: true"),
   );
+  assert.equal(compiled.events[0]?.steps[0]?.slackAgent?.feedback, true);
   assert.throws(
     () => parseTriggerDocument(slackAgentDocument.replace("display: plan", "display: timeline")),
     /plan_title is only valid when display is plan/u,

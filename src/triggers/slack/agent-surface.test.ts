@@ -192,6 +192,134 @@ describe("Slack agent surface", () => {
     await finishSlackAgentRun(client, target, "success");
     await assert.rejects(() => finishSlackAgentRun(client, target, "failure"));
   });
+
+  it("puts the agent's choices on the card only when the agent sends them", async () => {
+    const choices = [{ label: "Ship it", value: "ship", style: "primary" }, { label: "Revise" }];
+    const finished = surfaceClient();
+    const block = { display: "plan" as const, feedback: true };
+    const target = runTarget(block);
+    await beginSlackAgentRun(finished.client, target);
+    await runTool(finished.client, "slack.agent.say", { text: "Plan." }, context(block));
+    await runTool(
+      finished.client,
+      "slack.agent.finish",
+      { session: "suspended", choices },
+      context(block),
+    );
+    assert.deepEqual(feedbackActionIds(lastCall(finished.calls, "stop")), [
+      "paseo_choice_0",
+      "paseo_choice_1",
+    ]);
+    assert.deepEqual(feedbackValues(lastCall(finished.calls, "stop")), ["ship", "Revise"]);
+
+    resetSlackAgentSurfaceForTests();
+    const plain = surfaceClient();
+    await beginSlackAgentRun(plain.client, target);
+    await runTool(plain.client, "slack.agent.say", { text: "Plan." }, context(block));
+    await runTool(plain.client, "slack.agent.finish", { session: "suspended" }, context(block));
+    assert.equal(lastCall(plain.calls, "stop")?.input.blocks, undefined);
+
+    resetSlackAgentSurfaceForTests();
+    const closed = surfaceClient();
+    await beginSlackAgentRun(closed.client, target);
+    await runTool(closed.client, "slack.agent.say", { text: "Plan." }, context(block));
+    await assert.rejects(
+      () =>
+        runTool(
+          closed.client,
+          "slack.agent.finish",
+          { session: "closed", choices },
+          context(block),
+        ),
+      /active or suspended/u,
+    );
+
+    resetSlackAgentSurfaceForTests();
+    let now = 1_000_000;
+    setSlackAgentClockForTests(() => now);
+    const rotated = surfaceClient();
+    await beginSlackAgentRun(rotated.client, target);
+    await runTool(
+      rotated.client,
+      "slack.agent.stage",
+      { id: "read", title: "Reading", status: "in_progress" },
+      context(block),
+    );
+    now += 9 * MINUTE;
+    await runTool(
+      rotated.client,
+      "slack.agent.stage",
+      { id: "read", title: "Reading", status: "complete" },
+      context(block),
+    );
+    const rotation = rotated.calls.find(
+      (call) => call.method === "stop" && call.input.sessionStatus === "processing",
+    );
+    assert.equal(rotation?.input.blocks, undefined);
+
+    resetSlackAgentSurfaceForTests();
+    const failed = surfaceClient();
+    await beginSlackAgentRun(failed.client, target);
+    await runTool(
+      failed.client,
+      "slack.agent.stage",
+      { id: "read", title: "Reading", status: "in_progress" },
+      context(block),
+    );
+    await runTool(
+      failed.client,
+      "slack.agent.fail",
+      { output: "The calendar was down." },
+      context(block),
+    );
+    assert.equal(lastCall(failed.calls, "stop")?.input.sessionStatus, "active");
+    assert.equal(lastCall(failed.calls, "stop")?.input.blocks, undefined);
+
+    resetSlackAgentSurfaceForTests();
+    const idle = surfaceClient();
+    await beginSlackAgentRun(idle.client, target);
+    await runTool(idle.client, "slack.agent.say", { text: "Plan." }, context(block));
+    await finishSlackAgentRun(idle.client, target, "success");
+    assert.equal(lastCall(idle.calls, "stop")?.input.sessionStatus, "active");
+    assert.equal(lastCall(idle.calls, "stop")?.input.blocks, undefined);
+
+    resetSlackAgentSurfaceForTests();
+    const asked = surfaceClient();
+    await beginSlackAgentRun(asked.client, target);
+    await runTool(
+      asked.client,
+      "slack.agent.finish",
+      { session: "active", choices },
+      context(block),
+    );
+    assert.deepEqual(feedbackActionIds(lastCall(asked.calls, "message")), [
+      "paseo_choice_0",
+      "paseo_choice_1",
+    ]);
+
+    resetSlackAgentSurfaceForTests();
+    const refused = surfaceClient();
+    await beginSlackAgentRun(refused.client, runTarget({ display: "plan" }));
+    await assert.rejects(
+      () =>
+        runTool(
+          refused.client,
+          "slack.agent.finish",
+          { session: "suspended", choices },
+          context({ display: "plan" }),
+        ),
+      /feedback turned off/u,
+    );
+
+    resetSlackAgentSurfaceForTests();
+    const stopped = surfaceClient();
+    bindSlackAgentClient(stopped.client);
+    await beginSlackAgentRun(stopped.client, target);
+    await runTool(stopped.client, "slack.agent.say", { text: "Plan." }, context(block));
+    await noteSlackAgentSessionStopped({ teamId: "T1", channelId: "C1", threadTs: "1.1" });
+    assert.equal(lastCall(stopped.calls, "stop")?.input.sessionStatus, "active");
+    assert.equal(lastCall(stopped.calls, "stop")?.input.blocks, undefined);
+  });
 });
 
 function runTarget(block: SlackAgentRunTarget["block"]): SlackAgentRunTarget {
@@ -261,16 +389,51 @@ function lastCall(
 }
 
 interface RecordedCall {
-  method: "status" | "rename" | "start" | "append" | "stop" | "prompts";
+  method: "status" | "rename" | "start" | "append" | "stop" | "prompts" | "message";
   input: {
     status?: string;
     title?: string;
     sessionStatus?: string;
+    blocks?: readonly Record<string, unknown>[];
     taskDisplayMode?: string;
     recipientUserId?: string;
     recipientTeamId?: string;
     chunks?: Array<{ type: string; title?: string; status?: string; id?: string }>;
   };
+}
+
+function feedbackActionIds(call: RecordedCall | undefined): string[] {
+  return feedbackFields(call, "action_id");
+}
+
+function feedbackValues(call: RecordedCall | undefined): string[] {
+  return feedbackFields(call, "value");
+}
+
+function feedbackFields(call: RecordedCall | undefined, key: string): string[] {
+  const block = call?.input.blocks?.[0];
+  const elements = isRecord(block) ? block["elements"] : undefined;
+  if (!isList(elements)) return [];
+  const fields: string[] = [];
+  for (const element of elements) {
+    const field = stringField(element, key);
+    if (field !== undefined) fields.push(field);
+  }
+  return fields;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isList(value: unknown): value is readonly unknown[] {
+  return Array.isArray(value);
+}
+
+function stringField(value: unknown, key: string): string | undefined {
+  if (!isRecord(value)) return undefined;
+  const candidate = value[key];
+  return typeof candidate === "string" ? candidate : undefined;
 }
 
 function surfaceClient(
@@ -289,7 +452,10 @@ function surfaceClient(
     return { ok: false, error };
   };
   const client: SlackBotClient = {
-    sendMessage: () => Promise.resolve(),
+    sendMessage: (input) => {
+      calls.push({ method: "message", input });
+      return Promise.resolve();
+    },
     addReaction: () => Promise.resolve(),
     removeReaction: () => Promise.resolve(),
     setAgentSessionStatus: (input) => {

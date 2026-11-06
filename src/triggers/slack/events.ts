@@ -127,6 +127,10 @@ export const NormalizedSlackMentionEventSchema = z.object({
   author: z.object({ id: SlackIdSchema, username: z.string().min(1).max(255).optional() }),
   /** True when another Slack app posted the message. Absent on events stored before the flag. */
   fromBot: z.boolean().optional(),
+  /**
+   * The choice value the person clicked. Absent on a message Slack delivered.
+   */
+  planDecision: z.string().min(1).max(200).optional(),
   createdAt: z.string(),
   attachments: z.array(SlackAttachmentMetadataSchema).default([]),
 });

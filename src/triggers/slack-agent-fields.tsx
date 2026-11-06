@@ -4,17 +4,13 @@ import { Plus, Trash2 } from "lucide-react";
 import { FormField } from "../components/app/form-field.js";
 import { SegmentedControl } from "../components/app/segmented-control.js";
 import { Button } from "../components/ui/button.js";
-import {
-  SLACK_AGENT_FEEDBACK_UNAVAILABLE,
-  type SlackAgentDraft,
-  type SlackAgentPromptDraft,
-} from "./slack/agent-block.js";
+import { type SlackAgentDraft, type SlackAgentPromptDraft } from "./slack/agent-block.js";
 
 /**
  * `slack_agent` on one agent reaction.
  *
  * Off leaves the block out of the YAML. On writes the display, the titles, and the prompts.
- * Feedback stays off: this Slack app does not receive block actions yet.
+ * Feedback lets the agent send its own choice buttons.
  */
 export function SlackAgentFields({
   idPrefix,
@@ -137,18 +133,18 @@ export function SlackAgentFields({
               </Button>
             )}
           </div>
+          <SegmentedControl
+            label="Feedback buttons"
+            description="Lets the agent put its own choices on the finished card. A click continues this thread."
+            value={value.feedback ? "on" : "off"}
+            options={[
+              { value: "off", label: "Off" },
+              { value: "on", label: "On" },
+            ]}
+            onChange={(next) => set({ feedback: next === "on" })}
+          />
         </>
       ) : null}
-      <SegmentedControl
-        label="Feedback buttons"
-        description="Feedback buttons"
-        value="off"
-        options={[
-          { value: "off", label: "Off" },
-          { value: "on", label: "On", disabled: true, hint: SLACK_AGENT_FEEDBACK_UNAVAILABLE },
-        ]}
-        onChange={() => undefined}
-      />
     </div>
   );
 }

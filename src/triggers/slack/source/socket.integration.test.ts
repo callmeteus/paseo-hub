@@ -202,6 +202,81 @@ describe("Slack Socket Mode source", () => {
     await waitFor(() => slack.outstanding === 0);
     assert.equal(source.status().state, "stopped");
   });
+
+  it("acknowledges a plan decision and settles the card after the ack", async () => {
+    const slack = await startSlackSocketFixture();
+    closers.push(() => slack.close());
+    const acceptedInputs: Parameters<typeof createSlackEventSource>[0]["accept"] extends (
+      input: infer T,
+    ) => Promise<unknown>
+      ? T[]
+      : never = [];
+    let settled = false;
+    const source = createSlackEventSource({
+      configuration: {
+        provider: "slack",
+        transport: "socket",
+        appId: "A123",
+        appToken: "xapp-fixture-secret",
+      },
+      socket: { apiUrl: slack.openUrl, random: () => 0, timeoutMs: 250 },
+      accept: (input) => {
+        acceptedInputs.push(input);
+        return Promise.resolve({
+          status: "accepted",
+          receiptId: "receipt-123",
+          events: [
+            {
+              providerEventReceiptId: "trigger-1",
+              organizationId: "org-1",
+              projectId: "project-1",
+              configurationRevisionId: "11111111-1111-4111-8111-111111111132",
+              deliveryId: input.deliveryId,
+              source: input.source,
+              payload: input.payload,
+              receivedAt: input.receivedAt,
+              connectionId: null,
+              resourceId: input.teamId,
+            },
+          ],
+        });
+      },
+      settlePlanDecision: () => {
+        settled = true;
+        return Promise.resolve();
+      },
+    });
+    await source.start(() => Promise.resolve());
+    await waitFor(() => source.status().state === "connected");
+    slack.send(feedbackEnvelope("env-feedback"));
+    await waitFor(() => settled && slack.acks.length === 1);
+    assert.equal(acceptedInputs[0]?.deliveryId, "slack-feedback-T123-C123-1700000000.000100");
+    assert.equal(acceptedInputs[0]?.source, "slack.message");
+    const payload = acceptedInputs[0]?.payload;
+    assert.equal(
+      payload !== null && typeof payload === "object" && "planDecision" in payload
+        ? payload.planDecision
+        : undefined,
+      "ship",
+    );
+    await source.stop();
+  });
+
+  it("acknowledges an unknown action without accepting it", async () => {
+    const slack = await startSlackSocketFixture();
+    closers.push(() => slack.close());
+    let accepted = false;
+    const source = socketSource(slack, () => {
+      accepted = true;
+      return Promise.resolve({ status: "accepted", events: [], receiptId: "receipt-123" });
+    });
+    await source.start(() => Promise.resolve());
+    await waitFor(() => source.status().state === "connected");
+    slack.send(feedbackEnvelope("env-other", "not_a_plan_button"));
+    await waitFor(() => slack.acks.length === 1);
+    assert.equal(accepted, false);
+    await source.stop();
+  });
 });
 
 function socketSource(
@@ -240,6 +315,29 @@ function assertSlackFailure(
     canary,
     ...(level === undefined ? {} : { level }),
   });
+}
+
+function feedbackEnvelope(envelopeId: string, actionId = "paseo_choice_0", value = "ship") {
+  return {
+    type: "interactive",
+    envelope_id: envelopeId,
+    payload: {
+      type: "block_actions",
+      api_app_id: "A123",
+      team: { id: "T123" },
+      channel: { id: "C123" },
+      user: { id: "U123", username: "ada" },
+      message: { ts: "1700000000.000100", thread_ts: "1699999999.000001", text: "The plan" },
+      actions: [
+        {
+          action_id: actionId,
+          action_ts: "1700000001.000200",
+          value,
+          text: { type: "plain_text", text: "Ship it" },
+        },
+      ],
+    },
+  };
 }
 
 function eventEnvelope(envelopeId: string, eventId: string) {

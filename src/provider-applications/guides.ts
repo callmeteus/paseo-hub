@@ -388,6 +388,11 @@ export const SLACK_WEBHOOK_GUIDE: ProviderGuide = {
   urls: [
     { key: "redirect", label: "Redirect URL", path: "/api/integrations/slack/callback" },
     { key: "events", label: "Request URL", path: "/api/integrations/slack/events" },
+    {
+      key: "interactivity",
+      label: "Interactivity Request URL",
+      path: "/api/integrations/slack/interactivity",
+    },
   ],
   savingContinues: true,
   actions: {
@@ -718,6 +723,10 @@ export function slackManifest(origin: string, transport: "socket" | "webhook" = 
       : "";
   const requestUrl =
     transport === "webhook" ? `    request_url: ${origin}/api/integrations/slack/events\n` : "";
+  const interactivity =
+    transport === "webhook"
+      ? `  interactivity:\n    is_enabled: true\n    request_url: ${origin}/api/integrations/slack/interactivity\n`
+      : "  interactivity:\n    is_enabled: true\n";
   return `display_information:
   name: Paseo
 features:
@@ -736,9 +745,7 @@ ${requestUrl}    bot_events:
       - message.channels
       - message.groups
       - message.im
-  interactivity:
-    is_enabled: false
-  org_deploy_enabled: false
+${interactivity}  org_deploy_enabled: false
   socket_mode_enabled: ${transport === "socket" ? "true" : "false"}
   token_rotation_enabled: false
 `;

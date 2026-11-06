@@ -5,7 +5,7 @@ import { describe, it } from "vitest";
 
 import { GuardrailFields } from "./guardrail-fields.js";
 import { SlackAgentFields } from "./slack-agent-fields.js";
-import { blankSlackAgentDraft, SLACK_AGENT_FEEDBACK_UNAVAILABLE } from "./slack/agent-block.js";
+import { blankSlackAgentDraft } from "./slack/agent-block.js";
 import { InstructionsEditor } from "./instructions-editor.js";
 import { WorktreeFields } from "./worktree-fields.js";
 import { emptyWorktree, textInstructions } from "./configuration/form-drafts.js";
@@ -88,7 +88,7 @@ describe("trigger configuration fields", () => {
     assert.match(markup, /Add suggested prompt/);
     assert.match(markup, /value="Status"/);
     assert.match(markup, /Feedback buttons/);
-    assert.match(markup, /Feedback buttons need Slack interactivity/);
-    assert.equal(markup.includes(SLACK_AGENT_FEEDBACK_UNAVAILABLE), true);
+    assert.match(markup, /Lets the agent put its own choices on the finished card/);
+    assert.equal(markup.includes("aria-disabled"), false);
   });
 });
