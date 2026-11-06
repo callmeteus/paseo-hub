@@ -5,11 +5,23 @@ import { createSlackBotClient } from "./client.js";
 
 describe("Slack Web API client", () => {
   it("looks up an authored username with the workspace bot token", async () => {
-    let request: { url: string; method: string | undefined } | undefined;
+    let request:
+      | {
+          url: string;
+          method: string | undefined;
+          contentType: string | null;
+          body: string | undefined;
+        }
+      | undefined;
     const client = createSlackBotClient({
       tokenForWorkspace: () => Promise.resolve("xoxb-secret"),
       fetch: async (input, init) => {
-        request = { url: requestUrl(input), method: init?.method };
+        request = {
+          url: requestUrl(input),
+          method: init?.method,
+          contentType: new Headers(init?.headers).get("content-type"),
+          body: requestBody(init?.body),
+        };
         return Response.json({ ok: true, user: { name: "operator" } });
       },
     });
@@ -21,6 +33,8 @@ describe("Slack Web API client", () => {
     assert.deepEqual(request, {
       url: "https://slack.com/api/users.info",
       method: "POST",
+      contentType: "application/x-www-form-urlencoded",
+      body: "user=U1",
     });
   });
 
@@ -41,7 +55,7 @@ describe("Slack Web API client", () => {
           url: requestUrl(input),
           method: init?.method,
           authorization: new Headers(init?.headers).get("authorization"),
-          body: typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
+          body: requestBody(init?.body),
         };
         return Response.json({ ok: true, channel: { name: "alertas" } });
       },
@@ -59,7 +73,7 @@ describe("Slack Web API client", () => {
       url: "https://slack.com/api/conversations.info",
       method: "POST",
       authorization: `Bearer ${token}`,
-      body: { channel: "C096V21TE0K" },
+      body: "channel=C096V21TE0K",
     });
   });
 
@@ -418,15 +432,23 @@ describe("Slack Web API client", () => {
   });
 
   it("keeps Slack file credentials and private URLs inside the client", async () => {
-    const requests: Array<{ url: string; authorization: string | null }> = [];
+    const requests: Array<{
+      url: string;
+      authorization: string | null;
+      contentType: string | null;
+      body: string | undefined;
+    }> = [];
     const client = createSlackBotClient({
       tokenForWorkspace: () => Promise.resolve("xoxb-secret"),
       fetch: async (input, init) => {
+        const url = requestUrl(input);
         requests.push({
-          url: requestUrl(input),
+          url,
           authorization: new Headers(init?.headers).get("authorization"),
+          contentType: new Headers(init?.headers).get("content-type"),
+          body: requestBody(init?.body),
         });
-        if (requestUrl(input).endsWith("files.info")) {
+        if (url.endsWith("files.info")) {
           return Response.json({
             ok: true,
             file: {
@@ -449,10 +471,17 @@ describe("Slack Web API client", () => {
 
     assert.equal(await response?.text(), "slack-image-bytes");
     assert.deepEqual(requests, [
-      { url: "https://slack.com/api/files.info", authorization: "Bearer xoxb-secret" },
+      {
+        url: "https://slack.com/api/files.info",
+        authorization: "Bearer xoxb-secret",
+        contentType: "application/x-www-form-urlencoded",
+        body: "file=F1",
+      },
       {
         url: "https://files.slack.com/files-pri/T1-F1/download/image.png",
         authorization: "Bearer xoxb-secret",
+        contentType: null,
+        body: undefined,
       },
     ]);
   });
@@ -656,4 +685,10 @@ describe("Slack Web API client", () => {
 function requestUrl(input: RequestInfo | URL): string {
   if (typeof input === "string") return input;
   return input instanceof URL ? input.toString() : input.url;
+}
+
+function requestBody(body: BodyInit | null | undefined): string | undefined {
+  if (typeof body === "string") return body;
+  if (body instanceof URLSearchParams) return body.toString();
+  return undefined;
 }
