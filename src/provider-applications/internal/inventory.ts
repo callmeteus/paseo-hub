@@ -1,7 +1,11 @@
 import type { DatabaseRuntime, QueryRow } from "../../db/runtime/index.js";
 import { linearConnectionRequiresReauthorization } from "../../providers/linear/client.js";
 import { hasRequiredSlackScopes } from "../../providers/slack/client.js";
-import type { Provider, ProviderApplicationInventory } from "../index.js";
+import type {
+  ConnectedProviderIdentity,
+  Provider,
+  ProviderApplicationInventory,
+} from "../index.js";
 
 interface ConnectionIdentityRow extends QueryRow {
   id: string;
@@ -11,6 +15,7 @@ interface ConnectionIdentityRow extends QueryRow {
   scopes: unknown;
   refresh_token?: unknown;
   access_token_expires_at?: unknown;
+  organization_slug?: string | null;
 }
 
 /** @package */
@@ -20,18 +25,24 @@ export function createProviderApplicationInventory(
   return {
     async connectedIdentities(provider) {
       const result = await database.query<ConnectionIdentityRow>(connectionIdentityQuery(provider));
-      return result.rows.map((row) => ({
-        id: row.id,
-        name: row.name,
-        applicationId: row.application_id,
-        status:
-          row.action_needed ||
-          (provider === "slack" &&
-            (!Array.isArray(row.scopes) || !hasRequiredSlackScopes(row.scopes))) ||
-          (provider === "linear" && linearConnectionActionNeeded(row))
-            ? "actionNeeded"
-            : "connected",
-      }));
+      return result.rows.map((row) => {
+        const identity: ConnectedProviderIdentity = {
+          id: row.id,
+          name: row.name,
+          applicationId: row.application_id,
+          status:
+            row.action_needed ||
+            (provider === "slack" &&
+              (!Array.isArray(row.scopes) || !hasRequiredSlackScopes(row.scopes))) ||
+            (provider === "linear" && linearConnectionActionNeeded(row))
+              ? "actionNeeded"
+              : "connected",
+        };
+        if (typeof row.organization_slug === "string") {
+          identity.organizationSlug = row.organization_slug;
+        }
+        return identity;
+      });
     },
     async lastEventAt(provider, identity, configurationVersion) {
       if (provider === "discord") return null;
@@ -90,10 +101,13 @@ function connectionIdentityQuery(provider: Provider): string {
             from github_connections order by connected_at`;
   }
   if (provider === "slack") {
-    return `select id::text as id, team_name as name,
-                   provider_application_id as application_id,
-                   false as action_needed, scopes
-            from slack_connections order by connected_at`;
+    return `select connection.id::text as id, connection.team_name as name,
+                   connection.provider_application_id as application_id,
+                   false as action_needed, connection.scopes,
+                   organization.slug as organization_slug
+            from slack_connections connection
+            join organization on organization.id = connection.organization_id
+            order by connection.connected_at`;
   }
   if (provider === "linear") {
     return `select id::text as id, linear_organization_name as name,

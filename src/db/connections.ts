@@ -29,6 +29,7 @@ import type {
   SlackConnectionRecord,
   StartConnectionAttemptInput,
   UpdateLinearConnectionTokensInput,
+  UpdateSlackConnectionGrantInput,
 } from "./types.js";
 
 type HubDatabase = DrizzleHandle;
@@ -465,6 +466,25 @@ export class ConnectionRepository {
       }
       await consumeLockedAttempt(transaction, attempt.id);
     });
+  }
+
+  async updateSlackGrant(input: UpdateSlackConnectionGrantInput): Promise<void> {
+    const updated = await this.database
+      .update(schema.slackConnections)
+      .set({
+        teamName: input.teamName,
+        botUserId: input.botUserId,
+        scopes: input.scopes,
+        updatedAt: sql`clock_timestamp()`,
+      })
+      .where(
+        and(
+          eq(schema.slackConnections.id, input.connectionId),
+          eq(schema.slackConnections.organizationId, input.organizationId),
+        ),
+      )
+      .returning({ id: schema.slackConnections.id });
+    if (updated.length === 0) throw new ConnectionAccessDeniedError();
   }
 
   async updateLinearTokens(input: UpdateLinearConnectionTokensInput): Promise<void> {

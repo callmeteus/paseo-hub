@@ -4,6 +4,7 @@ import { parseCompiledHubConfig, type JsonValue } from "../config/compiler.js";
 import type { LaunchMachineIntent } from "../dispatcher/launch-machine-intent.js";
 import { terminalHubAction } from "../daemons/terminal-hub-action.js";
 import { linearConnectionRequiresReauthorization } from "../providers/linear/client.js";
+import { ConnectionAccessDeniedError } from "./errors.js";
 import { launchedAgent } from "./mappers.js";
 import type {
   AgentExecutionRecord,
@@ -103,6 +104,7 @@ import type {
   OrganizationBillingCustomerRecord,
   ReconcileOrganizationBillingInput,
   UpdateLinearConnectionTokensInput,
+  UpdateSlackConnectionGrantInput,
   LinearConnectionRefreshOperation,
 } from "./types.js";
 import {
@@ -3374,6 +3376,21 @@ class MemoryDatabase implements Database {
 
   completeLinearProviderApplication(_input: CompleteLinearProviderApplicationInput): Promise<void> {
     return connectionPersistenceUnavailable();
+  }
+
+  updateSlackConnectionGrant(input: UpdateSlackConnectionGrantInput): Promise<void> {
+    const connection = Array.from(this.slackConnections.values()).find(
+      (candidate) =>
+        candidate.id === input.connectionId && candidate.organizationId === input.organizationId,
+    );
+    if (connection === undefined) throw new ConnectionAccessDeniedError();
+    this.slackConnections.set(connection.teamId, {
+      ...connection,
+      teamName: input.teamName,
+      botUserId: input.botUserId,
+      scopes: input.scopes,
+    });
+    return Promise.resolve();
   }
 
   updateLinearConnectionTokens(_input: UpdateLinearConnectionTokensInput): Promise<void> {

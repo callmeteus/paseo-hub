@@ -168,6 +168,76 @@ function verificationError(error: string | undefined, status?: number): Provider
   );
 }
 
+export type SlackBotGrant =
+  | {
+      ok: true;
+      teamId: string;
+      teamName: string;
+      botUserId: string;
+      scopes: string[];
+    }
+  | { ok: false; reason: "rejected" | "unavailable" };
+
+/**
+ * Reads the workspace and bot scopes Slack reports for a token Hub already saved.
+ * A short grant is still a successful read. The caller decides whether it is enough.
+ *
+ * @param botToken - Bot token stored for the workspace
+ * @param options - Slack API stand-in used by tests
+ * @returns The grant Slack reported, or why the saved token could not be read
+ */
+export async function readSlackBotGrant(
+  botToken: string,
+  options: { fetch?: typeof fetch; apiBaseUrl?: string; timeoutMs?: number } = {},
+): Promise<SlackBotGrant> {
+  const request = options.fetch ?? fetch;
+  const api = options.apiBaseUrl ?? "https://slack.com/api";
+  const timeoutMs = options.timeoutMs ?? 10_000;
+  const transaction = new AbortController();
+  const timeout = setTimeout(
+    () => transaction.abort(new Error("Slack verification timed out")),
+    timeoutMs,
+  );
+  try {
+    const auth = await slackJson(
+      request,
+      `${api}/auth.test`,
+      botToken,
+      AuthTestSchema,
+      transaction,
+    );
+    if (!auth.value.ok) return { ok: false, reason: "rejected" };
+    if (
+      auth.value.team_id === undefined ||
+      auth.value.team === undefined ||
+      auth.value.user_id === undefined
+    ) {
+      return { ok: false, reason: "unavailable" };
+    }
+    return {
+      ok: true,
+      teamId: auth.value.team_id,
+      teamName: auth.value.team,
+      botUserId: auth.value.user_id,
+      scopes: parseScopes(auth.response.headers.get("x-oauth-scopes")),
+    };
+  } catch (error) {
+    if (!(error instanceof ProviderVerificationError)) {
+      return { ok: false, reason: "unavailable" };
+    }
+    return {
+      ok: false,
+      reason:
+        error.reason === "credentialsRejected" || error.reason === "permissionMissing"
+          ? "rejected"
+          : "unavailable",
+    };
+  } finally {
+    clearTimeout(timeout);
+    transaction.abort();
+  }
+}
+
 function parseScopes(value: string | null): string[] {
   return [
     ...new Set(

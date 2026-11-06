@@ -3,7 +3,7 @@ import { useSnapshotQuery } from "../queries/index.js";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { type FormEvent, type ReactNode } from "react";
+import { type FormEvent, type ReactNode, useState } from "react";
 import { CONNECTION_MUTATION_KEY } from "../auth/tenant-mutation.js";
 import { useActiveAccount } from "../auth/active-account.js";
 import { Card, CardSkeleton } from "../components/app/card.js";
@@ -32,9 +32,11 @@ import type { Result } from "../contract/respond.js";
 import {
   connectionStatus,
   disconnectConnection,
+  reauthorizeSlackConnection,
   startConnection,
   type ConnectionDisconnectResult,
   type ConnectionStatus,
+  type SlackReauthorizeResult,
 } from "../connections/functions.js";
 import { useRouteTenant } from "./context.js";
 import type { ProjectDashboard } from "./dashboard.js";
@@ -80,6 +82,33 @@ export function OrganizationConnectionsPanel() {
     queryFn: () => loadStatus({ data: scope }),
   });
   const [returned, setReturned] = useConnectionReturn();
+  const [reauthorizeNotice, setReauthorizeNotice] = useState<string | undefined>();
+  const reauthorizeSlack = useMutation({
+    mutationKey: CONNECTION_MUTATION_KEY,
+    mutationFn: useServerFn(reauthorizeSlackConnection) as (
+      input: Parameters<typeof reauthorizeSlackConnection>[0],
+    ) => Promise<Result<SlackReauthorizeResult>>,
+    onSuccess: async (response) => {
+      if (response.status !== "ok") return;
+      if ("url" in response.data) {
+        armConnectionHandoff();
+        window.location.assign(response.data.url);
+        return;
+      }
+      setReauthorizeNotice(
+        response.data.complete
+          ? undefined
+          : `Slack still hasn't granted the scopes ${response.data.teamName} needs. Reinstall the app on that workspace, then reauthorize again.`,
+      );
+      await Promise.all([
+        invalidateOrganization(queryClient, scope.organizationSlug),
+        queryClient.invalidateQueries({
+          queryKey: ["connection-status", tenant.account.id, tenant.organization.id],
+        }),
+        queryClient.invalidateQueries({ queryKey: ["provider-applications"] }),
+      ]);
+    },
+  });
   const connect = useMutation({
     mutationKey: CONNECTION_MUTATION_KEY,
     mutationFn: useServerFn(startConnection),
@@ -123,7 +152,13 @@ export function OrganizationConnectionsPanel() {
     );
   };
   const rows = connectionRows(data);
-  const busy = connect.isPending || disconnect.isPending;
+  const busy = connect.isPending || disconnect.isPending || reauthorizeSlack.isPending;
+  const reauthorizeWorkspace = (connectionId: string) => {
+    setReauthorizeNotice(undefined);
+    reauthorizeSlack.mutate({
+      data: { organizationSlug: scope.organizationSlug, connectionId },
+    });
+  };
   const connectionActionLabel = (provider: ConnectionProviderName) => {
     if (
       (provider === "slack" || provider === "linear") &&
@@ -147,6 +182,21 @@ export function OrganizationConnectionsPanel() {
     // instance operator can change that. Everyone else is told nothing about instance
     // credentials: a state they cannot act on is not news, and a card with only a name on it is
     // the page talking about work they cannot do.
+    const slackReauthorization = rows.find(
+      (connection) =>
+        connection.provider === "slack" && connection.status === "requiresReauthorization",
+    );
+    if (provider === "slack" && slackReauthorization !== undefined) {
+      return (
+        <Button
+          disabled={busy}
+          size="sm"
+          onClick={() => reauthorizeWorkspace(slackReauthorization.id)}
+        >
+          Reauthorize
+        </Button>
+      );
+    }
     if (status.data[provider].status === "notConfigured") {
       if (!isInstanceOperator) return undefined;
       return (
@@ -182,7 +232,15 @@ export function OrganizationConnectionsPanel() {
       {returned === undefined ? null : (
         <ConnectionReturnBanner copy={connectionReturnCopy(returned)} />
       )}
-      <CommandError mutations={[connect, disconnect]} />
+      <CommandError mutations={[connect, disconnect, reauthorizeSlack]} />
+      {reauthorizeNotice === undefined ? null : (
+        <FailureAlert
+          standalone
+          title="Reauthorization required"
+          error={reauthorizeNotice}
+          fallback="Slack still hasn't granted the scopes this workspace needs. Reinstall the app, then reauthorize again."
+        />
+      )}
       <Section>
         {shown.length === 0 ? (
           <EmptyState title="No connections" description={nothingToConnect} />
@@ -273,7 +331,12 @@ function ProviderConnections({
                 ) : undefined
               }
             >
-              <TwoLine primary={connection.name} secondary={connection.externalId} mono />
+              <TwoLine
+                primary={connection.name}
+                {...(connection.externalId === undefined
+                  ? {}
+                  : { secondary: connection.externalId, mono: true })}
+              />
             </RecordRow>
           ))}
         </RecordList>
@@ -706,8 +769,8 @@ function connectionRows(data: OrganizationSnapshot) {
     ...data.connections.slack.map((connection) => ({
       provider: "slack" as const,
       id: connection.id,
-      name: connection.slug,
-      externalId: `workspace ${connection.teamId}`,
+      name: connection.teamName,
+      externalId: undefined,
       status: connection.requiresReauthorization
         ? ("requiresReauthorization" as const)
         : ("connected" as const),

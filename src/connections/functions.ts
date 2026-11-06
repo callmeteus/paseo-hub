@@ -55,10 +55,19 @@ const providerSchema = scopeSchema.extend({
   provider: z.enum(CONNECTION_PROVIDERS),
 });
 const disconnectSchema = providerSchema.extend({ connectionId: z.string().uuid() });
+const reauthorizeSlackSchema = z.object({
+  organizationSlug: z.string().min(1),
+  connectionId: z.string().uuid(),
+});
 const startSchema = z.object({ url: z.string().url() });
+const reauthorizeSlackResultSchema = z.union([
+  z.object({ url: z.string().url() }),
+  z.object({ complete: z.boolean(), teamName: z.string() }),
+]);
 
 export type ConnectionStatus = z.infer<typeof connectionStatusSchema>;
 export type ConnectionDisconnectResult = `${ConnectionProvider}_disconnected`;
+export type SlackReauthorizeResult = z.infer<typeof reauthorizeSlackResultSchema>;
 
 const handoffSchema = z.object({ path: z.string().nullable() });
 
@@ -189,12 +198,53 @@ export const disconnectConnection = createServerFn({ method: "POST" })
     }
   });
 
+export const reauthorizeSlackConnection = createServerFn({ method: "POST" })
+  .validator(reauthorizeSlackSchema)
+  .handler(async ({ data }): Promise<Result<SlackReauthorizeResult>> => {
+    try {
+      const response = await handleConnections(
+        operationRequest("POST", "/connections/reauthorize", data, data.connectionId),
+        "slackReauthorize",
+      );
+      if (!response.ok) {
+        const body = z
+          .object({ error: z.string().optional() })
+          .safeParse(await response.json().catch(() => undefined));
+        return connectionResponseFailure(
+          "connection.reauthorize",
+          response,
+          slackReauthorizeFailure(body.success ? body.data.error : undefined, response.status),
+          data,
+        );
+      }
+      return respondOk(reauthorizeSlackResultSchema.parse(await response.json()));
+    } catch (error) {
+      return respondWithFailure(error, connectionContext("connection.reauthorize", data), {
+        fallback: "Hub couldn't reauthorize Slack with the saved credentials. Try again.",
+      });
+    }
+  });
+
 const CONNECTION_OPERATIONS = {
   github: { start: "githubStart", disconnect: "githubDisconnect" },
   discord: { start: "discordStart", disconnect: "discordDisconnect" },
   slack: { start: "slackStart", disconnect: "slackDisconnect" },
   linear: { start: "linearStart", disconnect: "linearDisconnect" },
 } as const;
+
+function slackReauthorizeFailure(code: unknown, status: number): string {
+  if (code === "credentials_rejected") {
+    return "Slack rejected the saved bot token. Replace the credentials, then try again.";
+  }
+  if (code === "workspace_mismatch") {
+    return "The saved bot token belongs to a different Slack workspace.";
+  }
+  if (code === "not_found") {
+    return "That Slack workspace is not connected to this organization.";
+  }
+  if (status === 403) return "You don't have permission to reauthorize Slack.";
+  return "Hub couldn't reauthorize Slack with the saved credentials. Try again.";
+}
 
 function connectionContext(
   operation: string,

@@ -591,6 +591,14 @@ export interface CompleteLinearProviderApplicationInput extends BindLinearConnec
   };
 }
 
+export interface UpdateSlackConnectionGrantInput {
+  connectionId: string;
+  organizationId: string;
+  teamName: string;
+  botUserId: string;
+  scopes: string[];
+}
+
 export interface UpdateLinearConnectionTokensInput {
   connectionId: string;
   accessToken: string;
@@ -1704,6 +1712,8 @@ export interface Database {
   bindLinearConnection(input: BindLinearConnectionInput): Promise<void>;
   completeLinearProviderApplication(input: CompleteLinearProviderApplicationInput): Promise<void>;
   updateLinearConnectionTokens(input: UpdateLinearConnectionTokensInput): Promise<void>;
+  /** Writes the workspace name and bot scopes Slack just reported for a saved token. */
+  updateSlackConnectionGrant(input: UpdateSlackConnectionGrantInput): Promise<void>;
   /**
    * Runs a Linear refresh decision under the same transaction-scoped external-connection lock
    * used by OAuth rebind. The connection re-read and any token update use that transaction, so a

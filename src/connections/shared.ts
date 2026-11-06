@@ -237,7 +237,7 @@ export function connectionCallbackFailure(input: {
 export function connectionActionFailure(
   error: unknown,
   provider: ConnectionProvider,
-  action: "start" | "disconnect",
+  action: "start" | "disconnect" | "reauthorize",
 ): Response {
   const accessDenied =
     error instanceof ConnectionAccessDeniedError || error instanceof ProductRequestError;

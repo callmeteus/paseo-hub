@@ -21,6 +21,7 @@ import { Skeleton } from "../components/ui/skeleton.js";
 import { ProviderGlyph } from "../connections/provider-glyph.js";
 import type { Result } from "../contract/respond.js";
 import { cn } from "../lib/utils.js";
+import { reauthorizeSlackConnection } from "../connections/functions.js";
 import { armConnectionHandoff } from "../connections/handoff-watch.js";
 import { embeddedHubKeepsPage } from "../shell/external-url.js";
 import {
@@ -160,6 +161,59 @@ export function ProviderSection({
     },
     onError: () => setOutcome({ tone: "error", message: unreachable(guide.name) }),
   });
+  const reauthorizeSaved = useServerFn(reauthorizeSlackConnection);
+  const slackReauthorizations =
+    guide.provider === "slack"
+      ? view.connections.flatMap((connection) =>
+          connection.status === "actionNeeded" && connection.organizationSlug !== undefined
+            ? [
+                {
+                  id: connection.id,
+                  organizationSlug: connection.organizationSlug,
+                },
+              ]
+            : [],
+        )
+      : [];
+  const reauthorize = useMutation({
+    mutationFn: async () => {
+      let incompleteName = "";
+      for (const connection of slackReauthorizations) {
+        const response = await reauthorizeSaved({
+          data: { organizationSlug: connection.organizationSlug, connectionId: connection.id },
+        });
+        if (response.status === "error") return response;
+        if ("url" in response.data) {
+          armConnectionHandoff();
+          window.location.assign(response.data.url);
+          return response;
+        }
+        if (!response.data.complete) incompleteName = response.data.teamName;
+      }
+      return {
+        status: "ok" as const,
+        data: { complete: incompleteName === "", teamName: incompleteName },
+      };
+    },
+    onSuccess: async (response) => {
+      if (response.status === "error") {
+        setOutcome({ tone: "error", message: response.error.message });
+        return;
+      }
+      if ("url" in response.data) return;
+      setOutcome({
+        tone: response.data.complete ? "success" : "error",
+        message: response.data.complete
+          ? "Slack reauthorized."
+          : `Slack still hasn't granted the scopes ${response.data.teamName} needs. Reinstall the app on that workspace, then reauthorize again.`,
+      });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["provider-applications"] }),
+        queryClient.invalidateQueries({ queryKey: ["organization"] }),
+      ]);
+    },
+    onError: () => setOutcome({ tone: "error", message: unreachable(guide.name) }),
+  });
   const retryDelivery = useMutation({
     mutationFn: useServerFn(retrySlackSocketDelivery) as (input: {}) => Promise<VoidResponse>,
     onSuccess: async (response) => {
@@ -173,7 +227,8 @@ export function ProviderSection({
     onError: () => setOutcome({ tone: "error", message: unreachable("Slack") }),
   });
 
-  const pending = save.isPending || connect.isPending || retryDelivery.isPending;
+  const pending =
+    save.isPending || connect.isPending || retryDelivery.isPending || reauthorize.isPending;
   // A website save that resolved into a redirect keeps the section busy until the browser leaves,
   // so the form cannot be submitted twice in the gap. Paseo keeps this page and opens the provider
   // outside, so the button has to be usable again.
@@ -223,7 +278,14 @@ export function ProviderSection({
     connect.mutate({ data: { provider: guide.provider, organizationId, surface } });
   }, [connect, guide.provider, organizationId, surface]);
 
-  const status = statusPresentation(view.status);
+  const presented = statusPresentation(view.status);
+  const status = {
+    tone: presented.tone,
+    label:
+      guide.provider === "slack" && view.status === "actionNeeded"
+        ? "Reauthorization required"
+        : presented.label,
+  };
   // Once anything is saved the instructions become reference material and move behind a
   // disclosure, so completed work is never buried under the manual that created it.
   const phase = sectionPhase(activeGuide, view, callbackOrigin, replacing);
@@ -278,6 +340,9 @@ export function ProviderSection({
           replaceRef={replace}
           onConnect={startConnection}
           onRetry={() => retryDelivery.mutate({})}
+          onReauthorize={
+            slackReauthorizations.length === 0 ? undefined : () => reauthorize.mutate()
+          }
           onReplace={() => {
             setErrors({});
             setOutcome(undefined);
@@ -356,6 +421,7 @@ function SectionBody({
   replaceRef,
   onConnect,
   onRetry,
+  onReauthorize,
   onReplace,
 }: {
   guide: ProviderGuide;
@@ -368,6 +434,7 @@ function SectionBody({
   replaceRef: React.RefObject<HTMLButtonElement | null>;
   onConnect: () => void;
   onRetry: () => void;
+  onReauthorize: (() => void) | undefined;
   onReplace: () => void;
 }) {
   if (phase === "blocked") return <HttpsGate guide={guide} origin={origin} />;
@@ -415,6 +482,11 @@ function SectionBody({
               pending={connecting}
               onConnect={onConnect}
             />
+            {onReauthorize === undefined ? null : (
+              <Button type="button" disabled={busy} onClick={onReauthorize}>
+                Reauthorize
+              </Button>
+            )}
           </FormActions>
         </>
       )}
@@ -485,7 +557,9 @@ function summaryRows(
             <li key={connection.id} className="flex flex-wrap items-center gap-1.5">
               {connection.name}
               {connection.status === "actionNeeded" ? (
-                <StatusPill tone="warning">Needs attention</StatusPill>
+                <StatusPill tone="warning">
+                  {guide.provider === "slack" ? "Reauthorization required" : "Needs attention"}
+                </StatusPill>
               ) : null}
             </li>
           ))}

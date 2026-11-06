@@ -18,6 +18,12 @@ import {
 } from "./client.js";
 import { createSlackRegistration } from "./index.js";
 
+function requestUrl(input: string | URL | Request): string {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.href;
+  return input.url;
+}
+
 describe("Slack registration", () => {
   it("constructs the complete webhook slice and starts OAuth with a protected state", async () => {
     const callback = callbackDatabase();
@@ -286,6 +292,74 @@ describe("Slack registration", () => {
     assert.equal(callback.boundInstallation, undefined);
   });
 
+  it("reauthorizes a Socket Mode workspace from the bot token Hub already saved", async () => {
+    const connectionId = "11111111-1111-4111-8111-111111111111";
+    const database = createMemoryDatabase({
+      memberships: [
+        {
+          userId: "user",
+          organizationId: "org",
+          organizationName: "Org",
+          organizationSlug: "org",
+          membershipId: "membership",
+          role: "owner",
+        },
+      ],
+      slackConnections: [
+        {
+          id: connectionId,
+          organizationId: "org",
+          slug: "slack-t0959u3jjtb",
+          teamId: "T0959U3JJTB",
+          teamName: "Old name",
+          botUserId: "UBOT",
+          botAccessToken: "xoxb-secret",
+          scopes: ["chat:write"],
+          providerApplicationId: "A1",
+        },
+      ],
+    });
+    const registration = createSlackRegistration({
+      database,
+      auth: new RegistrationAuth(),
+      applicationBaseUrl: "https://hub.test",
+      publicBaseUrl: "https://hub.test",
+      configuration: { transport: "socket", appId: "A1", appToken: "xapp-token" },
+      fetch: async (input, init) => {
+        const url = requestUrl(input);
+        assert.equal(url, "https://slack.com/api/auth.test");
+        assert.equal(new Headers(init?.headers).get("authorization"), "Bearer xoxb-secret");
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            team_id: "T0959U3JJTB",
+            team: "Even Tecnologia",
+            user_id: "UBOT",
+          }),
+          { headers: { "x-oauth-scopes": SLACK_REQUIRED_BOT_SCOPES.join(",") } },
+        );
+      },
+    });
+    const stored = (await database.organizationConnectionUsage("org")).slack[0];
+    assert.ok(stored);
+    assert.deepEqual(registration.connection.status(bindings(stored)), {
+      status: "requiresReauthorization",
+    });
+
+    const response = await registration.connection.actions["reauthorize"]!(
+      new Request(
+        `https://hub.test/reauthorize?organizationSlug=org&connectionId=${connectionId}`,
+        { method: "POST" },
+      ),
+    );
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { complete: true, teamName: "Even Tecnologia" });
+    const saved = (await database.organizationConnectionUsage("org")).slack[0];
+    if (saved === undefined) throw new Error("missing slack connection");
+    assert.equal(saved.teamName, "Even Tecnologia");
+    assert.deepEqual(registration.connection.status(bindings(saved)), { status: "connected" });
+  });
+
   it("surfaces legacy Slack installations that need the expanded grant", () => {
     const registration = createSlackRegistration({
       database: createMemoryDatabase(),
@@ -452,6 +526,20 @@ function slackReplyRegistration(scopes: readonly string[], requests: string[]) {
       return Response.json({ ok: true });
     },
   });
+}
+
+function bindings(connection: {
+  id: string;
+  organizationId: string;
+  slug: string;
+  teamId: string;
+  teamName: string;
+  botUserId: string;
+  botAccessToken: string;
+  scopes: string[];
+  providerApplicationId: string | null;
+}) {
+  return { github: [], discord: [], slack: [connection], linear: [] };
 }
 
 function slackConfiguration() {

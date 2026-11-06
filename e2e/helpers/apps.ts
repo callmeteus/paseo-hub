@@ -9,6 +9,7 @@ export type AppStatus =
   | "Verified"
   | "Connected"
   | "Action needed"
+  | "Reauthorization required"
   | "Managed by environment";
 
 /** The link each section offers into the provider's own portal, by its visible name. */
@@ -126,7 +127,9 @@ export class AppSection {
       .getByText(APP_SUMMARIES[this.provider], { exact: true })
       .boundingBox();
     const status = await this.header()
-      .getByText(/^(?:Not set up|Verified|Connected|Action needed|Managed by environment)$/u)
+      .getByText(
+        /^(?:Not set up|Verified|Connected|Action needed|Reauthorization required|Managed by environment)$/u,
+      )
       .boundingBox();
     expect(title).not.toBeNull();
     expect(description).not.toBeNull();

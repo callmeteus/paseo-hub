@@ -41,6 +41,7 @@ import {
   type SlackInstallation,
   SlackBotVerificationError,
 } from "./client.js";
+import { readSlackBotGrant } from "./installation.js";
 
 export type SlackRegistrationConfiguration =
   | {
@@ -92,6 +93,7 @@ interface SlackConnectionOptions {
   expectedConfigurationVersion: number | undefined;
   activateConfiguration: boolean;
   onVerifiedInstallation: CreateSlackRegistrationOptions["onVerifiedInstallation"];
+  fetch?: typeof fetch;
 }
 
 export function createSlackRegistration(
@@ -166,8 +168,10 @@ export function createSlackRegistration(
             expectedConfigurationVersion: options.expectedConfigurationVersion,
             activateConfiguration: options.activateConfiguration ?? false,
             onVerifiedInstallation: options.onVerifiedInstallation,
+            ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
           },
           connectionClient,
+          true,
         );
 
   return {
@@ -260,6 +264,7 @@ function emptySlackRegistration(
             onVerifiedInstallation: undefined,
           },
           undefined,
+          false,
         );
   return {
     connection,
@@ -281,13 +286,14 @@ function slackConnectionStatus(configured: boolean): ProviderConnectionRegistrat
 function createSlackConnection(
   options: SlackConnectionOptions,
   client: SlackConnectionClient | undefined,
+  configured: boolean,
 ): ProviderConnectionRegistration {
   const start = async (request: Request): Promise<Response> => {
     const rejected = options.auth.rejectCookieMutation(request);
     if (rejected !== undefined) return rejected;
     try {
       const access = await manageConnectionAccess(options.auth, options.database, request);
-      if (client === undefined) {
+      if (!configured || client === undefined) {
         return Response.json({ error: "provider_not_configured" }, { status: 409 });
       }
       const authority = connectionAccess(access);
@@ -339,12 +345,60 @@ function createSlackConnection(
     }
   };
 
+  const reauthorize = async (request: Request): Promise<Response> => {
+    const rejected = options.auth.rejectCookieMutation(request);
+    if (rejected !== undefined) return rejected;
+    if (!configured) {
+      return Response.json({ error: "provider_not_configured" }, { status: 409 });
+    }
+    try {
+      const access = await manageConnectionAccess(options.auth, options.database, request);
+      const connectionId = requiredConnectionId(request);
+      const saved = (
+        await options.database.organizationConnectionUsage(access.tenant.organization.id)
+      ).slack.find((connection) => connection.id === connectionId);
+      if (saved === undefined) {
+        return Response.json({ error: "not_found" }, { status: 404 });
+      }
+      if (options.configuration.transport === "webhook") return start(request);
+      const grant = await readSlackBotGrant(
+        saved.botAccessToken,
+        options.fetch === undefined ? {} : { fetch: options.fetch },
+      );
+      if (!grant.ok) {
+        return Response.json(
+          {
+            error: grant.reason === "rejected" ? "credentials_rejected" : "connection_unavailable",
+          },
+          { status: grant.reason === "rejected" ? 409 : 503 },
+        );
+      }
+      if (grant.teamId !== saved.teamId) {
+        return Response.json({ error: "workspace_mismatch" }, { status: 409 });
+      }
+      await options.database.updateSlackConnectionGrant({
+        connectionId: saved.id,
+        organizationId: saved.organizationId,
+        teamName: grant.teamName,
+        botUserId: grant.botUserId,
+        scopes: grant.scopes,
+      });
+      return Response.json({
+        complete: hasRequiredSlackScopes(grant.scopes),
+        teamName: grant.teamName,
+      });
+    } catch (error) {
+      return connectionActionFailure(error, "slack", "reauthorize");
+    }
+  };
+
   return {
     name: "slack",
-    status: (connections) => slackStatus(client !== undefined, connections.slack),
+    status: (connections) => slackStatus(configured, connections.slack),
     actions: {
       start,
       disconnect,
+      reauthorize,
       callback: (request) => completeAuthorization(options, client, request),
     },
   };

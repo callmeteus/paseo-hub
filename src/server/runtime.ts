@@ -213,6 +213,7 @@ export async function handleConnections(
     | "discordCallback"
     | "slackStart"
     | "slackDisconnect"
+    | "slackReauthorize"
     | "slackCallback"
     | "linearStart"
     | "linearDisconnect"
@@ -236,6 +237,7 @@ const CONNECTION_ACTIONS = {
   discordCallback: { provider: "discord", name: "callback" },
   slackStart: { provider: "slack", name: "start" },
   slackDisconnect: { provider: "slack", name: "disconnect" },
+  slackReauthorize: { provider: "slack", name: "reauthorize" },
   slackCallback: { provider: "slack", name: "callback" },
   linearStart: { provider: "linear", name: "start" },
   linearDisconnect: { provider: "linear", name: "disconnect" },

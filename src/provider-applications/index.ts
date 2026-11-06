@@ -173,6 +173,8 @@ export interface ConnectedProviderIdentity {
   name: string;
   applicationId: string | null;
   status: "connected" | "actionNeeded";
+  /** Present for a Slack workspace, so reauthorization can name the organization that owns it. */
+  organizationSlug?: string;
 }
 
 export interface ProviderApplicationInventory {

@@ -76,6 +76,7 @@ import type {
   AcceptLinearEventInput,
   AcceptSlackEventInput,
   UpdateLinearConnectionTokensInput,
+  UpdateSlackConnectionGrantInput,
   LinearConnectionRefreshOperation,
   GitHubInstallationSyncOwner,
   GitHubInstallationSyncClaim,
@@ -4382,6 +4383,10 @@ class PgDatabase implements Database {
 
   updateLinearConnectionTokens(input: UpdateLinearConnectionTokensInput): Promise<void> {
     return this.connections.updateLinearTokens(input);
+  }
+
+  updateSlackConnectionGrant(input: UpdateSlackConnectionGrantInput): Promise<void> {
+    return this.connections.updateSlackGrant(input);
   }
 
   withLinearConnectionRefresh<T>(
