@@ -3,6 +3,7 @@ import { parseCompiledHubConfig } from "../../config/compiler.js";
 import { parseProjectConfiguration } from "../../configuration/store.js";
 import type { ProjectConfigurationRevisionRecord } from "../../db/types.js";
 import { describe, it } from "vitest";
+import { SLACK_AGENT_FEEDBACK_UNAVAILABLE } from "../slack/agent-block.js";
 import {
   compileTriggerDocument,
   parseTriggerDocument,
@@ -494,6 +495,105 @@ it("compiles a wait and a condition into ordered steps", () => {
   assert.equal(delayed?.id, "later");
   assert.equal(delayed?.waitMs, 60 * 60 * 1000);
   assert.equal(delayed?.condition?.kind, "not");
+});
+
+const slackAgentDocument = `
+name: answer
+on:
+  slack.mention:
+    connection: acme-slack
+    filters: { from_users: ["*"] }
+run:
+  target: { daemon: devbox, cwd: /workspace }
+  agent: { provider: codex, mode: full-access }
+  prompt: Handle it
+  slack_agent:
+    display: plan
+    session_title: Pedido de hoje
+    plan_title: A tratar do pedido
+`;
+
+it("grants the Slack agent tools only on the step that opted in", () => {
+  const compiled = compileTriggerDocument(slackAgentDocument);
+  const step = compiled.events[0]?.steps[0];
+  assert.equal(step?.slackAgent?.display, "plan");
+  assert.equal(step?.slackAgent?.session_title, "Pedido de hoje");
+  const granted = step?.allowOutputs.filter((output) => output.type.startsWith("slack.agent."));
+  assert.deepEqual(
+    granted?.map((output) => output.type),
+    [
+      "slack.agent.stage",
+      "slack.agent.tool",
+      "slack.agent.say",
+      "slack.agent.finish",
+      "slack.agent.fail",
+      "slack.agent.title",
+      "slack.agent.prompts",
+    ],
+  );
+  assert.equal(
+    granted?.every((output) => !output.required && output.max === undefined),
+    true,
+  );
+  parseCompiledHubConfig({
+    environments: [compiled.environment],
+    triggers: compiled.events,
+  });
+
+  const flow = compileTriggerDocument(`
+name: answer
+on:
+  slack.message:
+    connection: acme-slack
+    filters: { from_users: ["*"] }
+run:
+  target: { daemon: devbox, cwd: /workspace }
+  reactions:
+    - id: first
+      agent: { provider: codex, mode: full-access }
+      prompt: First
+      slack_agent:
+        display: timeline
+    - id: second
+      agent: { provider: codex, mode: full-access }
+      prompt: Second
+`);
+  const steps = flow.events[0]?.steps;
+  assert.equal(steps?.[0]?.slackAgent?.display, "timeline");
+  assert.equal(
+    steps?.[0]?.allowOutputs.some((output) => output.type === "slack.agent.stage"),
+    true,
+  );
+  assert.equal(steps?.[1]?.slackAgent, undefined);
+  assert.equal(
+    steps?.[1]?.allowOutputs.some((output) => output.type.startsWith("slack.agent.")),
+    false,
+  );
+});
+
+it("rejects a Slack agent block the app cannot host", () => {
+  assert.throws(
+    () =>
+      parseTriggerDocument(
+        slackAgentDocument.replace("plan_title: A tratar do pedido", "feedback: true"),
+      ),
+    (error: unknown) => {
+      assert.ok(error instanceof TriggerDocumentError);
+      assert.equal(
+        error.issues.some((issue) => issue.message === SLACK_AGENT_FEEDBACK_UNAVAILABLE),
+        true,
+      );
+      return true;
+    },
+  );
+  assert.throws(
+    () => parseTriggerDocument(slackAgentDocument.replace("display: plan", "display: timeline")),
+    /plan_title is only valid when display is plan/u,
+  );
+  assert.throws(
+    () => parseTriggerDocument(slackAgentDocument.replace("slack.mention:", "manual.run:")),
+    /slack_agent is only valid when every event is slack.message or slack.mention/u,
+  );
 });
 
 it("rejects a condition with no branch and a wait with a bad duration", () => {

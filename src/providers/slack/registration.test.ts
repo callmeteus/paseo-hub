@@ -47,7 +47,17 @@ describe("Slack registration", () => {
     assert.equal(registration.triggerProviders.length, 1);
     assert.deepEqual(
       registration.outputs.map((output) => output.type),
-      ["slack.reply", "slack.react"],
+      [
+        "slack.reply",
+        "slack.react",
+        "slack.agent.stage",
+        "slack.agent.tool",
+        "slack.agent.say",
+        "slack.agent.finish",
+        "slack.agent.fail",
+        "slack.agent.title",
+        "slack.agent.prompts",
+      ],
     );
     assert.deepEqual(
       registration.requests.map((request) => request.name),

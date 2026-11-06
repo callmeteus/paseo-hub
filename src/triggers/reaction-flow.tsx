@@ -14,6 +14,7 @@ import { SegmentedControl } from "../components/app/segmented-control.js";
 import type { TriggerFieldErrors } from "./configuration/editor.js";
 import { InstructionsEditor } from "./instructions-editor.js";
 import { ReactionFlow } from "./configuration/reaction-form.js";
+import { SlackAgentFields } from "./slack-agent-fields.js";
 import { trueBranch } from "./configuration/schema.js";
 import { supportsUnattendedRuns } from "./configuration/unattended.js";
 import { selectedProviderModel } from "./provider-catalog.js";
@@ -26,6 +27,7 @@ import { selectedProviderModel } from "./provider-catalog.js";
  * @param entries - Models the selected daemon can run
  * @param loading - Whether that catalog is still loading
  * @param githubConnectionOptions - GitHub connections the agent may use
+ * @param showSlackAgent - Whether every selected event is a Slack message or mention
  * @param onChange - Replaces the flow
  * @returns The reaction list
  */
@@ -35,6 +37,7 @@ export function ReactionFlowEditor({
   entries,
   loading,
   githubConnectionOptions,
+  showSlackAgent,
   onChange,
 }: {
   flow: readonly ReactionFlow.Reaction[];
@@ -42,6 +45,7 @@ export function ReactionFlowEditor({
   entries: HubProviderSnapshotEntry[] | undefined;
   loading: boolean;
   githubConnectionOptions: readonly ComboboxOption[];
+  showSlackAgent: boolean;
   onChange: (flow: ReactionFlow.Reaction[]) => void;
 }) {
   return (
@@ -52,6 +56,7 @@ export function ReactionFlowEditor({
         entries={entries}
         loading={loading}
         githubConnectionOptions={githubConnectionOptions}
+        showSlackAgent={showSlackAgent}
         onChange={onChange}
       />
       <AddReaction onAdd={(kind) => onChange(ReactionFlow.append(flow, kind, undefined, "root"))} />
@@ -65,6 +70,7 @@ function ReactionList({
   entries,
   loading,
   githubConnectionOptions,
+  showSlackAgent,
   onChange,
 }: {
   reactions: readonly ReactionFlow.Reaction[];
@@ -72,6 +78,7 @@ function ReactionList({
   entries: HubProviderSnapshotEntry[] | undefined;
   loading: boolean;
   githubConnectionOptions: readonly ComboboxOption[];
+  showSlackAgent: boolean;
   onChange: (reactions: ReactionFlow.Reaction[]) => void;
 }) {
   return (
@@ -144,6 +151,7 @@ function ReactionList({
               entries={entries}
               loading={loading}
               githubConnectionOptions={githubConnectionOptions}
+              showSlackAgent={showSlackAgent}
               onChange={(patch) => onChange(ReactionFlow.update(reactions, reaction.id, patch))}
             />
           ) : null}
@@ -155,6 +163,7 @@ function ReactionList({
               entries={entries}
               loading={loading}
               githubConnectionOptions={githubConnectionOptions}
+              showSlackAgent={showSlackAgent}
               onChange={onChange}
             />
           ) : null}
@@ -171,6 +180,7 @@ function ConditionFields({
   entries,
   loading,
   githubConnectionOptions,
+  showSlackAgent,
   onChange,
 }: {
   reaction: ReactionFlow.Condition;
@@ -179,6 +189,7 @@ function ConditionFields({
   entries: HubProviderSnapshotEntry[] | undefined;
   loading: boolean;
   githubConnectionOptions: readonly ComboboxOption[];
+  showSlackAgent: boolean;
   onChange: (reactions: ReactionFlow.Reaction[]) => void;
 }) {
   const replace = (patch: Partial<ReactionFlow.Condition>) =>
@@ -209,6 +220,7 @@ function ConditionFields({
         entries={entries}
         loading={loading}
         githubConnectionOptions={githubConnectionOptions}
+        showSlackAgent={showSlackAgent}
         onChange={(then) => replace(trueBranch(then))}
         onAdd={(kind) =>
           replace(trueBranch(ReactionFlow.append(reaction.then, kind, undefined, "root")))
@@ -221,6 +233,7 @@ function ConditionFields({
         entries={entries}
         loading={loading}
         githubConnectionOptions={githubConnectionOptions}
+        showSlackAgent={showSlackAgent}
         onChange={(elseReactions) => replace({ else: elseReactions })}
         onAdd={(kind) =>
           replace({ else: ReactionFlow.append(reaction.else, kind, undefined, "root") })
@@ -237,6 +250,7 @@ function Branch({
   entries,
   loading,
   githubConnectionOptions,
+  showSlackAgent,
   onChange,
   onAdd,
 }: {
@@ -246,6 +260,7 @@ function Branch({
   entries: HubProviderSnapshotEntry[] | undefined;
   loading: boolean;
   githubConnectionOptions: readonly ComboboxOption[];
+  showSlackAgent: boolean;
   onChange: (reactions: ReactionFlow.Reaction[]) => void;
   onAdd: (kind: ReactionFlow.Kind) => void;
 }) {
@@ -259,6 +274,7 @@ function Branch({
           entries={entries}
           loading={loading}
           githubConnectionOptions={githubConnectionOptions}
+          showSlackAgent={showSlackAgent}
           onChange={onChange}
         />
       )}
@@ -273,6 +289,7 @@ function AgentReactionFields({
   entries,
   loading,
   githubConnectionOptions,
+  showSlackAgent,
   onChange,
 }: {
   reaction: ReactionFlow.Agent;
@@ -280,6 +297,7 @@ function AgentReactionFields({
   entries: HubProviderSnapshotEntry[] | undefined;
   loading: boolean;
   githubConnectionOptions: readonly ComboboxOption[];
+  showSlackAgent: boolean;
   onChange: (patch: Partial<ReactionFlow.Agent>) => void;
 }) {
   const agentOptions = catalogOptions(entries);
@@ -380,6 +398,14 @@ function AgentReactionFields({
         onChange={(prompt) => onChange({ prompt })}
         {...flowError(errors, reaction.id, "prompt")}
       />
+      {showSlackAgent ? (
+        <SlackAgentFields
+          idPrefix={`reaction-${reaction.id}`}
+          value={reaction.slackAgent}
+          onChange={(slackAgent) => onChange({ slackAgent })}
+          {...flowError(errors, reaction.id, "slackAgent")}
+        />
+      ) : null}
       <SegmentedControl
         label="Agent continuity"
         description="Agent continuity"

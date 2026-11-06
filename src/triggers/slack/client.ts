@@ -6,6 +6,11 @@ import { readSlackMessageFiles, readSlackMessageText } from "./forwarded-message
 const SlackApiResponseSchema = z
   .object({ ok: z.boolean(), error: z.string().optional() })
   .passthrough();
+const SlackApiResultSchema = SlackApiResponseSchema.extend({
+  warning: z.string().optional(),
+  channel: z.string().optional(),
+  ts: z.string().optional(),
+});
 const SlackFileSchema = z
   .object({
     id: z.string().min(1).max(255),
@@ -58,6 +63,45 @@ const SlackUserGroupListSchema = SlackApiResponseSchema.extend({
 const SLACK_API_TIMEOUT_MS = 10_000;
 const SLACK_THREAD_REPLIES_MAX_PAGES = 10;
 const SLACK_THREAD_CONTEXT_LIMIT = 50;
+
+/** What Slack returned. `ok: false` stays a result; the caller decides which errors are fatal. */
+export interface SlackApiResult {
+  ok: boolean;
+  error?: string | undefined;
+  /** Present when Slack accepted the call and added a warning, such as a missing stop subscription. */
+  warning?: string | undefined;
+  channel?: string | undefined;
+  ts?: string | undefined;
+}
+
+export type SlackAgentSessionStatus = "active" | "processing" | "suspended" | "closed";
+
+export type SlackStreamTaskStatus = "pending" | "in_progress" | "complete" | "error";
+
+export interface SlackStreamSource {
+  type: "url";
+  text: string;
+  url: string;
+}
+
+/** One chunk of a Slack agent stream. The visible task card is `task_update`. */
+export type SlackStreamChunk =
+  | { type: "markdown_text"; text: string }
+  | {
+      type: "task_update";
+      id: string;
+      title: string;
+      status: SlackStreamTaskStatus;
+      details?: string;
+      output?: string;
+      sources?: SlackStreamSource[];
+    }
+  | { type: "plan_update"; title: string };
+
+export interface SlackSuggestedPrompt {
+  title: string;
+  message: string;
+}
 
 export interface SlackAttachmentMetadata {
   id: string;
@@ -143,6 +187,68 @@ export interface SlackBotClient {
     threadTs: string;
     status: string;
   }): Promise<void>;
+  /**
+   * Sets the agent-session state. `title` is sent only when the caller is creating the session.
+   * A warning such as `missing_agent_session_stopped_event_subscription` still counts as success.
+   */
+  setAgentSessionStatus?(input: {
+    organizationId: string;
+    teamId: string;
+    channelId: string;
+    threadTs: string;
+    status: SlackAgentSessionStatus;
+    title?: string;
+  }): Promise<SlackApiResult>;
+  /** Renames an agent session that `setAgentSessionStatus` or a stream already created. */
+  renameAgentSession?(input: {
+    organizationId: string;
+    teamId: string;
+    channelId: string;
+    threadTs: string;
+    title: string;
+  }): Promise<SlackApiResult>;
+  /**
+   * Opens a streaming message. Channel posts (not a DM with the app) must include the recipient.
+   * The returned `ts` is the message later calls append to.
+   */
+  startAgentStream?(input: {
+    organizationId: string;
+    teamId: string;
+    channelId: string;
+    threadTs: string;
+    taskDisplayMode: "plan" | "timeline";
+    chunks?: SlackStreamChunk[];
+    recipientUserId?: string;
+    recipientTeamId?: string;
+  }): Promise<SlackApiResult>;
+  /** Appends chunks to the message `startAgentStream` opened. */
+  appendAgentStream?(input: {
+    organizationId: string;
+    teamId: string;
+    channelId: string;
+    streamTs: string;
+    chunks: SlackStreamChunk[];
+  }): Promise<SlackApiResult>;
+  /** Closes the streaming message. `sessionStatus` defaults to active on Slack's side when omitted. */
+  stopAgentStream?(input: {
+    organizationId: string;
+    teamId: string;
+    channelId: string;
+    streamTs: string;
+    chunks?: SlackStreamChunk[];
+    sessionStatus?: SlackAgentSessionStatus;
+  }): Promise<SlackApiResult>;
+  /**
+   * Replaces the suggested prompts on the latest message in the channel.
+   * An agent app ignores `thread_ts`, so this call never sends one.
+   */
+  setSuggestedPrompts?(input: {
+    organizationId: string;
+    teamId: string;
+    channelId: string;
+    prompts: readonly SlackSuggestedPrompt[];
+    title?: string;
+  }): Promise<SlackApiResult>;
   downloadAttachment?(input: {
     organizationId: string;
     teamId: string;
@@ -177,6 +283,39 @@ export function createSlackBotClient(options: {
     if (!response.ok) throw new Error(`Slack API HTTP ${response.status}`);
     const result = SlackApiResponseSchema.parse(await response.json());
     if (!result.ok) throw new Error(`Slack API ${result.error ?? "unknown_error"}`);
+  }
+
+  /**
+   * Posts a JSON body that may contain arrays. The string-only `callJson` stays as it is.
+   * Slack's `ok: false` is returned, not thrown, so the agent surface can tell a missing
+   * scope from a dead stream.
+   */
+  async function postAgentJson(
+    organizationId: string,
+    teamId: string,
+    method: string,
+    body: Record<string, unknown>,
+  ): Promise<SlackApiResult> {
+    const token = await options.tokenForWorkspace(organizationId, teamId);
+    if (token === undefined) throw new Error("Slack workspace is not connected");
+    const response = await request(`https://slack.com/api/${method}`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json; charset=utf-8",
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(options.requestTimeoutMs ?? SLACK_API_TIMEOUT_MS),
+    });
+    if (!response.ok) throw new Error(`Slack API HTTP ${response.status}`);
+    const result = SlackApiResultSchema.parse(await response.json());
+    return {
+      ok: result.ok,
+      ...(result.error === undefined ? {} : { error: result.error }),
+      ...(result.warning === undefined ? {} : { warning: result.warning }),
+      ...(result.channel === undefined ? {} : { channel: result.channel }),
+      ...(result.ts === undefined ? {} : { ts: result.ts }),
+    };
   }
 
   async function callJson(
@@ -432,6 +571,120 @@ export function createSlackBotClient(options: {
     throw new Error(`Slack API ${result.error ?? "unknown_error"}`);
   }
 
+  async function setAgentSessionStatus(input: {
+    organizationId: string;
+    teamId: string;
+    channelId: string;
+    threadTs: string;
+    status: SlackAgentSessionStatus;
+    title?: string;
+  }): Promise<SlackApiResult> {
+    return postAgentJson(
+      input.organizationId,
+      input.teamId,
+      "agents.sessions.setStatus",
+      definedBody({
+        channel_id: input.channelId,
+        thread_ts: input.threadTs,
+        status: input.status,
+        title: input.title,
+      }),
+    );
+  }
+
+  async function renameAgentSession(input: {
+    organizationId: string;
+    teamId: string;
+    channelId: string;
+    threadTs: string;
+    title: string;
+  }): Promise<SlackApiResult> {
+    return postAgentJson(input.organizationId, input.teamId, "agents.sessions.rename", {
+      channel_id: input.channelId,
+      thread_ts: input.threadTs,
+      title: input.title,
+    });
+  }
+
+  async function startAgentStream(input: {
+    organizationId: string;
+    teamId: string;
+    channelId: string;
+    threadTs: string;
+    taskDisplayMode: "plan" | "timeline";
+    chunks?: SlackStreamChunk[];
+    recipientUserId?: string;
+    recipientTeamId?: string;
+  }): Promise<SlackApiResult> {
+    return postAgentJson(
+      input.organizationId,
+      input.teamId,
+      "chat.startStream",
+      definedBody({
+        channel: input.channelId,
+        thread_ts: input.threadTs,
+        task_display_mode: input.taskDisplayMode,
+        chunks: input.chunks,
+        recipient_user_id: input.recipientUserId,
+        recipient_team_id: input.recipientTeamId,
+      }),
+    );
+  }
+
+  async function appendAgentStream(input: {
+    organizationId: string;
+    teamId: string;
+    channelId: string;
+    streamTs: string;
+    chunks: SlackStreamChunk[];
+  }): Promise<SlackApiResult> {
+    return postAgentJson(input.organizationId, input.teamId, "chat.appendStream", {
+      channel: input.channelId,
+      ts: input.streamTs,
+      chunks: input.chunks,
+    });
+  }
+
+  async function stopAgentStream(input: {
+    organizationId: string;
+    teamId: string;
+    channelId: string;
+    streamTs: string;
+    chunks?: SlackStreamChunk[];
+    sessionStatus?: SlackAgentSessionStatus;
+  }): Promise<SlackApiResult> {
+    return postAgentJson(
+      input.organizationId,
+      input.teamId,
+      "chat.stopStream",
+      definedBody({
+        channel: input.channelId,
+        ts: input.streamTs,
+        chunks: input.chunks,
+        session_status: input.sessionStatus,
+      }),
+    );
+  }
+
+  async function setSuggestedPrompts(input: {
+    organizationId: string;
+    teamId: string;
+    channelId: string;
+    prompts: readonly SlackSuggestedPrompt[];
+    title?: string;
+  }): Promise<SlackApiResult> {
+    return postAgentJson(
+      input.organizationId,
+      input.teamId,
+      "assistant.threads.setSuggestedPrompts",
+      definedBody({
+        channel_id: input.channelId,
+        prompts: input.prompts,
+        title: input.title,
+      }),
+    );
+  }
+
   return {
     sendMessage: (input) =>
       call(input.organizationId, input.teamId, "chat.postMessage", {
@@ -440,6 +693,12 @@ export function createSlackBotClient(options: {
         text: input.content,
       }),
     setAssistantStatus,
+    setAgentSessionStatus,
+    renameAgentSession,
+    startAgentStream,
+    appendAgentStream,
+    stopAgentStream,
+    setSuggestedPrompts,
     addReaction: (input) =>
       call(input.organizationId, input.teamId, "reactions.add", {
         channel: input.channelId,
@@ -524,4 +783,13 @@ function normalizeThreadMessage(
 
 function compareSlackTs(left: string, right: string): number {
   return Number(left) - Number(right);
+}
+
+/** Drops omitted fields so a DM stream is not sent empty recipient ids. */
+function definedBody(fields: Record<string, unknown>): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(fields)) {
+    if (value !== undefined) body[key] = value;
+  }
+  return body;
 }

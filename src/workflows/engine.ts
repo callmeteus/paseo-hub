@@ -1,3 +1,4 @@
+import { outputContextForSlackAgentStep } from "../triggers/slack/agent-block.js";
 import { slackReactGrant } from "../triggers/slack/react.js";
 import { continuationKey } from "../triggers/continuation.js";
 import { DatabaseUnavailableError } from "../db/errors.js";
@@ -1179,7 +1180,7 @@ async function buildStepIntent(
       autoArchive: step.autoArchive,
       background: step.background,
       triggerContext: run.triggerContext,
-      outputContext: run.outputContext,
+      outputContext: outputContextForSlackAgentStep(run.outputContext, step.slackAgent),
       ...(trigger.guardrails === undefined ? {} : { guardrails: trigger.guardrails }),
       configurationRevisionId: run.configurationRevisionId,
       hubConfig: configuration,

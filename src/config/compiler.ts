@@ -37,9 +37,12 @@ import {
   SlackMessageTextSchema,
 } from "../triggers/slack/text-filter.js";
 import { GuardrailsSchema, type Guardrail } from "../workflows/guardrails.js";
+import { SlackAgentBlockSchema, type SlackAgentBlock } from "../triggers/slack/agent-block.js";
 
 const IDENTIFIER = /^[a-z][a-z0-9_-]*$/u;
 const EVENT_NAME = /^[a-z][a-z0-9_-]*\.[a-z][a-z0-9_-]*$/u;
+/** `slack.reply`, or a surface output such as `slack.agent.stage`. */
+const OUTPUT_TYPE = /^[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*){1,2}$/u;
 const DURATION = /^([1-9][0-9]*)(ms|s|m|h)$/u;
 const MAX_DURATION_MS = 24 * 60 * 60_000;
 const INPUT_NAME = /^[a-z][a-z0-9_-]*$/u;
@@ -229,6 +232,7 @@ const AgentStepSchema = z
     if: z.string().min(1).optional(),
     output: z.object({ schema: JsonSchemaSchema }).strict().optional(),
     allow_outputs: z.array(AllowOutputSchema).optional(),
+    slack_agent: SlackAgentBlockSchema.optional(),
     auto_archive: z.boolean().optional(),
     background: z.boolean().optional(),
   })
@@ -380,6 +384,8 @@ export interface CompiledStep {
   condition?: Expression | undefined;
   output?: { schema: JsonValue } | undefined;
   allowOutputs: readonly { type: string; max?: number | undefined; required: boolean }[];
+  /** Present when this step opted into the Slack agent surface. */
+  slackAgent?: SlackAgentBlock | undefined;
   autoArchive: boolean;
   background: boolean;
   /** Set when this step pauses the run instead of launching its agent. */
@@ -593,12 +599,13 @@ const CompiledStepSchema: z.ZodType<CompiledStep> = z
     allowOutputs: z.array(
       z
         .object({
-          type: z.string().regex(EVENT_NAME),
+          type: z.string().regex(OUTPUT_TYPE),
           max: z.number().int().positive().optional(),
           required: z.boolean().default(false),
         })
         .strict(),
     ),
+    slackAgent: SlackAgentBlockSchema.optional(),
     autoArchive: z.boolean(),
     background: z.boolean().default(false),
     waitMs: z.number().int().positive().max(MAX_DURATION_MS).optional(),
@@ -958,6 +965,7 @@ function compileStep(
     ...(github === undefined ? {} : { github }),
     ...(condition === undefined ? {} : { condition }),
     ...(outputDeclaration === undefined ? {} : { output: outputDeclaration }),
+    ...authoredSlackAgent(step),
     allowOutputs: (step.allow_outputs ?? []).map((allowOutput) => ({
       type: allowOutput.type,
       max: allowOutput.max ?? 1,
@@ -966,6 +974,13 @@ function compileStep(
     autoArchive: step.auto_archive ?? false,
     background: step.background ?? false,
   };
+}
+
+function authoredSlackAgent(
+  step: AuthoredStep,
+): { slackAgent: SlackAgentBlock } | Record<string, never> {
+  if (!("slack_agent" in step) || step.slack_agent === undefined) return {};
+  return { slackAgent: step.slack_agent };
 }
 
 function compileAgentSelection(

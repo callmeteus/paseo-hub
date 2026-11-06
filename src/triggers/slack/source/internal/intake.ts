@@ -3,9 +3,11 @@ import { logger } from "../../../../logger.js";
 import { logProviderEventIntake } from "../../../audit.js";
 import type { ProviderEventDropReasonCode } from "../../../drop-reason.js";
 import type { TriggerHandler } from "../../../index.js";
+import { noteSlackAgentSessionStopped } from "../../agent-surface.js";
 import {
   describeDroppedSlackEvent,
   normalizeSlackEvent,
+  readAgentSessionStopped,
   SlackEventCallbackSchema,
 } from "../../events.js";
 
@@ -37,6 +39,11 @@ export async function intakeSlackEvent(
   if (!callback.success) throw new SlackEventIntakeValidationError();
   if (callback.data.api_app_id !== options.appId) {
     throw new SlackEventIntakeValidationError();
+  }
+  const stopped = readAgentSessionStopped(callback.data);
+  if (stopped !== undefined) {
+    await noteSlackAgentSessionStopped(stopped);
+    return;
   }
   const normalizedEvent = normalizeSlackEvent(callback.data);
   // A dropped message never reaches the trigger log. Say why, without the text.

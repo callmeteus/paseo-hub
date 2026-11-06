@@ -10,6 +10,7 @@ import {
   type CompiledTrigger,
 } from "../../config/compiler.js";
 import type { Continuation } from "../continuation.js";
+import { withSlackAgentOutputs } from "../slack/agent-block.js";
 import { appendSlackReactGrant } from "../slack/react.js";
 import { flattenTriggerReactions, type FlattenedReactions } from "./reactions.js";
 import {
@@ -143,7 +144,10 @@ function withAutomaticReply(trigger: CompiledTrigger): CompiledTrigger {
       if (isCompiledStaticStep(step)) return step;
       return {
         ...step,
-        allowOutputs: automaticAllowOutputs(step.allowOutputs, replyType, trigger.on),
+        allowOutputs: withSlackAgentOutputs(
+          automaticAllowOutputs(step.allowOutputs, replyType, trigger.on),
+          step.slackAgent,
+        ),
       };
     }),
   };
@@ -266,6 +270,7 @@ function legacyAgentStep(
     ...(authored.run.env === undefined ? {} : { env: authored.run.env }),
     ...(authored.run.github === undefined ? {} : { github: authored.run.github }),
     ...(authored.run.output === undefined ? {} : { output: authored.run.output }),
+    ...(authored.run.slack_agent === undefined ? {} : { slack_agent: authored.run.slack_agent }),
     ...(allowOutputs.length === 0 ? {} : { allow_outputs: allowOutputs }),
     auto_archive: authored.run.auto_archive,
     background: authored.run.background,

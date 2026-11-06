@@ -7,6 +7,13 @@ import type {
 import { reportFailure } from "../../failures/index.js";
 import { agentFailureNotice, missingBillingUrl } from "../failure-notice.js";
 import { type TriggerProvider, type TriggerProviderMatch } from "../index.js";
+import { firstSlackAgentBlock, type SlackAgentBlock } from "./agent-block.js";
+import {
+  beginSlackAgentRun,
+  finishSlackAgentRun,
+  slackAgentRunFellBack,
+  type SlackAgentRunTarget,
+} from "./agent-surface.js";
 import type { SlackBotClient, SlackThreadMessage } from "./client.js";
 import { NormalizedSlackMentionEventSchema, type NormalizedSlackMentionEvent } from "./events.js";
 import { expandStoredSlackForwards } from "./forwarded-message.js";
@@ -95,6 +102,8 @@ export interface SlackOutputContext {
   channelId: string;
   threadTs: string;
   messageTs: string;
+  /** Copied from the first agent step that opted in. Absent when the run keeps the legacy status. */
+  slackAgent?: SlackAgentBlock;
 }
 
 export function createSlackTriggerProvider(options: {
@@ -203,6 +212,7 @@ export function createSlackTriggerProvider(options: {
         );
         if (compiledTrigger === undefined)
           throw new Error(`compiled trigger not found: ${match.trigger.name}`);
+        const slackAgent = firstSlackAgentBlock(compiledTrigger.steps);
         const outputContext: SlackOutputContext = {
           provider: "slack",
           organizationId: trigger.organizationId,
@@ -210,6 +220,7 @@ export function createSlackTriggerProvider(options: {
           channelId: rawEvent.channelId,
           threadTs: rawEvent.threadTs ?? rawEvent.messageTs,
           messageTs: rawEvent.messageTs,
+          ...(slackAgent === undefined ? {} : { slackAgent }),
         };
         const triggerContext: SlackTriggerContext = {
           provider: "slack",
@@ -355,14 +366,30 @@ export function createSlackTriggerProvider(options: {
         },
       };
     },
-    async onAgentExecutionStarted(context) {
-      await publishAssistantStatus(options.client, context, ASSISTANT_RUNNING_STATUS);
+    async onAgentExecutionStarted(context, outputContext) {
+      const target = slackAgentTarget(context, outputContext);
+      if (target === undefined) {
+        await publishAssistantStatus(options.client, context, ASSISTANT_RUNNING_STATUS);
+        return;
+      }
+      try {
+        const outcome = await beginSlackAgentRun(options.client, target);
+        if (outcome === "fallback") {
+          await publishAssistantStatus(options.client, context, ASSISTANT_RUNNING_STATUS);
+        }
+      } catch (error) {
+        reportFailure(
+          error,
+          { operation: "slack.agent.session.start", component: "triggers", provider: "slack" },
+          { diagnostic: { teamId: context.target.teamId, channelId: context.target.channelId } },
+        );
+      }
     },
-    async onAgentExecutionCompleted(context) {
-      await publishAssistantStatus(options.client, context, "");
+    async onAgentExecutionCompleted(context, outputContext) {
+      await finishSlackAgentLifecycle(options.client, context, outputContext, "success");
     },
-    async onAgentExecutionFailed(context, _output, reason) {
-      await publishAssistantStatus(options.client, context, "");
+    async onAgentExecutionFailed(context, outputContext, reason) {
+      await finishSlackAgentLifecycle(options.client, context, outputContext, "failure");
       await failWithNotice(
         options.client,
         context.target,
@@ -375,7 +402,7 @@ export function createSlackTriggerProvider(options: {
       return null;
     },
     async onMachineTerminated(context, reason, reactionState) {
-      await publishAssistantStatus(options.client, context, "");
+      await finishSlackAgentLifecycle(options.client, context, context.target, "failure");
       if (reason === "launch_failed" || reason === "daemon_disconnected") {
         await failWithNotice(options.client, context.target, `Paseo agent failed: ${reason}`);
         return null;
@@ -526,6 +553,50 @@ function buildSlackMergeData(
  * @param context - Trigger context stored on the run
  * @param status - Short status, or an empty string to clear it
  */
+function slackAgentTarget(
+  context: SlackTriggerContext,
+  outputContext: SlackOutputContext | undefined,
+): SlackAgentRunTarget | undefined {
+  const source = outputContext?.slackAgent !== undefined ? outputContext : context.target;
+  if (source.slackAgent === undefined) return undefined;
+  return {
+    organizationId: source.organizationId,
+    teamId: source.teamId,
+    channelId: source.channelId,
+    threadTs: source.threadTs,
+    authorId: context.event.slack.trigger_message.author.id,
+    block: source.slackAgent,
+  };
+}
+
+/**
+ * Closes the agent surface, or the legacy status when this run never opened one.
+ *
+ * A failure of the new path clears the legacy indicator so "Working..." cannot sit for an hour.
+ */
+async function finishSlackAgentLifecycle(
+  client: SlackBotClient,
+  context: SlackTriggerContext,
+  outputContext: SlackOutputContext | undefined,
+  kind: "success" | "failure",
+): Promise<void> {
+  const target = slackAgentTarget(context, outputContext);
+  if (target === undefined || slackAgentRunFellBack(target)) {
+    await publishAssistantStatus(client, context, "");
+    return;
+  }
+  try {
+    await finishSlackAgentRun(client, target, kind);
+  } catch (error) {
+    reportFailure(
+      error,
+      { operation: "slack.agent.session.finish", component: "triggers", provider: "slack" },
+      { diagnostic: { teamId: target.teamId, channelId: target.channelId } },
+    );
+    if (kind === "failure") await publishAssistantStatus(client, context, "");
+  }
+}
+
 async function publishAssistantStatus(
   client: SlackBotClient,
   context: SlackTriggerContext,

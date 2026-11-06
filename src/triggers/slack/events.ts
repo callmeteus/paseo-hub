@@ -292,6 +292,34 @@ function readAssistantMessageThread(
   return { channelId, threadTs };
 }
 
+const SlackAgentSessionStoppedSchema = z
+  .object({
+    type: z.literal("agent_session_stopped"),
+    channel: SlackIdSchema,
+    thread_ts: SlackTimestampSchema,
+  })
+  .passthrough();
+
+/**
+ * The thread a person stopped, when this callback is `agent_session_stopped`.
+ *
+ * The event does not open an automation. The intake closes the Hub's stream for that thread.
+ *
+ * @param envelope - Events API callback
+ * @returns The channel and thread, or undefined when this is some other event
+ */
+export function readAgentSessionStopped(
+  envelope: z.infer<typeof SlackEventCallbackSchema>,
+): { teamId: string; channelId: string; threadTs: string } | undefined {
+  const parsed = SlackAgentSessionStoppedSchema.safeParse(envelope.event);
+  if (!parsed.success) return undefined;
+  return {
+    teamId: envelope.team_id,
+    channelId: parsed.data.channel,
+    threadTs: parsed.data.thread_ts,
+  };
+}
+
 export function normalizeSlackEvent(
   envelope: z.infer<typeof SlackEventCallbackSchema>,
 ): NormalizedSlackMentionEvent | undefined {

@@ -30,6 +30,13 @@ import {
   type TriggerDocument,
 } from "./schema.js";
 import { preservedReactionFields, ReactionFlow } from "./reaction-form.js";
+import {
+  eventsAllowSlackAgent,
+  slackAgentBlockFromDraft,
+  slackAgentDraftErrors,
+  projectSlackAgentDraft,
+  type SlackAgentDraft,
+} from "../slack/agent-block.js";
 
 import {
   eventDefinition,
@@ -92,6 +99,8 @@ export interface TriggerFormValue {
   githubDuration: string;
   /** Ordered text and included instruction files. One text block is stored as a string. */
   prompt: InstructionDraft[];
+  /** `slack_agent`. Off omits the block. */
+  slackAgent: SlackAgentDraft;
   /** `run.guardrails`. Empty omits the field. */
   guardrails: GuardrailDraft[];
   /** `run.target.worktree`. An empty mode omits the field. */
@@ -236,6 +245,7 @@ function runFormFields(
   | "prompt"
   | "guardrails"
   | "worktree"
+  | "slackAgent"
 > {
   return {
     daemon: run.target.daemon,
@@ -257,6 +267,7 @@ function runFormFields(
     prompt: projectInstructions(run.prompt),
     guardrails: projectGuardrails(run.guardrails),
     worktree: projectWorktree(run.target.worktree),
+    slackAgent: projectSlackAgentDraft(run.slack_agent),
   };
 }
 
@@ -345,7 +356,30 @@ export function patchTriggerYaml(yaml: string, value: TriggerFormValue): string 
     value.prompt,
     instructionsDocument(value.prompt),
   );
+  writeSlackAgent(document, projection.value, value, previousEvents, nextEvents);
   return document.toString({ lineWidth: 0 });
+}
+
+/**
+ * Writes `run.slack_agent` from the blocks the two forms would store.
+ *
+ * Comparing the drafts would keep a block after the events left Slack, because the draft
+ * itself did not change. Comparing the blocks deletes it.
+ */
+function writeSlackAgent(
+  document: Document,
+  previous: TriggerFormValue,
+  next: TriggerFormValue,
+  previousEvents: readonly string[],
+  nextEvents: readonly string[],
+): void {
+  writeWhenChanged(
+    document,
+    ["run", "slack_agent"],
+    slackAgentBlockFromDraft(previous.slackAgent, previousEvents),
+    slackAgentBlockFromDraft(next.slackAgent, nextEvents),
+    slackAgentBlockFromDraft(next.slackAgent, nextEvents),
+  );
 }
 
 /**
@@ -453,7 +487,17 @@ function legacyRun(value: TriggerFormValue) {
     ...(github === undefined ? {} : { github }),
     ...(guardrails === undefined ? {} : { guardrails }),
     prompt: instructionsDocument(value.prompt),
+    ...authoredSlackAgent(value),
   };
+}
+
+function authoredSlackAgent(
+  value: TriggerFormValue,
+):
+  | { slack_agent: NonNullable<ReturnType<typeof slackAgentBlockFromDraft>> }
+  | Record<string, never> {
+  const block = slackAgentBlockFromDraft(value.slackAgent, selectedTriggerEvents(value));
+  return block === undefined ? {} : { slack_agent: block };
 }
 
 function flowRun(value: TriggerFormValue) {
@@ -468,6 +512,7 @@ function flowRun(value: TriggerFormValue) {
     reactions: ReactionFlow.toYaml(value.flow ?? [], {
       maxRuntime: value.maxRuntime,
       idleTimeout: value.idleTimeout,
+      events: selectedTriggerEvents(value),
     }),
     ...(guardrails === undefined ? {} : { guardrails }),
   };
@@ -493,6 +538,7 @@ function writeReactionFlow(document: Document, value: TriggerFormValue): void {
   if (value.flow === undefined) return;
   const preserved = preservedById(document, value.flow);
   for (const key of LEGACY_RUN_KEYS) deleteIfPresent(document, ["run", key]);
+  deleteIfPresent(document, ["run", "slack_agent"]);
   setIfChanged(
     document,
     ["run", "reactions"],
@@ -500,6 +546,7 @@ function writeReactionFlow(document: Document, value: TriggerFormValue): void {
       ReactionFlow.toYaml(value.flow, {
         maxRuntime: value.maxRuntime,
         idleTimeout: value.idleTimeout,
+        events: selectedTriggerEvents(value),
       }),
       preserved,
     ),
@@ -677,7 +724,7 @@ export function triggerFormErrors(value: TriggerFormValue): TriggerFieldErrors {
   if (value.daemon.trim().length === 0) errors.daemon = "Daemon is required.";
   Object.assign(errors, workingDirectoryErrors(value), runConstraintErrors(value));
   if (value.flow !== undefined) {
-    Object.assign(errors, ReactionFlow.errors(value.flow));
+    Object.assign(errors, ReactionFlow.errors(value.flow, selectedTriggerEvents(value)));
     return errors;
   }
   const agent = refused(() => splitAgentId(value.agent));
@@ -692,6 +739,9 @@ export function triggerFormErrors(value: TriggerFormValue): TriggerFieldErrors {
   Object.assign(errors, continuationErrors(value));
   const instructions = instructionError(value.prompt);
   if (instructions !== undefined) errors.prompt = instructions;
+  if (eventsAllowSlackAgent(selectedTriggerEvents(value))) {
+    Object.assign(errors, slackAgentDraftErrors(value.slackAgent, "slackAgent"));
+  }
   return errors;
 }
 

@@ -44,7 +44,9 @@ import {
   type TriggerFieldErrors,
   type TriggerFormValue,
 } from "./configuration/editor.js";
-import { toggleTriggerEvent } from "./configuration/form-events.js";
+import { selectedTriggerEvents, toggleTriggerEvent } from "./configuration/form-events.js";
+import { blankSlackAgentDraft, eventsAllowSlackAgent } from "./slack/agent-block.js";
+import { SlackAgentFields } from "./slack-agent-fields.js";
 import { saveTrigger, triggerSnapshot, type TriggerSnapshot } from "./functions.js";
 import { daemonProviderSnapshot } from "../daemons/functions.js";
 import type { HubProviderSnapshotEntry } from "../hub/protocol.js";
@@ -615,6 +617,7 @@ function applyReactionFlow(
         githubPermissions: agent.githubPermissions,
         githubDuration: agent.githubDuration,
         prompt: agent.prompt,
+        slackAgent: agent.slackAgent,
       };
     }
   }
@@ -657,6 +660,7 @@ function TriggerForm({
     })),
   ];
   const githubEnabled = form.githubConnection !== "";
+  const showSlackAgent = eventsAllowSlackAgent(selectedTriggerEvents(form));
   const [githubExpanded, setGithubExpanded] = useState(githubEnabled);
   const [optionsExpanded, setOptionsExpanded] = useState(false);
   const update = <Key extends keyof TriggerFormValue>(key: Key, value: TriggerFormValue[Key]) =>
@@ -880,6 +884,7 @@ function TriggerForm({
               entries={providerCatalog.entries}
               loading={providerCatalog.loading}
               githubConnectionOptions={githubConnectionOptions}
+              showSlackAgent={showSlackAgent}
               onChange={(flow) => onChange(applyReactionFlow(form, flow))}
             />
           ) : null}
@@ -947,6 +952,14 @@ function TriggerForm({
                 onChange={(prompt) => update("prompt", prompt)}
                 {...fieldError(errors, "prompt")}
               />
+              {showSlackAgent ? (
+                <SlackAgentFields
+                  idPrefix="trigger"
+                  value={form.slackAgent}
+                  onChange={(slackAgent) => update("slackAgent", slackAgent)}
+                  {...fieldError(errors, "slackAgent")}
+                />
+              ) : null}
               <Disclosure
                 id="trigger-provider-options"
                 open={optionsExpanded}
@@ -1047,6 +1060,7 @@ function TriggerForm({
                         prompt: form.prompt,
                         maxRuntime: form.maxRuntime,
                         idleTimeout: form.idleTimeout,
+                        slackAgent: form.slackAgent,
                       },
                       kind,
                     ),
@@ -1392,6 +1406,7 @@ function defaultForm(snapshot: TriggerSnapshot): TriggerFormValue {
     webhookSecret: "",
     guardrails: [],
     worktree: emptyWorktree(),
+    slackAgent: blankSlackAgentDraft(),
     prompt: textInstructions(
       "Handle this request in the originating conversation.\n\nWhen hub.reply is available, use it for useful progress updates and your final user-facing response. Call hub.finish_execution once the request is complete.\n\nRequest:\n${{ paseo.prompt }}",
     ),

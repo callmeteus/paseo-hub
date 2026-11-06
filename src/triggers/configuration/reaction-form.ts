@@ -1,5 +1,13 @@
 import { parseExpression } from "../../workflows/expression.js";
 import {
+  blankSlackAgentDraft,
+  eventsAllowSlackAgent,
+  projectSlackAgentDraft,
+  slackAgentBlockFromDraft,
+  slackAgentDraftErrors,
+  type SlackAgentDraft,
+} from "../slack/agent-block.js";
+import {
   instructionError,
   instructionsDocument,
   projectInstructions,
@@ -35,6 +43,7 @@ export interface AgentFields {
   prompt: InstructionDraft[];
   maxRuntime: string;
   idleTimeout: string;
+  slackAgent: SlackAgentDraft;
 }
 
 export namespace ReactionFlow {
@@ -106,9 +115,13 @@ export namespace ReactionFlow {
    * Field errors for every reaction in the flow.
    *
    * @param flow - Reactions the form is editing
+   * @param events - Events the trigger runs for. Slack agent errors apply only when every one is Slack
    * @returns Errors keyed by `flow.<id>.<field>`
    */
-  export function errors(flow: readonly Reaction[]): Record<string, string> {
+  export function errors(
+    flow: readonly Reaction[],
+    events: readonly string[],
+  ): Record<string, string> {
     const found: Record<string, string> = {};
     const ids = new Set<string>();
     const visit = (reactions: readonly Reaction[]): void => {
@@ -140,7 +153,7 @@ export namespace ReactionFlow {
           visit(reaction.else);
           continue;
         }
-        Object.assign(found, agentErrors(reaction));
+        Object.assign(found, agentErrors(reaction, events));
       }
     };
     visit(flow);
@@ -269,12 +282,12 @@ export namespace ReactionFlow {
    * Writes the flow as trigger-document reactions.
    *
    * @param flow - Reactions to write
-   * @param shared - Deadline shared by every agent reaction
+   * @param shared - Deadline shared by every agent reaction, and the events that decide `slack_agent`
    * @returns Plain YAML values
    */
   export function toYaml(
     flow: readonly Reaction[],
-    shared: { maxRuntime: string; idleTimeout: string },
+    shared: { maxRuntime: string; idleTimeout: string; events: readonly string[] },
   ): unknown[] {
     return flow.map((reaction) => yamlReaction(reaction, shared));
   }
@@ -382,6 +395,7 @@ function agentFieldsFromReaction(
     prompt: projectInstructions(reaction.prompt),
     maxRuntime: reaction.max_runtime,
     idleTimeout: reaction.idle_timeout,
+    slackAgent: projectSlackAgentDraft(reaction.slack_agent),
   };
 }
 
@@ -401,6 +415,7 @@ function blankAgentFields(): AgentFields {
     prompt: textInstructions(""),
     maxRuntime: "2h",
     idleTimeout: "10m",
+    slackAgent: blankSlackAgentDraft(),
   };
 }
 
@@ -471,7 +486,10 @@ function listAgents(reactions: readonly ReactionFlow.Reaction[]): ReactionFlow.A
   return agents;
 }
 
-function agentErrors(reaction: ReactionFlow.Agent): Record<string, string> {
+function agentErrors(
+  reaction: ReactionFlow.Agent,
+  events: readonly string[],
+): Record<string, string> {
   const found: Record<string, string> = {};
   if (reaction.agent.trim().length === 0) found[`flow.${reaction.id}.agent`] = "Agent is required.";
   if (reaction.mode.trim().length === 0)
@@ -491,6 +509,12 @@ function agentErrors(reaction: ReactionFlow.Agent): Record<string, string> {
     if (message !== undefined) {
       found[`flow.${reaction.id}.githubPermissions`] = "GitHub permissions must be valid JSON.";
     }
+  }
+  if (eventsAllowSlackAgent(events)) {
+    Object.assign(
+      found,
+      slackAgentDraftErrors(reaction.slackAgent, `flow.${reaction.id}.slackAgent`),
+    );
   }
   return found;
 }
@@ -538,7 +562,7 @@ function swap(
 
 function yamlReaction(
   reaction: ReactionFlow.Reaction,
-  shared: { maxRuntime: string; idleTimeout: string },
+  shared: { maxRuntime: string; idleTimeout: string; events: readonly string[] },
 ): unknown {
   if (reaction.type === "wait") {
     return { id: reaction.id, wait: { for: reaction.duration.trim() } };
@@ -579,7 +603,38 @@ function yamlReaction(
     max_runtime: shared.maxRuntime.trim(),
     idle_timeout: shared.idleTimeout.trim(),
     ...(github === undefined ? {} : { github }),
+    ...slackAgentYaml(reaction, shared.events),
   };
+}
+
+function slackAgentYaml(
+  reaction: ReactionFlow.Agent,
+  events: readonly string[],
+): { slack_agent: ReturnType<typeof slackAgentBlockFromDraft> } | Record<string, never> {
+  const block = slackAgentBlockFromDraft(reaction.slackAgent, events);
+  return block === undefined ? {} : { slack_agent: block };
+}
+
+function isSlackAgentDraft(value: unknown): value is SlackAgentDraft {
+  if (typeof value !== "object" || value === null) return false;
+  if (!("enabled" in value) || typeof value.enabled !== "boolean") return false;
+  if (!("display" in value) || (value.display !== "plan" && value.display !== "timeline")) {
+    return false;
+  }
+  if (!("sessionTitle" in value) || typeof value.sessionTitle !== "string") return false;
+  if (!("planTitle" in value) || typeof value.planTitle !== "string") return false;
+  if (!("promptsTitle" in value) || typeof value.promptsTitle !== "string") return false;
+  if (!("prompts" in value) || !Array.isArray(value.prompts)) return false;
+  return value.prompts.every((item) => isPromptDraft(item));
+}
+
+function isPromptDraft(value: unknown): value is { id: string; title: string; message: string } {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value["id"] === "string" &&
+    typeof value["title"] === "string" &&
+    typeof value["message"] === "string"
+  );
 }
 
 function splitAgent(value: string): { provider: string; model?: string } {
@@ -625,6 +680,8 @@ function applyPatch(
   const next = { ...reaction };
   const prompt = readInstructionPatch(patch);
   if (prompt !== undefined) next.prompt = prompt;
+  const slackAgent = ownValue(patch, "slackAgent");
+  if (isSlackAgentDraft(slackAgent)) next.slackAgent = slackAgent;
   for (const field of [
     "agent",
     "mode",

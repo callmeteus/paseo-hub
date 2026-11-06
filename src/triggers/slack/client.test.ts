@@ -545,6 +545,112 @@ describe("Slack Web API client", () => {
     });
     warn.mockRestore();
   });
+
+  it("posts agent stream chunks as JSON and treats a warning as success", async () => {
+    const requests: Array<{ url: string; body: unknown }> = [];
+    const client = createSlackBotClient({
+      tokenForWorkspace: () => Promise.resolve("xoxb-secret"),
+      fetch: async (input, init) => {
+        requests.push({
+          url: requestUrl(input),
+          body: typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
+        });
+        return Response.json({
+          ok: true,
+          ts: "1729999328.000200",
+          warning: "missing_agent_session_stopped_event_subscription",
+        });
+      },
+    });
+
+    const started = await client.startAgentStream?.({
+      organizationId: "org-1",
+      teamId: "T1",
+      channelId: "C1",
+      threadTs: "1729999327.187299",
+      taskDisplayMode: "plan",
+      recipientUserId: "U1",
+      recipientTeamId: "T1",
+      chunks: [
+        { type: "plan_update", title: "A tratar" },
+        {
+          type: "task_update",
+          id: "read",
+          title: "Reading the thread",
+          status: "in_progress",
+        },
+      ],
+    });
+    const direct = await client.startAgentStream?.({
+      organizationId: "org-1",
+      teamId: "T1",
+      channelId: "D1",
+      threadTs: "1729999327.187299",
+      taskDisplayMode: "timeline",
+    });
+
+    assert.equal(started?.ok, true);
+    assert.equal(started?.warning, "missing_agent_session_stopped_event_subscription");
+    assert.equal(direct?.ok, true);
+    assert.deepEqual(requests[0], {
+      url: "https://slack.com/api/chat.startStream",
+      body: {
+        channel: "C1",
+        thread_ts: "1729999327.187299",
+        task_display_mode: "plan",
+        recipient_user_id: "U1",
+        recipient_team_id: "T1",
+        chunks: [
+          { type: "plan_update", title: "A tratar" },
+          { type: "task_update", id: "read", title: "Reading the thread", status: "in_progress" },
+        ],
+      },
+    });
+    assert.deepEqual(requests[1]?.body, {
+      channel: "D1",
+      thread_ts: "1729999327.187299",
+      task_display_mode: "timeline",
+    });
+  });
+
+  it("returns ok false from an agent session call instead of throwing", async () => {
+    const client = createSlackBotClient({
+      tokenForWorkspace: () => Promise.resolve("xoxb-secret"),
+      fetch: () => Promise.resolve(Response.json({ ok: false, error: "missing_scope" })),
+    });
+    const result = await client.setAgentSessionStatus?.({
+      organizationId: "org-1",
+      teamId: "T1",
+      channelId: "C1",
+      threadTs: "1729999327.187299",
+      status: "processing",
+      title: "Pedido",
+    });
+    assert.deepEqual(result, { ok: false, error: "missing_scope" });
+  });
+
+  it("sets suggested prompts without a thread timestamp", async () => {
+    let body: unknown;
+    const client = createSlackBotClient({
+      tokenForWorkspace: () => Promise.resolve("xoxb-secret"),
+      fetch: async (_input, init) => {
+        body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+        return Response.json({ ok: true });
+      },
+    });
+    await client.setSuggestedPrompts?.({
+      organizationId: "org-1",
+      teamId: "T1",
+      channelId: "D1",
+      title: "Next",
+      prompts: [{ title: "Status", message: "What is the status?" }],
+    });
+    assert.deepEqual(body, {
+      channel_id: "D1",
+      title: "Next",
+      prompts: [{ title: "Status", message: "What is the status?" }],
+    });
+  });
 });
 
 function requestUrl(input: RequestInfo | URL): string {

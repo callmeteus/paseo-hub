@@ -16,6 +16,13 @@ import {
 import { DatabaseUnavailableError } from "../../db/errors.js";
 import type { BindSlackConnectionInput, Database, SlackConnectionRecord } from "../../db/types.js";
 import { reportFailure } from "../../failures/index.js";
+import {
+  bindSlackAgentClient,
+  createSlackAgentExecutor,
+  slackAgentOutputAvailable,
+  slackAgentTool,
+} from "../../triggers/slack/agent-surface.js";
+import { SLACK_AGENT_OUTPUT_TYPES } from "../../triggers/slack/agent-block.js";
 import { createSlackBotClient, type SlackBotClient } from "../../triggers/slack/client.js";
 import { createSlackTriggerProvider } from "../../triggers/slack/provider.js";
 import { organizationBillingUrl } from "../../triggers/failure-notice.js";
@@ -144,6 +151,7 @@ export function createSlackRegistration(
         (await findSlackBindingForOrganization(database, organizationId, teamId))?.botAccessToken,
       ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
     });
+  bindSlackAgentClient(bot);
   const connection =
     options.auth === null
       ? slackConnectionStatus(true)
@@ -194,6 +202,12 @@ export function createSlackRegistration(
         available: outputContextProvider("slack"),
         execute: createSlackReactExecutor({ client: bot }),
       },
+      ...SLACK_AGENT_OUTPUT_TYPES.map((type) => ({
+        type,
+        tool: slackAgentTool(type),
+        available: slackAgentOutputAvailable,
+        execute: createSlackAgentExecutor(bot, type),
+      })),
     ],
     requests:
       events.request === undefined ? [] : [{ name: "slack.events", handle: events.request }],

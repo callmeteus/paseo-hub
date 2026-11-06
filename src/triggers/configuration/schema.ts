@@ -5,6 +5,7 @@ import { eventDefinition, isEditorEvent } from "./events.js";
 import { AuthoredGitHubAuthoritySchema } from "../../config/github-authority.js";
 import { SlackMessageRegexSchema, SlackMessageTextSchema } from "../slack/text-filter.js";
 import { GuardrailsSchema } from "../../workflows/guardrails.js";
+import { eventsAllowSlackAgent, SlackAgentBlockSchema } from "../slack/agent-block.js";
 
 type JsonPrimitive = string | number | boolean | null;
 type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
@@ -198,6 +199,8 @@ const AgentReactionFields = {
     .strict()
     .optional(),
   outputs: z.record(z.string().regex(EVENT_NAME), TriggerOutputSchema).optional(),
+  /** Opt-in Slack agent session. Absent keeps the legacy assistant status. */
+  slack_agent: SlackAgentBlockSchema.optional(),
   auto_archive: z.boolean().default(true),
   background: z.boolean().default(false),
 };
@@ -472,9 +475,32 @@ export const TriggerDocumentSchema = z
         message: "at least one agent choice is required",
       });
     }
+    if (runHasSlackAgent(trigger.run) && !eventsAllowSlackAgent(Object.keys(trigger.on))) {
+      context.addIssue({
+        code: "custom",
+        path: ["run", "slack_agent"],
+        message: "slack_agent is only valid when every event is slack.message or slack.mention.",
+      });
+    }
   });
 
 export type TriggerDocument = z.infer<typeof TriggerDocumentSchema>;
+
+function runHasSlackAgent(run: DocumentRun): boolean {
+  if ("slack_agent" in run && run.slack_agent !== undefined) return true;
+  if (!("reactions" in run)) return false;
+  return reactionsHaveSlackAgent(run.reactions);
+}
+
+function reactionsHaveSlackAgent(reactions: readonly TriggerReaction[]): boolean {
+  for (const reaction of reactions) {
+    if ("slack_agent" in reaction && reaction.slack_agent !== undefined) return true;
+    if ("if" in reaction && reactionsHaveSlackAgent([...reaction.if.then, ...reaction.if.else])) {
+      return true;
+    }
+  }
+  return false;
+}
 
 function refineTriggerEvent(
   event: string,

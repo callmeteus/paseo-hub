@@ -14,6 +14,7 @@ import {
   triggerFormErrors,
 } from "./editor.js";
 import { emptyWorktree, textInstructions } from "./form-drafts.js";
+import { blankSlackAgentDraft, SLACK_AGENT_FEEDBACK_UNAVAILABLE } from "../slack/agent-block.js";
 import { setEventAudience, setEventRegex, toggleTriggerEvent } from "./form-events.js";
 
 import {
@@ -511,6 +512,7 @@ run:
       githubPermissions: "",
       githubDuration: "1h",
       prompt: textInstructions("Reply."),
+      slackAgent: blankSlackAgentDraft(),
       guardrails: [],
       worktree: emptyWorktree(),
       channels: "",
@@ -604,6 +606,7 @@ run:
       githubPermissions: "",
       githubDuration: "1h",
       prompt: textInstructions("Handle it."),
+      slackAgent: blankSlackAgentDraft(),
       guardrails: [],
       worktree: emptyWorktree(),
       channels: "",
@@ -650,6 +653,7 @@ run:
       githubPermissions: "",
       githubDuration: "1h",
       prompt: textInstructions("${{ paseo.prompt }}"),
+      slackAgent: blankSlackAgentDraft(),
       guardrails: [],
       worktree: emptyWorktree(),
       channels: "",
@@ -1178,4 +1182,73 @@ test("edits an included instruction on a reaction without a second flow", () => 
   expect(check.if.then[0]).toMatchObject({
     prompt: [{ text: "Reply carefully." }, { include: "partials/safety.md" }],
   });
+});
+
+test("writes slack_agent from the form and removes it when the surface is turned off", () => {
+  const projection = projectTriggerForm(ADVANCED);
+  if (projection.status !== "editable") throw new Error(projection.reason);
+  expect(projection.value.slackAgent.enabled).toBe(false);
+  const enabled = patchTriggerYaml(ADVANCED, {
+    ...projection.value,
+    slackAgent: {
+      ...blankSlackAgentDraft(),
+      enabled: true,
+      display: "timeline",
+      sessionTitle: "Pedido de hoje",
+    },
+  });
+  expect(enabled).toContain("slack_agent:");
+  expect(enabled).toContain("display: timeline");
+  expect(enabled).toContain("session_title: Pedido de hoje");
+  expect(enabled).not.toContain("feedback:");
+  const enabledForm = projectTriggerForm(enabled);
+  if (enabledForm.status !== "editable") throw new Error(enabledForm.reason);
+  expect(enabledForm.value.slackAgent).toMatchObject({
+    enabled: true,
+    display: "timeline",
+    sessionTitle: "Pedido de hoje",
+  });
+  const disabled = patchTriggerYaml(enabled, {
+    ...enabledForm.value,
+    slackAgent: { ...enabledForm.value.slackAgent, enabled: false },
+  });
+  expect(disabled).not.toContain("slack_agent");
+  expect(patchTriggerYaml(ADVANCED, projection.value)).toBe(ADVANCED);
+});
+
+test("drops slack_agent when the trigger event is no longer Slack", () => {
+  const projection = projectTriggerForm(ADVANCED);
+  if (projection.status !== "editable") throw new Error(projection.reason);
+  const enabled = patchTriggerYaml(ADVANCED, {
+    ...projection.value,
+    slackAgent: {
+      ...blankSlackAgentDraft(),
+      enabled: true,
+      display: "plan",
+      planTitle: "A tratar",
+    },
+  });
+  const enabledForm = projectTriggerForm(enabled);
+  if (enabledForm.status !== "editable") throw new Error(enabledForm.reason);
+  const moved = patchTriggerYaml(enabled, changeTriggerEvent(enabledForm.value, "manual.run"));
+  expect(moved).not.toContain("slack_agent");
+  const parsed = TriggerDocumentSchema.parse(parseDocument(moved).toJS());
+  expect(parsed.run).not.toHaveProperty("slack_agent");
+});
+
+test("leaves a Slack agent block the form cannot represent in YAML", () => {
+  const feedback = ADVANCED.replace(
+    "  auto_archive: false\n",
+    "  slack_agent:\n    display: plan\n    feedback: true\n  auto_archive: false\n",
+  );
+  const projected = projectTriggerForm(feedback);
+  expect(projected.status).toBe("yaml_only");
+  if (projected.status === "yaml_only") {
+    expect(projected.reason).toContain(SLACK_AGENT_FEEDBACK_UNAVAILABLE);
+  }
+  const unknown = ADVANCED.replace(
+    "  auto_archive: false\n",
+    "  slack_agent:\n    display: board\n  auto_archive: false\n",
+  );
+  expect(projectTriggerForm(unknown).status).toBe("yaml_only");
 });

@@ -4,6 +4,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, it } from "vitest";
 
 import { GuardrailFields } from "./guardrail-fields.js";
+import { SlackAgentFields } from "./slack-agent-fields.js";
+import { blankSlackAgentDraft, SLACK_AGENT_FEEDBACK_UNAVAILABLE } from "./slack/agent-block.js";
 import { InstructionsEditor } from "./instructions-editor.js";
 import { WorktreeFields } from "./worktree-fields.js";
 import { emptyWorktree, textInstructions } from "./configuration/form-drafts.js";
@@ -60,5 +62,33 @@ describe("trigger configuration fields", () => {
     assert.match(markup, /value="partials\/safety\.md"/);
     assert.match(markup, /Add instruction file/);
     assert.match(markup, /Add text/);
+  });
+
+  it("renders the Slack agent surface on the agent card", () => {
+    const markup = renderToStaticMarkup(
+      <SlackAgentFields
+        idPrefix="trigger"
+        value={{
+          ...blankSlackAgentDraft(),
+          enabled: true,
+          display: "plan",
+          sessionTitle: "Pedido",
+          prompts: [{ id: "prompt-status", title: "Status", message: "What is the status?" }],
+        }}
+        onChange={() => undefined}
+      />,
+    );
+
+    assert.match(markup, /Show work in Slack/);
+    assert.match(markup, /Plan/);
+    assert.match(markup, /Timeline/);
+    assert.match(markup, /name="trigger-slack-session-title"/);
+    assert.match(markup, /value="Pedido"/);
+    assert.match(markup, /Plan title/);
+    assert.match(markup, /Add suggested prompt/);
+    assert.match(markup, /value="Status"/);
+    assert.match(markup, /Feedback buttons/);
+    assert.match(markup, /Feedback buttons need Slack interactivity/);
+    assert.equal(markup.includes(SLACK_AGENT_FEEDBACK_UNAVAILABLE), true);
   });
 });

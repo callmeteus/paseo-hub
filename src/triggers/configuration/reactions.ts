@@ -130,6 +130,7 @@ function agentStep(
     ...(reaction.github === undefined ? {} : { github: reaction.github }),
     ...(condition === undefined ? {} : { if: condition }),
     ...(reaction.output === undefined ? {} : { output: reaction.output }),
+    ...(reaction.slack_agent === undefined ? {} : { slack_agent: reaction.slack_agent }),
     ...(allowOutputs === undefined ? {} : { allow_outputs: allowOutputs }),
     auto_archive: reaction.auto_archive,
     background: reaction.background,

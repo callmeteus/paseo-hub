@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "vitest";
 import { compileTriggerDocument } from "./index.js";
 import { emptyWorktree, textInstructions } from "./form-drafts.js";
+import { blankSlackAgentDraft } from "../slack/agent-block.js";
 import { applyAutomationTemplate, createWebhookSecret } from "./editor.js";
 import type { TriggerFormValue } from "./editor.js";
 
@@ -34,6 +35,7 @@ const form: TriggerFormValue = {
   guardrails: [],
   worktree: emptyWorktree(),
   prompt: textInstructions("Handle it."),
+  slackAgent: blankSlackAgentDraft(),
 };
 
 describe("automation templates", () => {

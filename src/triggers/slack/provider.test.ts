@@ -9,6 +9,7 @@ import {
   type SlackThreadMessage,
   type SlackThreadReadResult,
 } from "./client.js";
+import { resetSlackAgentSurfaceForTests } from "./agent-surface.js";
 import { normalizeSlackEvent } from "./events.js";
 import { createSlackTriggerProvider } from "./provider.js";
 import { isAcceptedTriggerProviderMatch } from "../index.js";
@@ -315,6 +316,124 @@ describe("Slack Phase 1 trigger provider", () => {
     assert.equal(client.messages[0]?.threadTs, "1729999327.187299");
     assert.equal(client.messages[0]?.channelId, "D1");
     assert.match(client.messages[0]?.content ?? "", /boom/u);
+  });
+
+  it("opens an agent session when the step opts in and leaves the legacy status alone", async () => {
+    resetSlackAgentSurfaceForTests();
+    const database = createMemoryDatabase();
+    const base = configuration();
+    const trigger = base.triggers[0]!;
+    const { project, revision, store } = await createActiveProjectConfiguration(
+      database,
+      {
+        ...base,
+        triggers: [
+          {
+            ...trigger,
+            steps: [
+              {
+                ...trigger.steps[0]!,
+                slack_agent: { display: "plan", session_title: "Pedido" },
+              },
+            ],
+          },
+        ],
+      },
+      { organizationId: "org-1" },
+    );
+    const client = new RecordingSlackClient();
+    const provider = createSlackTriggerProvider({
+      configurationStoreForProject: () => store,
+      botUserIdForWorkspace: () => Promise.resolve("UBOT"),
+      client,
+    });
+    const match = (await provider.match(external(project.id, revision.id)))[0];
+    if (!isAcceptedTriggerProviderMatch(match)) throw new Error("expected accepted match");
+    assert.equal(match.outputContext.slackAgent?.session_title, "Pedido");
+
+    await provider.onAgentExecutionStarted?.(match.triggerContext, match.outputContext);
+    await provider.onAgentExecutionCompleted?.(match.triggerContext, match.outputContext, {
+      status: "succeeded",
+    });
+
+    assert.deepEqual(client.statuses, []);
+    assert.deepEqual(
+      client.agentSessions.map((call) => ({ status: call.status, title: call.title })),
+      [
+        { status: "processing", title: "Pedido" },
+        { status: "active", title: undefined },
+      ],
+    );
+  });
+
+  it("keeps the legacy status when the agent session API refuses the token", async () => {
+    resetSlackAgentSurfaceForTests();
+    const database = createMemoryDatabase();
+    const base = configuration();
+    const { project, revision, store } = await createActiveProjectConfiguration(
+      database,
+      {
+        ...base,
+        triggers: [
+          {
+            ...base.triggers[0]!,
+            on: "slack.message",
+            filters: { workspace: "T1", from_users: ["U1"] },
+            steps: [
+              {
+                ...base.triggers[0]!.steps[0]!,
+                slack_agent: { display: "timeline" },
+              },
+            ],
+          },
+        ],
+      },
+      { organizationId: "org-1" },
+    );
+    const client = new RecordingSlackClient({ agentStatusError: "missing_scope" });
+    const provider = createSlackTriggerProvider({
+      configurationStoreForProject: () => store,
+      botUserIdForWorkspace: () => Promise.resolve("UBOT"),
+      client,
+    });
+    const payload = normalizeSlackEvent({
+      type: "event_callback",
+      team_id: "T1",
+      api_app_id: "A1",
+      event_id: "Ev-agent-fallback",
+      event_time: 1_729_999_328,
+      event: {
+        type: "message",
+        user: "U1",
+        channel: "D1",
+        channel_type: "im",
+        text: "qual o estado?",
+        ts: "1729999328.000100",
+        thread_ts: "1729999327.187299",
+        event_ts: "1729999328.000100",
+      },
+    });
+    if (payload === undefined) throw new Error("expected an assistant message");
+    const match = (
+      await provider.match({
+        ...external(project.id, revision.id),
+        source: "slack.message",
+        payload,
+      })
+    )[0];
+    if (!isAcceptedTriggerProviderMatch(match)) throw new Error("expected accepted match");
+
+    await provider.onAgentExecutionStarted?.(match.triggerContext, match.outputContext);
+    await provider.onAgentExecutionCompleted?.(match.triggerContext, match.outputContext, {
+      status: "succeeded",
+    });
+
+    assert.deepEqual(client.statuses, [
+      { channelId: "D1", threadTs: "1729999327.187299", status: "is thinking..." },
+      { channelId: "D1", threadTs: "1729999327.187299", status: "" },
+    ]);
+    assert.equal(client.agentSessions[0]?.status, "processing");
+    assert.equal(client.agentSessions.length, 1);
   });
 
   it("keeps a root Slack mention as the reply thread root", async () => {
@@ -990,6 +1109,7 @@ function external(
 class RecordingSlackClient implements SlackBotClient {
   reactions: string[] = [];
   statuses: Array<{ channelId: string; threadTs: string; status: string }> = [];
+  agentSessions: Array<{ status: string; title?: string | undefined }> = [];
   messages: Array<{
     organizationId: string;
     teamId: string;
@@ -1011,6 +1131,7 @@ class RecordingSlackClient implements SlackBotClient {
       threadComplete?: boolean;
       username?: string;
       sharedMessages?: Record<string, unknown>;
+      agentStatusError?: string;
     } = {},
   ) {
     this.threadMessages = options.threadMessages ?? [];
@@ -1027,6 +1148,37 @@ class RecordingSlackClient implements SlackBotClient {
       status: input.status,
     });
     return Promise.resolve();
+  }
+
+  setAgentSessionStatus(input: { status: string; title?: string | undefined }): Promise<{
+    ok: boolean;
+    error?: string;
+  }> {
+    this.agentSessions.push({ status: input.status, title: input.title });
+    if (this.options.agentStatusError !== undefined) {
+      return Promise.resolve({ ok: false, error: this.options.agentStatusError });
+    }
+    return Promise.resolve({ ok: true });
+  }
+
+  renameAgentSession(): Promise<{ ok: boolean }> {
+    return Promise.resolve({ ok: true });
+  }
+
+  startAgentStream(): Promise<{ ok: boolean; ts: string }> {
+    return Promise.resolve({ ok: true, ts: "1.2" });
+  }
+
+  appendAgentStream(): Promise<{ ok: boolean }> {
+    return Promise.resolve({ ok: true });
+  }
+
+  stopAgentStream(): Promise<{ ok: boolean }> {
+    return Promise.resolve({ ok: true });
+  }
+
+  setSuggestedPrompts(): Promise<{ ok: boolean }> {
+    return Promise.resolve({ ok: true });
   }
 
   sendMessage(input: (typeof this.messages)[number]): Promise<void> {

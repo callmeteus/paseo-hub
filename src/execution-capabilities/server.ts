@@ -18,6 +18,7 @@ import {
   type OutputExecutorRegistry,
   type OutputToolSchema,
 } from "./outputs.js";
+import { SlackAgentSurfaceError } from "../triggers/slack/agent-surface.js";
 import { GuardrailRefusal } from "../workflows/guardrails.js";
 
 type JsonSchema = OutputToolSchema;
@@ -356,7 +357,7 @@ async function executeOutputCall(
     if (recorded === undefined) throw new Error("output emission could not be recorded");
     return toolSuccess("Output sent");
   } catch (error) {
-    if (error instanceof GuardrailRefusal) {
+    if (error instanceof GuardrailRefusal || error instanceof SlackAgentSurfaceError) {
       try {
         await options.database.failAgentExecutionOutput(
           execution.id,
