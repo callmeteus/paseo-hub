@@ -718,6 +718,7 @@ function readInstructionPatch(patch: object): InstructionDraft[] | undefined {
 function isInstructionDraft(value: unknown): value is InstructionDraft {
   if (typeof value !== "object" || value === null || !("kind" in value)) return false;
   if (value.kind === "text") return "text" in value && typeof value.text === "string";
+  if (value.kind === "load") return "root" in value && typeof value.root === "string";
   if (value.kind !== "include") return false;
   return (
     "path" in value &&

@@ -16,6 +16,14 @@ export interface DaemonEnvironmentTarget {
   worktree?: WorktreeTarget;
 }
 
+/** One file the run's catalog offered to `load_instruction`. */
+export interface LaunchInstruction {
+  /** Path relative to `root`, as shown in the prompt catalog. */
+  path: string;
+  /** Catalog root from the automation YAML. */
+  root: string;
+}
+
 export interface LaunchMachineIntent {
   continuation?: { key: string | null; compatibility: unknown };
   kind: "launch_machine";
@@ -32,6 +40,8 @@ export interface LaunchMachineIntent {
   /** Authored workspace title, already rendered; absent means Hub's default workspace title. */
   title?: string;
   prompt: string;
+  /** Files `load_instruction` may read for this run. Absent when the prompt has no catalog. */
+  instructions?: readonly LaunchInstruction[];
   agent: TriggerAgentConfig;
   allowOutputs: readonly AllowedOutput[];
   timeoutMs?: number;
@@ -61,6 +71,7 @@ export function buildLaunchMachineIntent(input: {
   github?: CompiledGitHubAuthority;
   title?: string;
   prompt: string;
+  instructions?: readonly LaunchInstruction[];
   agent: TriggerAgentConfig;
   allowOutputs: readonly AllowedOutput[];
   timeoutMs?: number;
@@ -85,6 +96,9 @@ export function buildLaunchMachineIntent(input: {
     ...(input.github === undefined ? {} : { github: input.github }),
     ...(input.title === undefined ? {} : { title: input.title }),
     prompt: input.prompt,
+    ...(input.instructions === undefined || input.instructions.length === 0
+      ? {}
+      : { instructions: input.instructions }),
     agent: input.agent,
     allowOutputs: input.allowOutputs,
     ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),

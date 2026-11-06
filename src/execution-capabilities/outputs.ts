@@ -56,6 +56,21 @@ export interface MaterializedOutputCapability {
 }
 
 export const finishExecutionToolName = "finish_execution" as const;
+export const loadInstructionToolName = "load_instruction" as const;
+
+const loadInstructionTool: OutputToolDefinition = {
+  name: loadInstructionToolName,
+  description:
+    "Returns one instruction file from this run's catalog. Pass the path from the catalog in the prompt.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      path: { type: "string", minLength: 1 },
+    },
+    required: ["path"],
+    additionalProperties: false,
+  },
+};
 
 function finishExecutionToolDescription(outputSchema: JsonValue | undefined): string {
   return outputSchema === undefined
@@ -172,6 +187,7 @@ export class OutputExecutorRegistry {
 export function executionToolDefinitions(
   outputSchema: JsonValue | undefined,
   materializedOutputs: readonly MaterializedOutputCapability[],
+  loadInstructions = false,
 ): readonly OutputToolDefinition[] {
   return [
     {
@@ -179,6 +195,7 @@ export function executionToolDefinitions(
       description: finishExecutionToolDescription(outputSchema),
       inputSchema: toolSchema(compileFinishExecutionArguments(outputSchema).schema),
     },
+    ...(loadInstructions ? [loadInstructionTool] : []),
     ...materializedOutputs.map(({ declaration, capability }) => ({
       name: capability.tool.name,
       description:

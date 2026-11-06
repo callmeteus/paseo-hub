@@ -1144,7 +1144,7 @@ async function buildStepIntent(
     throw new Error(`workflow environment ${environmentName} is unavailable`);
   }
   const agent = materializeAgent(step.agent, context);
-  const prompt = await composeLaunchPrompt({
+  const composed = await composeLaunchPrompt({
     blocks: step.prompt,
     cwd: environment.cwd,
     context,
@@ -1171,7 +1171,8 @@ async function buildStepIntent(
       ...(step.title === undefined
         ? {}
         : { title: renderExecutionTemplate(step.title, executionId) }),
-      prompt,
+      prompt: composed.prompt,
+      ...(composed.instructions.length === 0 ? {} : { instructions: composed.instructions }),
       agent,
       allowOutputs: slackReactGrant(step.allowOutputs, run.outputContext),
       timeoutMs: step.maxRuntimeMs,
@@ -1273,7 +1274,7 @@ function stepUsesTriggerContext(
 ): boolean {
   if (isCompiledStaticStep(step)) return false;
   return step.prompt.some((block) => {
-    if (block.kind === "include") return false;
+    if (block.kind === "include" || block.kind === "load") return false;
     const source = block.kind === "text" ? block.value : block.content;
     return expressionPathsInTemplate(source).some(
       (path) => path.namespace === "paseo" && path.path === "context",

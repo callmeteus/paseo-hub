@@ -12,6 +12,7 @@ export function executionToolPolicy(input: {
   allowOutputs: readonly AllowedOutput[];
   outputContext: unknown;
   outputSchema?: JsonValue;
+  loadInstructions?: boolean;
   capabilities: OutputExecutorRegistry;
 }): ToolPolicy {
   const materializedOutputs = input.capabilities.materialize(
@@ -19,7 +20,11 @@ export function executionToolPolicy(input: {
     input.outputContext,
   );
   return {
-    preapproved: executionToolDefinitions(input.outputSchema, materializedOutputs).map((tool) => ({
+    preapproved: executionToolDefinitions(
+      input.outputSchema,
+      materializedOutputs,
+      input.loadInstructions === true,
+    ).map((tool) => ({
       kind: "mcp" as const,
       server: HUB_MCP_SERVER,
       tool: tool.name,

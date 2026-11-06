@@ -85,6 +85,7 @@ const PromptIncludeTargetSchema = z.union([
 const PromptBlockSchema = z.union([
   z.object({ text: z.string() }).strict(),
   z.object({ include: PromptIncludeTargetSchema }).strict(),
+  z.object({ load: z.object({ root: z.string().min(1) }).strict() }).strict(),
 ]);
 const JsonSchemaSchema = z.record(z.string(), z.unknown());
 
@@ -329,12 +330,14 @@ export type AuthoredInput = z.infer<typeof AuthoredInputSchema>;
 export type CompiledPromptBlock =
   | { kind: "text"; value: string }
   | { kind: "partial"; path: string; content: string; contentHash: string }
-  | { kind: "include"; path: string; root?: string | undefined };
+  | { kind: "include"; path: string; root?: string | undefined }
+  | { kind: "load"; root: string };
 
 /**
  * Text already stored on a compiled prompt block.
  *
- * An include has no text until the run reads the file, so migration cannot inline it.
+ * An include or a load has no text until the run reads the file, so migration
+ * cannot inline it.
  *
  * @param block - One compiled prompt block
  * @returns The stored text
@@ -342,6 +345,9 @@ export type CompiledPromptBlock =
 export function staticPromptText(block: CompiledPromptBlock): string {
   if (block.kind === "text") return block.value;
   if (block.kind === "partial") return block.content;
+  if (block.kind === "load") {
+    throw new Error(`prompt load ${block.root} is read when the run starts`);
+  }
   throw new Error(`prompt include ${block.path} is read when the run starts`);
 }
 
@@ -516,6 +522,7 @@ const CompiledPromptBlockSchema: z.ZodType<CompiledPromptBlock> = z.union([
       root: z.string().min(1).optional(),
     })
     .strict(),
+  z.object({ kind: z.literal("load"), root: z.string().min(1) }).strict(),
 ]);
 
 const CompiledAgentSchema: z.ZodType<CompiledAgent> = z
@@ -1040,6 +1047,19 @@ function compilePromptBlocks(
 ): readonly CompiledPromptBlock[] {
   return blocks.map((block, index) => {
     if ("text" in block) return { kind: "text" as const, value: block.text };
+    if ("load" in block) {
+      try {
+        assertInstructionRoot(block.load.root);
+      } catch (error) {
+        throw new Error(
+          `trigger ${triggerName} step ${stepId} prompt[${index}].load: ${
+            error instanceof Error ? error.message : "invalid instruction catalog"
+          }`,
+          { cause: error },
+        );
+      }
+      return { kind: "load" as const, root: block.load.root };
+    }
     if (deferUnbundledIncludes) {
       try {
         return compileRuntimePromptInclude(block.include);
@@ -1265,15 +1285,10 @@ function validateExpressionContract(
       });
     }
     for (const [index, block] of step.prompt.entries()) {
-      if (block.kind === "include") continue;
+      if (block.kind === "include" || block.kind === "load") continue;
+      const source = block.kind === "text" ? block.value : block.content;
       compileAt(["triggers", triggerName, "steps", step.id, "prompt", index], () =>
-        validateTemplate(
-          block.kind === "text" ? block.value : block.content,
-          ordinal,
-          `step ${step.id} prompt[${index}]`,
-          false,
-          true,
-        ),
+        validateTemplate(source, ordinal, `step ${step.id} prompt[${index}]`, false, true),
       );
     }
   }
@@ -1667,18 +1682,8 @@ function validateStepEnvironmentContract(
 
 function validateCompiledPromptBlocks(step: CompiledAgentStep): void {
   for (const block of step.prompt) {
-    if (block.kind === "include") {
-      try {
-        validatePromptInstructionPath(block.path);
-        if (block.root !== undefined) assertInstructionRoot(block.root);
-      } catch (error) {
-        throw new Error(
-          `step ${step.id} contains an unsafe prompt instruction: ${
-            error instanceof Error ? error.message : "invalid instruction"
-          }`,
-          { cause: error },
-        );
-      }
+    if (block.kind === "include" || block.kind === "load") {
+      validateRuntimePromptBlock(step.id, block);
       continue;
     }
     if (block.kind !== "partial") continue;
@@ -1690,6 +1695,27 @@ function validateCompiledPromptBlocks(step: CompiledAgentStep): void {
     if (hashPromptPartialContent(block.content) !== block.contentHash) {
       throw new Error(`step ${step.id} contains invalid prompt partial content evidence`);
     }
+  }
+}
+
+function validateRuntimePromptBlock(
+  stepId: string,
+  block: Extract<CompiledPromptBlock, { kind: "include" | "load" }>,
+): void {
+  try {
+    if (block.kind === "load") {
+      assertInstructionRoot(block.root);
+      return;
+    }
+    validatePromptInstructionPath(block.path);
+    if (block.root !== undefined) assertInstructionRoot(block.root);
+  } catch (error) {
+    throw new Error(
+      `step ${stepId} contains an unsafe prompt instruction: ${
+        error instanceof Error ? error.message : "invalid instruction"
+      }`,
+      { cause: error },
+    );
   }
 }
 

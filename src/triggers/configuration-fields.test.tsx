@@ -61,7 +61,22 @@ describe("trigger configuration fields", () => {
     assert.match(markup, /Instruction file/);
     assert.match(markup, /value="partials\/safety\.md"/);
     assert.match(markup, /Add instruction file/);
+    assert.match(markup, /Add instruction catalog/);
     assert.match(markup, /Add text/);
+  });
+
+  it("renders an instruction catalog root", () => {
+    const markup = renderToStaticMarkup(
+      <InstructionsEditor
+        id="trigger-prompt"
+        value={[{ kind: "load", root: "~/.paseo/automations/regras" }]}
+        onChange={() => undefined}
+      />,
+    );
+
+    assert.match(markup, /Instruction catalog/);
+    assert.match(markup, /value="~\/\.paseo\/automations\/regras"/);
+    assert.match(markup, /Add instruction catalog/);
   });
 
   it("renders the Slack agent surface on the agent card", () => {

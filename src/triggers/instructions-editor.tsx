@@ -11,8 +11,8 @@ const MERGE_TAGS = ["${{ paseo.prompt }}", "${{ paseo.context }}"] as const;
 
 /**
  * The instructions on an agent. One text block is the textarea the form already had.
- * Adding a file, or a document that already includes one, edits the same ordered list
- * of `text` and `include` blocks.
+ * Adding a file or a catalog, or a document that already has one, edits the same
+ * ordered list of `text`, `include`, and `load` blocks.
  */
 export function InstructionsEditor({
   id,
@@ -36,7 +36,7 @@ export function InstructionsEditor({
           {...(error === undefined ? {} : { error })}
           onChange={(text) => onChange(textInstructions(text))}
         />
-        <div>
+        <div className="flex flex-wrap gap-2">
           <Button
             type="button"
             variant="outline"
@@ -44,6 +44,14 @@ export function InstructionsEditor({
             onClick={() => onChange(addInclude(value))}
           >
             <Plus aria-hidden="true" /> Add instruction file
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => onChange(addCatalog(value))}
+          >
+            <Plus aria-hidden="true" /> Add instruction catalog
           </Button>
         </div>
       </div>
@@ -79,6 +87,14 @@ export function InstructionsEditor({
         >
           <Plus aria-hidden="true" /> Add instruction file
         </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => onChange(addCatalog(value))}
+        >
+          <Plus aria-hidden="true" /> Add instruction catalog
+        </Button>
       </div>
     </div>
   );
@@ -100,37 +116,12 @@ function InstructionPart({
   return (
     <div className="flex items-start gap-2">
       <div className="grid min-w-0 flex-1 gap-4">
-        {part.kind === "text" ? (
-          <PromptText
-            id={id}
-            value={part.text}
-            {...(error === undefined ? {} : { error })}
-            onChange={(text) => onChange({ kind: "text", text })}
-          />
-        ) : (
-          <div className="grid gap-4 sm:grid-cols-2">
-            <FormField
-              id={`${id}-path`}
-              label="Instruction file"
-              description="Path relative to the working directory, or to the root beside it."
-              kind="text"
-              name={`${id}-path`}
-              value={part.path}
-              onChange={(path) => onChange({ ...part, path })}
-              required
-              {...(error === undefined ? {} : { error })}
-            />
-            <FormField
-              id={`${id}-root`}
-              label="Root"
-              description="Absolute path, or ~. Leave empty to use the working directory."
-              kind="text"
-              name={`${id}-root`}
-              value={part.root}
-              onChange={(root) => onChange({ ...part, root })}
-            />
-          </div>
-        )}
+        <InstructionFields
+          id={id}
+          part={part}
+          {...(error === undefined ? {} : { error })}
+          onChange={onChange}
+        />
       </div>
       <Button
         type="button"
@@ -143,6 +134,68 @@ function InstructionPart({
         <Trash2 aria-hidden="true" />
       </Button>
     </div>
+  );
+}
+
+function InstructionFields({
+  id,
+  part,
+  error,
+  onChange,
+}: {
+  id: string;
+  part: InstructionDraft;
+  error?: string;
+  onChange: (part: InstructionDraft) => void;
+}) {
+  if (part.kind === "text") {
+    return (
+      <PromptText
+        id={id}
+        value={part.text}
+        {...(error === undefined ? {} : { error })}
+        onChange={(text) => onChange({ kind: "text", text })}
+      />
+    );
+  }
+  if (part.kind === "include") {
+    return (
+      <div className="grid gap-4 sm:grid-cols-2">
+        <FormField
+          id={`${id}-path`}
+          label="Instruction file"
+          description="Path relative to the working directory, or to the root beside it."
+          kind="text"
+          name={`${id}-path`}
+          value={part.path}
+          onChange={(path) => onChange({ ...part, path })}
+          required
+          {...(error === undefined ? {} : { error })}
+        />
+        <FormField
+          id={`${id}-root`}
+          label="Root"
+          description="Absolute path, or ~. Leave empty to use the working directory."
+          kind="text"
+          name={`${id}-root`}
+          value={part.root}
+          onChange={(root) => onChange({ ...part, root })}
+        />
+      </div>
+    );
+  }
+  return (
+    <FormField
+      id={`${id}-root`}
+      label="Instruction catalog"
+      description="Directory of markdown files the agent can load. Absolute path, or ~."
+      kind="text"
+      name={`${id}-root`}
+      value={part.root}
+      onChange={(root) => onChange({ kind: "load", root })}
+      required
+      {...(error === undefined ? {} : { error })}
+    />
   );
 }
 
@@ -211,6 +264,10 @@ function PromptText({
 
 function addInclude(parts: readonly InstructionDraft[]): InstructionDraft[] {
   return [...parts, { kind: "include", path: "", root: "" }];
+}
+
+function addCatalog(parts: readonly InstructionDraft[]): InstructionDraft[] {
+  return [...parts, { kind: "load", root: "" }];
 }
 
 function replacePart(

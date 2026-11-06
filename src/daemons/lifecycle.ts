@@ -1985,6 +1985,7 @@ async function buildCreateAgentOptions(
       allowOutputs: intent.allowOutputs,
       outputContext: intent.outputContext,
       ...(intent.outputSchema === undefined ? {} : { outputSchema: intent.outputSchema }),
+      loadInstructions: (intent.instructions?.length ?? 0) > 0,
       capabilities,
     }),
     // Nobody is at the keyboard. Auto-accept approves the ACP prompt once.

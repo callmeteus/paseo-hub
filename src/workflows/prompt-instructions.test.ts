@@ -13,6 +13,7 @@ import { patchTriggerYaml, projectTriggerForm } from "../triggers/configuration/
 import { singleAgentRun } from "../triggers/configuration/schema.js";
 import {
   composeLaunchPrompt,
+  LOAD_INSTRUCTION_PROSE,
   PromptInstructionError,
   readPromptInstruction,
 } from "./prompt-instructions.js";
@@ -36,7 +37,8 @@ describe("composeLaunchPrompt", () => {
       context,
       read: async () => "Program like this. ${{ paseo.prompt }}",
     });
-    assert.equal(prompt, "Program like this. hello\nTask hello");
+    assert.equal(prompt.prompt, "Program like this. hello\nTask hello");
+    assert.deepEqual(prompt.instructions, []);
   });
 
   it("reads an instruction from the automation directory and refuses a symlink that leaves it", async () => {
@@ -61,7 +63,8 @@ describe("composeLaunchPrompt", () => {
         cwd: directory,
         context,
       });
-      assert.equal(prompt, "Program like this. hello\nDo the task.");
+      assert.equal(prompt.prompt, "Program like this. hello\nDo the task.");
+      assert.deepEqual(prompt.instructions, []);
       await assert.rejects(
         readPromptInstruction({ cwd: directory, path: "linked.mdc" }),
         /escapes its root/u,
@@ -102,6 +105,98 @@ describe("composeLaunchPrompt", () => {
       );
     } finally {
       await rm(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("instruction catalogs", () => {
+  it("injects the English index in place of load and keeps the file body out", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "hub-instruction-catalog-"));
+    try {
+      await writeFile(
+        path.join(directory, "ajuste-de-saldo.md"),
+        "---\nwhen: ajuste de saldo ${{ paseo.prompt }}\n---\nBODY_SENTINEL_SHOULD_STAY_OUT\n",
+        "utf8",
+      );
+      await writeFile(
+        path.join(directory, "alteracao-de-infra.md"),
+        `${"a".repeat(250)}\nThe rest of the infra rule.\n`,
+        "utf8",
+      );
+      await writeFile(path.join(directory, "notes.txt"), "not a catalog file", "utf8");
+      const prompt = await composeLaunchPrompt({
+        blocks: [
+          { kind: "text", value: "Task ${{ paseo.prompt }}" },
+          { kind: "load", root: directory },
+          { kind: "text", value: "Keep ${{ paseo.prompt }} out of the catalog line." },
+        ],
+        cwd: "/workspace",
+        context,
+      });
+      assert.equal(
+        prompt.prompt,
+        [
+          "Task hello",
+          LOAD_INSTRUCTION_PROSE,
+          "",
+          "- ajuste-de-saldo.md — ajuste de saldo ${{ paseo.prompt }}",
+          `- alteracao-de-infra.md — ${"a".repeat(200)}`,
+          "Keep hello out of the catalog line.",
+        ].join("\n"),
+      );
+      assert.equal(prompt.prompt.includes("BODY_SENTINEL_SHOULD_STAY_OUT"), false);
+      assert.equal(prompt.prompt.includes("The rest of the infra rule."), false);
+      assert.deepEqual(prompt.instructions, [
+        { path: "ajuste-de-saldo.md", root: directory },
+        { path: "alteracao-de-infra.md", root: directory },
+      ]);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses an empty catalog, a repeated path, and a symlink that leaves the root", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "hub-instruction-catalog-"));
+    const outside = await mkdtemp(path.join(tmpdir(), "hub-instruction-outside-"));
+    const empty = await mkdtemp(path.join(tmpdir(), "hub-instruction-empty-"));
+    const repeated = await mkdtemp(path.join(tmpdir(), "hub-instruction-repeated-"));
+    try {
+      await writeFile(path.join(directory, "ajuste-de-saldo.md"), "Ajuste de saldo.\n", "utf8");
+      await writeFile(path.join(outside, "secret.md"), "secret", "utf8");
+      await symlink(path.join(outside, "secret.md"), path.join(directory, "secret.md"));
+      await writeFile(path.join(repeated, "ajuste-de-saldo.md"), "Ajuste de saldo.\n", "utf8");
+      await assert.rejects(
+        composeLaunchPrompt({
+          blocks: [{ kind: "load", root: directory }],
+          cwd: "/workspace",
+          context,
+        }),
+        /escapes its root/u,
+      );
+      await assert.rejects(
+        composeLaunchPrompt({
+          blocks: [
+            { kind: "load", root: repeated },
+            { kind: "load", root: repeated },
+          ],
+          cwd: "/workspace",
+          context,
+        }),
+        /instruction catalog path is repeated: ajuste-de-saldo.md/u,
+      );
+      await assert.rejects(
+        composeLaunchPrompt({
+          blocks: [{ kind: "load", root: empty }],
+          cwd: "/workspace",
+          context,
+        }),
+        /instruction catalog is empty/u,
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+      await rm(empty, { recursive: true, force: true });
+      await rm(repeated, { recursive: true, force: true });
     }
   });
 });
@@ -222,6 +317,100 @@ run:
           ],
         }),
       /prompt partial bundle/u,
+    );
+  });
+
+  it("keeps a load catalog in the form and compiles it without reading the directory", () => {
+    const yaml = `
+name: answer
+enabled: true
+on:
+  slack.mention:
+    connection: slack-office
+    filters:
+      from_users: ["*"]
+run:
+  target:
+    daemon: office
+    cwd: /workspace
+  agent:
+    provider: cursor
+    mode: agent
+  prompt:
+    - include:
+        path: partials/falar.md
+        root: ~/.paseo/automations
+    - load:
+        root: ~/.paseo/automations/regras
+    - text: |
+        Seu nome é Patchy.
+`;
+    const parsed = parseTriggerDocument(yaml);
+    const run = singleAgentRun(parsed.run);
+    assert.deepEqual(run.prompt, [
+      { include: { path: "partials/falar.md", root: "~/.paseo/automations" } },
+      { load: { root: "~/.paseo/automations/regras" } },
+      { text: "Seu nome é Patchy.\n" },
+    ]);
+    const compiled = compileTriggerDocument(yaml);
+    const step = compiled.events[0]?.steps[0];
+    if (step === undefined || isCompiledStaticStep(step)) {
+      throw new Error("expected an agent step");
+    }
+    assert.deepEqual(step.prompt, [
+      { kind: "include", path: "partials/falar.md", root: "~/.paseo/automations" },
+      { kind: "load", root: "~/.paseo/automations/regras" },
+      { kind: "text", value: "Seu nome é Patchy.\n" },
+    ]);
+    const projection = projectTriggerForm(yaml);
+    assert.equal(projection.status, "editable");
+    if (projection.status !== "editable") return;
+    assert.deepEqual(projection.value.prompt, [
+      { kind: "include", path: "partials/falar.md", root: "~/.paseo/automations" },
+      { kind: "load", root: "~/.paseo/automations/regras" },
+      { kind: "text", text: "Seu nome é Patchy.\n" },
+    ]);
+    const saved = patchTriggerYaml(yaml, projection.value);
+    assert.deepEqual(singleAgentRun(parseTriggerDocument(saved).run).prompt, run.prompt);
+    const bundled = compileHubConfig({
+      environments: [{ name: "runner", kind: "daemon", daemon: "runner", cwd: "/repo" }],
+      triggers: [
+        {
+          name: "run",
+          on: "manual.run",
+          max_runtime: "1h",
+          steps: [
+            {
+              id: "run",
+              environment: "runner",
+              max_runtime: "10m",
+              idle_timeout: "1m",
+              agent: { provider: "codex" },
+              prompt: [{ load: { root: "/workspace/regras" } }],
+            },
+          ],
+        },
+      ],
+    });
+    const bundledStep = bundled.triggers[0]?.steps[0];
+    if (bundledStep === undefined || isCompiledStaticStep(bundledStep)) {
+      throw new Error("expected an agent step");
+    }
+    assert.deepEqual(bundledStep.prompt, [{ kind: "load", root: "/workspace/regras" }]);
+    assert.throws(
+      () =>
+        compileTriggerDocument(`
+name: answer
+on:
+  manual.run: {}
+run:
+  target: { daemon: office, cwd: /workspace }
+  agent: { provider: codex }
+  prompt:
+    - load:
+        root: regras
+`),
+      /absolute path/u,
     );
   });
 

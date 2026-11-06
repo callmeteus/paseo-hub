@@ -47,5 +47,19 @@ describe("execution tool policy", () => {
     assert.deepEqual(unavailable, {
       preapproved: [{ kind: "mcp", server: "hub", tool: "finish_execution" }],
     });
+    assert.deepEqual(
+      executionToolPolicy({
+        allowOutputs: [],
+        outputContext: {},
+        loadInstructions: true,
+        capabilities,
+      }),
+      {
+        preapproved: [
+          { kind: "mcp", server: "hub", tool: "finish_execution" },
+          { kind: "mcp", server: "hub", tool: "load_instruction" },
+        ],
+      },
+    );
   });
 });

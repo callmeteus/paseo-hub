@@ -14,7 +14,8 @@ import type { TriggerPrompt } from "./schema.js";
 /** One block of the instructions field. `root` is empty when the include uses the working directory. */
 export type InstructionDraft =
   | { kind: "text"; text: string }
-  | { kind: "include"; path: string; root: string };
+  | { kind: "include"; path: string; root: string }
+  | { kind: "load"; root: string };
 
 /** One rail the form can add, remove, or retarget. `options` is empty or `{}`. */
 export interface GuardrailDraft {
@@ -60,8 +61,8 @@ export function emptyWorktree(): WorktreeDraft {
 /**
  * The instructions field for a prompt the document already parsed.
  *
- * A string is one text block. A list keeps YAML order: text, then an include path,
- * with `root` empty when the include did not name one.
+ * A string is one text block. A list keeps YAML order: text, an include path
+ * with `root` empty when the include did not name one, or a load catalog.
  *
  * @param prompt - Authored prompt
  * @returns Blocks the form edits
@@ -70,8 +71,12 @@ export function projectInstructions(prompt: TriggerPrompt): InstructionDraft[] {
   if (typeof prompt === "string") return textInstructions(prompt);
   return prompt.map((part) => {
     if ("text" in part) return { kind: "text", text: part.text };
-    if (typeof part.include === "string") return { kind: "include", path: part.include, root: "" };
-    return { kind: "include", path: part.include.path, root: part.include.root ?? "" };
+    if ("include" in part) {
+      if (typeof part.include === "string")
+        return { kind: "include", path: part.include, root: "" };
+      return { kind: "include", path: part.include.path, root: part.include.root ?? "" };
+    }
+    return { kind: "load", root: part.load.root };
   });
 }
 
@@ -79,7 +84,7 @@ export function projectInstructions(prompt: TriggerPrompt): InstructionDraft[] {
  * Prompt YAML for these blocks.
  *
  * One text block stays a string, which is how a prompt without includes is stored.
- * Any include, or more than one block, is written as a list in the same order.
+ * Any include, any catalog, or more than one block, is written as a list in the same order.
  *
  * @param parts - Blocks the form is saving
  * @returns The `prompt` value
@@ -89,6 +94,7 @@ export function instructionsDocument(parts: readonly InstructionDraft[]): Trigge
   if (parts.length === 1 && only?.kind === "text") return only.text;
   return parts.map((part) => {
     if (part.kind === "text") return { text: part.text };
+    if (part.kind === "load") return { load: { root: part.root.trim() } };
     const path = part.path.trim();
     const root = part.root.trim();
     return root.length === 0 ? { include: path } : { include: { path, root } };
@@ -107,6 +113,18 @@ export function instructionError(parts: readonly InstructionDraft[]): string | u
   for (const part of parts) {
     if (part.kind === "text") {
       if (part.text.trim().length > 0) useful = true;
+      continue;
+    }
+    if (part.kind === "load") {
+      const root = part.root.trim();
+      if (root.length === 0) return "Instruction catalog is required.";
+      try {
+        assertInstructionRoot(root);
+      } catch (error) {
+        if (error instanceof PromptInstructionError) return error.message;
+        return "Instruction catalog is invalid.";
+      }
+      useful = true;
       continue;
     }
     const path = part.path.trim();

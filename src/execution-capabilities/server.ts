@@ -14,10 +14,16 @@ import { compileJsonSchema, formatJsonSchemaErrors } from "../workflows/json-sch
 import {
   executionToolDefinitions,
   finishExecutionToolName,
+  loadInstructionToolName,
   type MaterializedOutputCapability,
   type OutputExecutorRegistry,
   type OutputToolSchema,
 } from "./outputs.js";
+import {
+  PromptInstructionError,
+  readPromptInstruction,
+  splitInstructionDocument,
+} from "../workflows/prompt-instructions.js";
 import { SlackAgentSurfaceError } from "../triggers/slack/agent-surface.js";
 import { GuardrailRefusal } from "../workflows/guardrails.js";
 
@@ -208,7 +214,11 @@ function createMcpServer(
     { name: "paseo-hub-execution", version: "1.0.0" },
     { capabilities: { tools: {} } },
   );
-  const tools = executionToolDefinitions(execution.launchIntent?.outputSchema, materializedOutputs);
+  const tools = executionToolDefinitions(
+    execution.launchIntent?.outputSchema,
+    materializedOutputs,
+    hasInstructionCatalog(execution),
+  );
   server.setRequestHandler(ListToolsRequestSchema, () => ({ tools }));
   server.setRequestHandler(CallToolRequestSchema, (request) =>
     callExecutionTool(
@@ -234,6 +244,7 @@ async function callExecutionTool(
   const tool = executionToolDefinitions(
     execution.launchIntent?.outputSchema,
     materializedOutputs,
+    hasInstructionCatalog(execution),
   ).find((candidate) => candidate.name === toolName);
   if (!tool) return toolFailure(`Tool ${toolName} not found`);
   const contract =
@@ -242,12 +253,43 @@ async function callExecutionTool(
       : jsonSchemaContract(tool.inputSchema);
   const validation = contract.validate(args);
   if (!validation.valid) return toolFailure(validation.message);
+  if (toolName === loadInstructionToolName) return loadInstructionCall(execution, args);
   if (toolName === finishExecutionToolName)
     return finishExecutionCall(options, execution, token, args, materializedOutputs);
   const output = materializedOutputs.find((item) => item.capability.tool.name === toolName);
   return output === undefined
     ? toolFailure(`Tool ${toolName} not found`)
     : executeOutputCall(options, execution, toolName, output, args);
+}
+
+function hasInstructionCatalog(execution: AgentExecutionRecord): boolean {
+  return (execution.launchIntent?.instructions?.length ?? 0) > 0;
+}
+
+async function loadInstructionCall(execution: AgentExecutionRecord, args: Record<string, unknown>) {
+  const path = args["path"];
+  if (typeof path !== "string") return toolFailure("Instruction path is required.");
+  const intent = execution.launchIntent;
+  const match = intent?.instructions?.find((item) => item.path === path);
+  if (intent === null || match === undefined) {
+    return toolFailure("Instruction path is not in this run's catalog.");
+  }
+  try {
+    const content = await readPromptInstruction({
+      cwd: intent.environment.cwd,
+      path: match.path,
+      root: match.root,
+    });
+    return toolSuccess(splitInstructionDocument(content).body);
+  } catch (error) {
+    if (error instanceof PromptInstructionError) return toolFailure(error.message);
+    const failure = reportFailure(error, {
+      operation: "execution_capability.load_instruction",
+      component: "execution_capabilities",
+      executionId: execution.id,
+    });
+    return toolFailure(withReference("Instruction file could not be read.", failure.requestId));
+  }
 }
 
 async function finishExecutionCall(

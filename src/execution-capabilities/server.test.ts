@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import {
   request as httpRequest,
   type IncomingMessage,
@@ -716,6 +719,84 @@ describe("execution capability MCP boundary", () => {
     });
     assert.equal(ToolResultSchema.parse(completed.result).isError, undefined);
     assert.equal(fixture.outbound.length, 2);
+  });
+
+  it("returns one catalog file and refuses a path outside the catalog", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "hub-load-instruction-"));
+    try {
+      await writeFile(
+        path.join(directory, "ajuste-de-saldo.md"),
+        "---\nwhen: ajuste de saldo\n---\nUse este arquivo.\n",
+        "utf8",
+      );
+      const plain = await capabilityFixture();
+      const plainTools = ToolsListSchema.parse((await plain.call("tools/list")).result).tools.map(
+        (tool) => tool.name,
+      );
+      assert.equal(plainTools.includes("load_instruction"), false);
+
+      const database = createMemoryDatabase();
+      const executionId = randomUUID();
+      const token = "token";
+      await database.insertAgentExecution({
+        id: executionId,
+        organizationId: "org-1",
+        projectId: "project-1",
+        machineId: null,
+        triggerContext: { provider: "slack" },
+        outputContext: slackOutputContext,
+        configurationRevisionId: randomUUID(),
+        completionTokenHash: hashAgentExecutionCompletionToken(token),
+        launchIntent: {
+          ...launchIntent(),
+          instructions: [{ path: "ajuste-de-saldo.md", root: directory }],
+        },
+      });
+      const server = createExecutionCapabilityServer({
+        database,
+        outputs: new OutputExecutorRegistry(),
+        async completeExecution() {
+          throw new Error("unused");
+        },
+      });
+      const call = async (method: string, params?: unknown) => {
+        const response = await server.handle(
+          new Request(`https://hub.test/agent-executions/${executionId}/mcp`, {
+            method: "POST",
+            headers: {
+              authorization: `Bearer ${token}`,
+              "content-type": "application/json",
+              accept: "application/json, text/event-stream",
+            },
+            body: mcpRequest(method, params),
+          }),
+          executionId,
+        );
+        return RpcResponseSchema.parse(await response.json());
+      };
+      const listed = ToolsListSchema.parse((await call("tools/list")).result).tools.map(
+        (tool) => tool.name,
+      );
+      assert.deepEqual(listed, ["finish_execution", "load_instruction"]);
+      const loaded = await call("tools/call", {
+        name: "load_instruction",
+        arguments: { path: "ajuste-de-saldo.md" },
+      });
+      assert.equal(ToolResultSchema.parse(loaded.result).isError, undefined);
+      assert.equal(
+        z
+          .object({ content: z.array(z.object({ type: z.literal("text"), text: z.string() })) })
+          .parse(loaded.result).content[0]?.text,
+        "Use este arquivo.\n",
+      );
+      const refused = await call("tools/call", {
+        name: "load_instruction",
+        arguments: { path: "secret.md" },
+      });
+      assert.equal(ToolResultSchema.parse(refused.result).isError, true);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });
 

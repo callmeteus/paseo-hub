@@ -78,6 +78,7 @@ export class AgentSessions {
     const tools = executionToolDefinitions(
       input.intent.outputSchema,
       this.outputs.materialize(input.intent.allowOutputs, input.intent.outputContext),
+      hasInstructionCatalog(input.intent),
     );
     const dispatched = await this.database.withAdvisoryLock(`agent-session:${lockId}`, async () => {
       const compatibility = fingerprint({ settings: policy?.compatibility, tools });
@@ -277,6 +278,11 @@ function deriveSessionId(projectId: string, key: string): string {
     .update(JSON.stringify(["agent-session", projectId, key]))
     .digest("hex");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
+function hasInstructionCatalog(intent: LaunchMachineIntent): boolean {
+  const instructions = intent.instructions;
+  return instructions !== undefined && instructions.length > 0;
 }
 
 function fingerprint(value: unknown): string {

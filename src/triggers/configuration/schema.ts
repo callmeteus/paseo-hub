@@ -139,21 +139,24 @@ const PromptIncludeTargetSchema = z.union([
     .strict(),
 ]);
 const PromptIncludePartSchema = z.object({ include: PromptIncludeTargetSchema }).strict();
+const PromptLoadPartSchema = z
+  .object({ load: z.object({ root: z.string().min(1) }).strict() })
+  .strict();
 
 /**
- * A prompt string, or an ordered list of text and included instruction files.
+ * A prompt string, or an ordered list of text, included files, and catalogs.
  *
- * An include is explicit. Omitting the list keeps the string prompt and does
- * not read any rule file.
+ * An include is explicit. A load names a directory the run reads into an index.
+ * Omitting the list keeps the string prompt and does not read any rule file.
  */
 export const TriggerPromptSchema = z
   .union([
     z.string().min(1),
-    z.array(z.union([PromptTextPartSchema, PromptIncludePartSchema])).min(1),
+    z.array(z.union([PromptTextPartSchema, PromptIncludePartSchema, PromptLoadPartSchema])).min(1),
   ])
   .superRefine((prompt, context) => {
     if (typeof prompt === "string") return;
-    const useful = prompt.some((part) => "include" in part || part.text.trim().length > 0);
+    const useful = prompt.some((part) => !("text" in part) || part.text.trim().length > 0);
     if (!useful) {
       context.addIssue({
         code: "custom",
@@ -164,22 +167,29 @@ export const TriggerPromptSchema = z
 
 export type TriggerPrompt = z.infer<typeof TriggerPromptSchema>;
 
+export type AuthoredPromptBlock =
+  | { text: string }
+  | { include: string }
+  | { include: { path: string; root?: string } }
+  | { load: { root: string } };
+
 /**
  * The prompt blocks the workflow compiler already accepts.
  *
  * @param prompt - String or list from the automation YAML
  * @returns One text block, or the list in YAML order
  */
-export function authoredPromptBlocks(
-  prompt: TriggerPrompt,
-): Array<{ text: string } | { include: string } | { include: { path: string; root?: string } }> {
+export function authoredPromptBlocks(prompt: TriggerPrompt): AuthoredPromptBlock[] {
   if (typeof prompt === "string") return [{ text: prompt }];
   return prompt.map((part) => {
     if ("text" in part) return { text: part.text };
-    if (typeof part.include === "string") return { include: part.include };
-    const include: { path: string; root?: string } = { path: part.include.path };
-    if (part.include.root !== undefined) include.root = part.include.root;
-    return { include };
+    if ("include" in part) {
+      if (typeof part.include === "string") return { include: part.include };
+      const include: { path: string; root?: string } = { path: part.include.path };
+      if (part.include.root !== undefined) include.root = part.include.root;
+      return { include };
+    }
+    return { load: { root: part.load.root } };
   });
 }
 
