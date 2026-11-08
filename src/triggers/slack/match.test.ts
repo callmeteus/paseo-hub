@@ -429,6 +429,30 @@ describe("Slack trigger matching", () => {
       0,
     );
   });
+
+  it("runs one agent when a click lands in a channel that also listens for mentions", () => {
+    const sentence = slackChoiceArrival({ label: "Pode lançar", value: "lancar" });
+    const decision: NormalizedSlackMentionEvent = {
+      ...mention(),
+      type: "message",
+      content: sentence,
+      lead: sentence,
+      planDecision: "lancar",
+    };
+    const clicks = matchSlackTriggers(messageAndMentionFeedback(), decision, "UBOT");
+    assert.deepEqual(
+      clicks.map((item) => item.trigger.name),
+      ["kevin-message"],
+    );
+
+    const mentionOnly: NormalizedSlackMentionEvent = { ...decision, channelId: "C-OPS" };
+    assert.deepEqual(
+      matchSlackTriggers(messageAndMentionFeedback(), mentionOnly, "UBOT").map(
+        (item) => item.trigger.name,
+      ),
+      ["kevin-mention"],
+    );
+  });
 });
 
 function monitoringConfig() {
@@ -551,6 +575,37 @@ function channelConfig(includeBots: boolean) {
             prompt: [{ text: "Read the channel" }],
           },
         ],
+      },
+    ],
+  });
+}
+
+function messageAndMentionFeedback() {
+  const step = {
+    id: "run",
+    environment: "runner",
+    max_runtime: "1h",
+    idle_timeout: "5m",
+    agent: { provider: "opencode", mode: "default" },
+    prompt: [{ text: "Run the request" }],
+    slack_agent: { display: "timeline" as const, feedback: true },
+  };
+  return compileHubConfig({
+    environments: [{ name: "runner", kind: "daemon", daemon: "runner", cwd: "/repo" }],
+    triggers: [
+      {
+        name: "kevin-message",
+        on: "slack.message",
+        max_runtime: "2h",
+        filters: { channels: ["C1"], from_users: ["*"] },
+        steps: [step],
+      },
+      {
+        name: "kevin-mention",
+        on: "slack.mention",
+        max_runtime: "2h",
+        filters: { channels: ["C1", "C-OPS"], from_users: ["*"] },
+        steps: [step],
       },
     ],
   });

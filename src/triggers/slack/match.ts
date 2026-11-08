@@ -22,15 +22,19 @@ export function matchSlackTriggers(
 ): MatchedSlackTrigger[] {
   if (event.author.id === botUserId) return [];
   if (event.planDecision !== undefined) {
-    return config.triggers.flatMap((trigger) => {
-      const slackTrigger = trigger.on === "slack.message" || trigger.on === "slack.mention";
-      return slackTrigger &&
+    // A click is stored as a channel message. One automation often listens for messages and
+    // mentions in the same channel, and both copies ask for feedback. The message subscription
+    // owns the click. A mention-only subscription still receives it when no message one matched.
+    const matched = config.triggers.filter(
+      (trigger) =>
+        (trigger.on === "slack.message" || trigger.on === "slack.mention") &&
         triggerOffersFeedback(trigger) &&
         acceptsBotMessage(event, trigger.filters) &&
-        matchesAudience(event, trigger.filters, connectionId)
-        ? [{ event, trigger }]
-        : [];
-    });
+        matchesAudience(event, trigger.filters, connectionId),
+    );
+    const messageTriggers = matched.filter((trigger) => trigger.on === "slack.message");
+    const chosen = messageTriggers.length > 0 ? messageTriggers : matched;
+    return chosen.map((trigger) => ({ event, trigger }));
   }
   const expectedOn = event.type === "message" ? "slack.message" : "slack.mention";
   return config.triggers.flatMap((trigger) => {
