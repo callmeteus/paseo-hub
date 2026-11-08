@@ -32,6 +32,7 @@ import { executionFeatureValues, type TriggerProvider } from "../triggers/index.
 import type { ExecutionAuthority } from "../execution-authority/index.js";
 import { OutputExecutorRegistry } from "../execution-capabilities/outputs.js";
 import { executionToolPolicy } from "../execution-capabilities/tool-policy.js";
+import { hardDeadlinePassed } from "../db/hard-deadline.js";
 import {
   notifyAgentExecutionCompleted,
   notifyAgentExecutionFailed,
@@ -1684,6 +1685,11 @@ export class DaemonDispatchLifecycle {
     return true;
   }
 
+  noteHardDeadlineCleared(execution: AgentExecutionRecord): void {
+    this.clearExecutionDeadline(execution.id);
+    this.armExecutionDeadline(execution);
+  }
+
   private clearExecutionDeadline(executionId: string): void {
     const clear = this.deadlineTimersByExecution.get(executionId);
     if (clear !== undefined) {
@@ -1741,7 +1747,7 @@ export class DaemonDispatchLifecycle {
     return (
       run?.outcome === "accepted" &&
       run.status === "running" &&
-      run.deadlineAt.getTime() <= this.now()
+      hardDeadlinePassed(run.deadlineAt, new Date(this.now()))
     );
   }
 

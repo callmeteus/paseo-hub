@@ -2,6 +2,7 @@ import { outputContextForSlackAgentStep } from "../triggers/slack/agent-block.js
 import { slackReactGrant } from "../triggers/slack/react.js";
 import { continuationKey } from "../triggers/continuation.js";
 import { DatabaseUnavailableError } from "../db/errors.js";
+import { earlierDeadline, hardDeadlinePassed } from "../db/hard-deadline.js";
 import type {
   AgentExecutionRecord,
   Database,
@@ -324,16 +325,7 @@ export class DurableWorkflowEngine {
       return;
     }
     const startedAt = this.now();
-    const deadlineAt = new Date(
-      Math.min(run.deadlineAt.getTime(), startedAt.getTime() + step.maxRuntimeMs),
-    );
-    const idleDeadlineAt = new Date(
-      Math.min(
-        run.deadlineAt.getTime(),
-        deadlineAt.getTime(),
-        startedAt.getTime() + step.idleTimeoutMs,
-      ),
-    );
+    const { deadlineAt, idleDeadlineAt } = stepDeadlines(run.deadlineAt, step, startedAt);
     const preparedIntent = await this.buildMaterializedStepIntentOrFail(
       configuration,
       triggerName,
@@ -650,7 +642,7 @@ export class DurableWorkflowEngine {
       await database.deleteWorkflowWakeup(triggerRunId);
       return undefined;
     }
-    if (run.deadlineAt <= this.now()) {
+    if (hardDeadlinePassed(run.deadlineAt, this.now())) {
       await this.recoverWorkflowDeadlines(this.now());
       await database.deleteWorkflowWakeup(triggerRunId);
       return undefined;
@@ -1425,6 +1417,27 @@ function readExecutionCandidate(
 ): Pick<AgentExecutionRecord, "id" | "status" | "result"> | undefined {
   if (!isRecord(value) || typeof value["id"] !== "string") return undefined;
   return { id: value["id"], status: readExecutionStatus(value["status"]), result: value["result"] };
+}
+
+function stepDeadlines(
+  runDeadline: Date | null,
+  step: { maxRuntimeMs: number; idleTimeoutMs: number },
+  startedAt: Date,
+): { deadlineAt: Date; idleDeadlineAt: Date } {
+  const deadlineAt = earlierDeadline(
+    new Date(startedAt.getTime() + step.maxRuntimeMs),
+    runDeadline,
+  );
+  return {
+    deadlineAt,
+    idleDeadlineAt: new Date(
+      Math.min(
+        runDeadline?.getTime() ?? Number.POSITIVE_INFINITY,
+        deadlineAt.getTime(),
+        startedAt.getTime() + step.idleTimeoutMs,
+      ),
+    ),
+  };
 }
 
 function readExecutionStatus(value: unknown): AgentExecutionStatus {

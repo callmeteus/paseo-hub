@@ -13,6 +13,7 @@ import { reportFailure, withReference } from "../failures/index.js";
 import { compileJsonSchema, formatJsonSchemaErrors } from "../workflows/json-schema.js";
 import {
   executionToolDefinitions,
+  clearHardDeadlineToolName,
   finishExecutionToolName,
   loadInstructionToolName,
   type MaterializedOutputCapability,
@@ -44,6 +45,8 @@ interface ExecutionCapabilityOptions {
     output?: unknown;
   }): Promise<AgentExecutionRecord>;
   now?: () => Date;
+  /** Re-arms the in-process timer after the hard deadline row is cleared. */
+  onHardDeadlineCleared?: (execution: AgentExecutionRecord) => void;
 }
 
 export function createExecutionCapabilityServer(
@@ -234,7 +237,10 @@ function createMcpServer(
 }
 
 async function callExecutionTool(
-  options: Pick<ExecutionCapabilityOptions, "database" | "outputs" | "completeExecution" | "now">,
+  options: Pick<
+    ExecutionCapabilityOptions,
+    "database" | "outputs" | "completeExecution" | "now" | "onHardDeadlineCleared"
+  >,
   execution: AgentExecutionRecord,
   token: string,
   materializedOutputs: readonly MaterializedOutputCapability[],
@@ -253,6 +259,7 @@ async function callExecutionTool(
       : jsonSchemaContract(tool.inputSchema);
   const validation = contract.validate(args);
   if (!validation.valid) return toolFailure(validation.message);
+  if (toolName === clearHardDeadlineToolName) return clearHardDeadlineCall(options, execution);
   if (toolName === loadInstructionToolName) return loadInstructionCall(execution, args);
   if (toolName === finishExecutionToolName)
     return finishExecutionCall(options, execution, token, args, materializedOutputs);
@@ -264,6 +271,16 @@ async function callExecutionTool(
 
 function hasInstructionCatalog(execution: AgentExecutionRecord): boolean {
   return (execution.launchIntent?.instructions?.length ?? 0) > 0;
+}
+
+async function clearHardDeadlineCall(
+  options: Pick<ExecutionCapabilityOptions, "database" | "onHardDeadlineCleared">,
+  execution: AgentExecutionRecord,
+) {
+  const cleared = await options.database.clearAgentExecutionHardDeadline(execution.id);
+  if (cleared === undefined) return toolFailure("This execution is not live.");
+  options.onHardDeadlineCleared?.(cleared);
+  return toolSuccess("Hard time limit removed. The idle timeout still applies.");
 }
 
 async function loadInstructionCall(execution: AgentExecutionRecord, args: Record<string, unknown>) {

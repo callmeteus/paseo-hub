@@ -471,7 +471,7 @@ export const triggerRuns = pgTable(
     ),
     check(
       "trigger_runs_deadline_shape_check",
-      sql`(${table.outcome} = 'accepted' and ${table.deadlineAt} is not null)
+      sql`(${table.outcome} = 'accepted')
         or (${table.outcome} = 'rejected' and ${table.deadlineAt} is null)`,
     ),
     foreignKey({

@@ -458,6 +458,7 @@ function createAppExecutionCapabilityServer(
     outputs: outputRegistry,
     completeExecution: (input) =>
       daemonModule.lifecycle.completeAgentExecutionFromCallback(input, { deferHubAction: true }),
+    onHardDeadlineCleared: (execution) => daemonModule.lifecycle.noteHardDeadlineCleared(execution),
   });
 }
 

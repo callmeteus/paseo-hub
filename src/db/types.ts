@@ -787,7 +787,8 @@ interface TriggerRunEvidence {
 export interface AcceptedTriggerRunRecord extends TriggerRunEvidence {
   outcome: "accepted";
   status: "running" | "succeeded" | "failed" | "timed_out";
-  deadlineAt: Date;
+  /** Null after the execution clears its hard cap. Idle timeout stays separate. */
+  deadlineAt: Date | null;
   deadlineKind: WorkflowDeadlineKind | null;
   failureReason: string | null;
   reactionState: JsonValue | null;
@@ -1462,6 +1463,11 @@ export interface Database {
     processedAt: Date,
   ): Promise<AgentExecutionRecord>;
   limitAgentExecutionDeadline(executionId: string, deadlineAt: Date): Promise<void>;
+  /**
+   * Drops the hard deadline on a live execution, its step, and the owning run.
+   * Idle deadlines stay. Returns undefined when the execution is not live.
+   */
+  clearAgentExecutionHardDeadline(executionId: string): Promise<AgentExecutionRecord | undefined>;
   prepareAgentExecutionForDispatch(
     executionId: string,
     daemonId: string,

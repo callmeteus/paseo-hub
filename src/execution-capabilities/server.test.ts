@@ -157,7 +157,7 @@ describe("execution capability MCP boundary", () => {
       await client.connect(transport);
       assert.deepEqual(
         (await client.listTools()).tools.map((tool) => tool.name),
-        ["finish_execution", "reply"],
+        ["finish_execution", "clear_hard_deadline", "reply"],
       );
       const result = await client.callTool({
         name: "finish_execution",
@@ -211,6 +211,11 @@ describe("execution capability MCP boundary", () => {
           {
             name: "finish_execution",
             description: "Completes this execution and records the configured structured output.",
+          },
+          {
+            name: "clear_hard_deadline",
+            description:
+              "Removes the hard time limit on this execution and the run that owns it. The idle timeout still applies. Any execution can call this when the work will outlast the current limit.",
           },
           {
             name: "reply",
@@ -777,7 +782,7 @@ describe("execution capability MCP boundary", () => {
       const listed = ToolsListSchema.parse((await call("tools/list")).result).tools.map(
         (tool) => tool.name,
       );
-      assert.deepEqual(listed, ["finish_execution", "load_instruction"]);
+      assert.deepEqual(listed, ["finish_execution", "clear_hard_deadline", "load_instruction"]);
       const loaded = await call("tools/call", {
         name: "load_instruction",
         arguments: { path: "ajuste-de-saldo.md" },
@@ -797,6 +802,71 @@ describe("execution capability MCP boundary", () => {
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
+  });
+
+  it("lets this execution remove its own hard deadline and the run that owns it", async () => {
+    const database = createMemoryDatabase();
+    const now = new Date("2026-11-08T04:00:00.000Z");
+    const created = await database.createAcceptedTriggerRun({
+      organizationId: "org-1",
+      projectId: "project-1",
+      configurationRevisionId: randomUUID(),
+      providerEventReceiptId: randomUUID(),
+      configuredTriggerName: "kevin",
+      prompt: "work",
+      inputs: {},
+      triggerContext: {},
+      outputContext: {},
+      deadlineAt: new Date(now.getTime() + 60_000),
+      stepIds: ["run"],
+      createdAt: now,
+    });
+    const step = (await database.listWorkflowStepRunsForTriggerRun(created.run.id))[0];
+    assert.ok(step);
+    const executionId = randomUUID();
+    const token = "token";
+    const idleDeadlineAt = new Date(now.getTime() + 30_000);
+    await database.insertAgentExecution({
+      id: executionId,
+      organizationId: "org-1",
+      projectId: "project-1",
+      machineId: null,
+      triggerContext: { provider: "slack" },
+      outputContext: slackOutputContext,
+      configurationRevisionId: created.run.configurationRevisionId,
+      completionTokenHash: hashAgentExecutionCompletionToken(token),
+      deadlineAt: new Date(now.getTime() + 60_000),
+      idleDeadlineAt,
+      workflowStepRunId: step.id,
+      startedAt: now,
+    });
+    const server = createExecutionCapabilityServer({
+      database,
+      outputs: new OutputExecutorRegistry(),
+      completeExecution: () => {
+        throw new Error("not used");
+      },
+    });
+    const response = await server.handle(
+      new Request(`https://hub.test/agent-executions/${executionId}/mcp`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        body: mcpRequest("tools/call", { name: "clear_hard_deadline", arguments: {} }),
+      }),
+      executionId,
+    );
+    const body = RpcResponseSchema.parse(await response.json());
+    assert.equal(ToolResultSchema.parse(body.result).isError, undefined);
+    const execution = await database.findAgentExecutionById(executionId);
+    assert.equal(execution?.deadlineAt, null);
+    assert.equal(execution?.idleDeadlineAt?.toISOString(), idleDeadlineAt.toISOString());
+    const run = await database.findTriggerRunById(created.run.id);
+    assert.equal(run?.outcome === "accepted" ? run.deadlineAt : "rejected", null);
+    assert.equal((await database.findWorkflowStepRunById(step.id))?.deadlineAt, null);
   });
 });
 

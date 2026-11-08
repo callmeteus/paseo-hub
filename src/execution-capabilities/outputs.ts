@@ -56,7 +56,19 @@ export interface MaterializedOutputCapability {
 }
 
 export const finishExecutionToolName = "finish_execution" as const;
+export const clearHardDeadlineToolName = "clear_hard_deadline" as const;
 export const loadInstructionToolName = "load_instruction" as const;
+
+const clearHardDeadlineTool: OutputToolDefinition = {
+  name: clearHardDeadlineToolName,
+  description:
+    "Removes the hard time limit on this execution and the run that owns it. The idle timeout still applies. Any execution can call this when the work will outlast the current limit.",
+  inputSchema: {
+    type: "object",
+    properties: {},
+    additionalProperties: false,
+  },
+};
 
 const loadInstructionTool: OutputToolDefinition = {
   name: loadInstructionToolName,
@@ -195,6 +207,7 @@ export function executionToolDefinitions(
       description: finishExecutionToolDescription(outputSchema),
       inputSchema: toolSchema(compileFinishExecutionArguments(outputSchema).schema),
     },
+    clearHardDeadlineTool,
     ...(loadInstructions ? [loadInstructionTool] : []),
     ...materializedOutputs.map(({ declaration, capability }) => ({
       name: capability.tool.name,

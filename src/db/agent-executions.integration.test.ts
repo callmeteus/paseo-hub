@@ -194,7 +194,7 @@ describe("agent execution PostgreSQL repository", () => {
       if (run.outcome !== "accepted") throw new Error("expected accepted trigger run");
       const step = await fixture.database.findWorkflowStepRunByTriggerRun(run.id);
       assert.ok(step);
-      assert.equal(run.deadlineAt.toISOString(), "2026-08-05T13:00:00.000Z");
+      assert.equal(run.deadlineAt?.toISOString(), "2026-08-05T13:00:00.000Z");
       assert.equal((await fixture.database.claimWorkflowWakeup(now, 1_000)) !== undefined, true);
       assert.equal(
         await fixture.database.claimWorkflowWakeup(new Date(now.getTime() + 500), 1_000),
@@ -257,7 +257,7 @@ describe("agent execution PostgreSQL repository", () => {
       assert.equal(step.deadlineAt?.toISOString(), "2026-08-05T12:01:00.000Z");
       assert.equal(step.idleDeadlineAt?.toISOString(), "2026-08-05T12:00:05.000Z");
       assert.equal(execution.deadlineAt?.toISOString(), "2026-08-05T12:01:00.000Z");
-      assert.equal(run.deadlineAt.toISOString(), "2026-08-05T12:02:00.000Z");
+      assert.equal(run.deadlineAt?.toISOString(), "2026-08-05T12:02:00.000Z");
 
       now = new Date("2026-08-05T12:00:03.000Z");
       await fixture.database.setAgentExecutionIdleDeadline(
@@ -277,7 +277,7 @@ describe("agent execution PostgreSQL repository", () => {
       const persistedExecution = await fixture.database.findAgentExecutionById(execution.id);
       if (persistedExecution === undefined) throw new Error("execution was not persisted");
       const persistedDeadlines = {
-        run: persistedRun.deadlineAt.toISOString(),
+        run: persistedRun.deadlineAt?.toISOString(),
         step: persistedStep.deadlineAt!.toISOString(),
         idle: persistedStep.idleDeadlineAt!.toISOString(),
         execution: persistedExecution.deadlineAt!.toISOString(),
@@ -294,7 +294,7 @@ describe("agent execution PostgreSQL repository", () => {
       if (restartedExecution === undefined) throw new Error("execution was not persisted");
       assert.deepEqual(
         {
-          run: restartedRun.deadlineAt.toISOString(),
+          run: restartedRun.deadlineAt?.toISOString(),
           step: restartedStep.deadlineAt!.toISOString(),
           idle: restartedStep.idleDeadlineAt!.toISOString(),
           execution: restartedExecution.deadlineAt!.toISOString(),
@@ -315,7 +315,7 @@ describe("agent execution PostgreSQL repository", () => {
       assert.equal(completedStep.deadlineKind, "step_idle");
       assert.equal(failedExecution.status, "failed");
       assert.equal(failedExecution.deadlineAt?.toISOString(), "2026-08-05T12:01:00.000Z");
-      assert.equal(completedRun.deadlineAt.toISOString(), "2026-08-05T12:02:00.000Z");
+      assert.equal(completedRun.deadlineAt?.toISOString(), "2026-08-05T12:02:00.000Z");
       await restarted.engine.processAvailable();
       assert.equal((await fixture.database.findTriggerRunById(run.id))?.status, "failed");
       assert.deepEqual(dispatches, ["run"]);

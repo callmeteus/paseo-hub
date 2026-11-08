@@ -1272,7 +1272,7 @@ describe("durable multi-step workflow engine", () => {
     assert.equal(execution.deadlineAt?.toISOString(), "2026-08-06T12:01:00.000Z");
     assert.equal(execution.idleDeadlineAt?.toISOString(), "2026-08-06T12:00:20.000Z");
 
-    assert.equal(run.deadlineAt.toISOString(), "2026-08-06T12:02:00.000Z");
+    assert.equal(run.deadlineAt?.toISOString(), "2026-08-06T12:02:00.000Z");
   });
 
   it("times out a live step when the whole-run deadline expires", async () => {

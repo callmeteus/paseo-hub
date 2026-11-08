@@ -12,6 +12,7 @@ import {
   mergeOverrides,
 } from "../entitlements/catalog.js";
 import { toDatabaseError } from "./errors.js";
+import { earlierDeadline, hardDeadlinePassed } from "./hard-deadline.js";
 import { withApiKeySerialization } from "./api-key-serialization.js";
 import { ConnectionRepository } from "./connections.js";
 import { ProviderEventAcceptanceRepository } from "./trigger-acceptance.js";
@@ -715,7 +716,7 @@ class PgDatabase implements Database {
           if (step === undefined) throw new Error("workflow step run not found");
           return { stepRun: toWorkflowStepRunRecord(step), execution: undefined, created: false };
         }
-        if (run.deadline_at === null || run.deadline_at.getTime() <= startedAt.getTime()) {
+        if (hardDeadlinePassed(run.deadline_at, startedAt)) {
           await timeoutWorkflowRunOnClient(client, run, startedAt);
           const stepRows = await client.query<WorkflowStepRunRow>(
             `select * from workflow_step_runs where trigger_run_id = $1 and step_id = $2 and ordinal = $3`,
@@ -725,14 +726,12 @@ class PgDatabase implements Database {
           if (step === undefined) throw new Error("workflow step run not found");
           return { stepRun: toWorkflowStepRunRecord(step), execution: undefined, created: false };
         }
-        const deadlineAt = new Date(
-          Math.min(input.execution.deadlineAt.getTime(), run.deadline_at.getTime()),
-        );
+        const deadlineAt = earlierDeadline(input.execution.deadlineAt, run.deadline_at);
         const idleDeadlineAt = new Date(
           Math.min(
             input.execution.idleDeadlineAt.getTime(),
             deadlineAt.getTime(),
-            run.deadline_at.getTime(),
+            run.deadline_at?.getTime() ?? Number.POSITIVE_INFINITY,
           ),
         );
         const selected = await client.query<WorkflowStepRunRow>(
@@ -1180,7 +1179,7 @@ class PgDatabase implements Database {
        from trigger_runs runs
        left join workflow_wakeups wakeups on wakeups.trigger_run_id = runs.id
        where runs.status = 'running'
-         and runs.deadline_at > $1
+         and (runs.deadline_at is null or runs.deadline_at > $1)
          and not exists (
            select 1 from agent_executions executions
            join workflow_step_runs live_steps on live_steps.id = executions.workflow_step_run_id
@@ -1279,7 +1278,7 @@ class PgDatabase implements Database {
 
         const activeRuns = await client.query<TriggerRunRow>(
           `select * from trigger_runs
-         where outcome = 'accepted' and status = 'running' and deadline_at > $1
+         where outcome = 'accepted' and status = 'running' and (deadline_at is null or deadline_at > $1)
          order by deadline_at, id
          for update skip locked`,
           [now],
@@ -1817,6 +1816,49 @@ class PgDatabase implements Database {
     );
     if (!rows.rows[0]) throw new Error(`agent execution not found: ${executionId}`);
     return toAgentExecutionRecord(rows.rows[0]);
+  }
+
+  async clearAgentExecutionHardDeadline(
+    executionId: string,
+  ): Promise<AgentExecutionRecord | undefined> {
+    return this.pool.transaction(async (client) => {
+      const existingRows = await client.query<AgentExecutionRow>(
+        `select * from agent_executions where id = $1 for update`,
+        [executionId],
+      );
+      const existing = existingRows.rows[0];
+      if (
+        existing === undefined ||
+        (existing.status !== "spawning" && existing.status !== "running")
+      ) {
+        return undefined;
+      }
+      const cleared = await client.query<AgentExecutionRow>(
+        `update agent_executions set deadline_at = null
+         where id = $1 and status in ('spawning', 'running')
+         returning *`,
+        [executionId],
+      );
+      const row = cleared.rows[0];
+      if (row === undefined) return undefined;
+      if (row.workflow_step_run_id !== null) {
+        const stepRows = await client.query<WorkflowStepRunRow>(
+          `update workflow_step_runs set deadline_at = null
+           where id = $1
+           returning trigger_run_id`,
+          [row.workflow_step_run_id],
+        );
+        const triggerRunId = stepRows.rows[0]?.trigger_run_id;
+        if (triggerRunId !== undefined) {
+          await client.query(
+            `update trigger_runs set deadline_at = null
+             where id = $1 and outcome = 'accepted' and status = 'running'`,
+            [triggerRunId],
+          );
+        }
+      }
+      return toAgentExecutionRecord(row);
+    });
   }
 
   async limitAgentExecutionDeadline(executionId: string, deadlineAt: Date): Promise<void> {
@@ -4776,7 +4818,6 @@ function toTriggerRunRecord(row: TriggerRunRow): TriggerRunRecord {
   if (row.outcome !== "accepted" || row.status === "rejected" || row.rejection !== null) {
     throw new Error(`invalid accepted trigger run ${row.id}`);
   }
-  if (row.deadline_at === null) throw new Error(`invalid accepted trigger run ${row.id}`);
   const accepted: AcceptedTriggerRunRecord = {
     ...evidence,
     outcome: "accepted",
@@ -5398,7 +5439,7 @@ function workflowDeadlineKind(
   if (run.status === "running" && run.deadline_at !== null && run.deadline_at <= observedAt) {
     return "whole_run";
   }
-  const hardDeadline = execution?.deadline_at ?? step.deadline_at;
+  const hardDeadline = execution !== undefined ? execution.deadline_at : step.deadline_at;
   const idleDeadline = execution?.idle_deadline_at ?? step.idle_deadline_at;
   if (hardDeadline !== null && hardDeadline <= observedAt) {
     if (idleDeadline !== null && idleDeadline <= observedAt && idleDeadline < hardDeadline) {

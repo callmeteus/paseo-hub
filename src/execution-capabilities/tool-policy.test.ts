@@ -40,12 +40,16 @@ describe("execution tool policy", () => {
     assert.deepEqual(materialized, {
       preapproved: [
         { kind: "mcp", server: "hub", tool: "finish_execution" },
+        { kind: "mcp", server: "hub", tool: "clear_hard_deadline" },
         { kind: "mcp", server: "hub", tool: "reply" },
         { kind: "mcp", server: "hub", tool: "publish" },
       ],
     });
     assert.deepEqual(unavailable, {
-      preapproved: [{ kind: "mcp", server: "hub", tool: "finish_execution" }],
+      preapproved: [
+        { kind: "mcp", server: "hub", tool: "finish_execution" },
+        { kind: "mcp", server: "hub", tool: "clear_hard_deadline" },
+      ],
     });
     assert.deepEqual(
       executionToolPolicy({
@@ -57,6 +61,7 @@ describe("execution tool policy", () => {
       {
         preapproved: [
           { kind: "mcp", server: "hub", tool: "finish_execution" },
+          { kind: "mcp", server: "hub", tool: "clear_hard_deadline" },
           { kind: "mcp", server: "hub", tool: "load_instruction" },
         ],
       },

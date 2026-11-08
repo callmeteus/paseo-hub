@@ -5,6 +5,7 @@ import type { LaunchMachineIntent } from "../dispatcher/launch-machine-intent.js
 import { terminalHubAction } from "../daemons/terminal-hub-action.js";
 import { linearConnectionRequiresReauthorization } from "../providers/linear/client.js";
 import { ConnectionAccessDeniedError } from "./errors.js";
+import { earlierDeadline, hardDeadlinePassed } from "./hard-deadline.js";
 import { launchedAgent } from "./mappers.js";
 import type {
   AgentExecutionRecord,
@@ -480,7 +481,7 @@ class MemoryDatabase implements Database {
     if (run === undefined || run.outcome !== "accepted" || run.status !== "running") {
       return { stepRun: step, execution: undefined, created: false };
     }
-    if (run.deadlineAt <= startedAt) {
+    if (hardDeadlinePassed(run.deadlineAt, startedAt)) {
       this.timeoutWorkflowRun(run.id, startedAt);
       return {
         stepRun: this.workflowStepRuns.get(step.id) ?? step,
@@ -521,11 +522,13 @@ class MemoryDatabase implements Database {
         };
       }
     }
-    const deadlineAt = new Date(
-      Math.min(input.execution.deadlineAt.getTime(), run.deadlineAt.getTime()),
-    );
+    const deadlineAt = earlierDeadline(input.execution.deadlineAt, run.deadlineAt);
     const idleDeadlineAt = new Date(
-      Math.min(input.execution.idleDeadlineAt.getTime(), deadlineAt.getTime()),
+      Math.min(
+        input.execution.idleDeadlineAt.getTime(),
+        deadlineAt.getTime(),
+        run.deadlineAt?.getTime() ?? Number.POSITIVE_INFINITY,
+      ),
     );
     const execution = await this.insertAgentExecution({
       ...input.execution,
@@ -826,7 +829,7 @@ class MemoryDatabase implements Database {
     const recoveries: WorkflowDeadlineRecovery[] = [];
     for (const run of this.triggerRuns.values()) {
       if (run.outcome !== "accepted" || run.status !== "running") continue;
-      if (run.deadlineAt <= now) {
+      if (hardDeadlinePassed(run.deadlineAt, now)) {
         const recovery = this.timeoutWorkflowRun(run.id, now);
         if (recovery !== undefined) recoveries.push(recovery);
         continue;
@@ -986,7 +989,7 @@ class MemoryDatabase implements Database {
 
   async recoverWorkflowWakeups(now: Date) {
     for (const run of this.triggerRuns.values()) {
-      if (run.status !== "running" || run.deadlineAt <= now) continue;
+      if (run.status !== "running" || hardDeadlinePassed(run.deadlineAt, now)) continue;
       const wakeup = this.workflowWakeups.get(run.id);
       const steps = await this.listWorkflowStepRunsForTriggerRun(run.id);
       const execution = (
@@ -1753,6 +1756,25 @@ class MemoryDatabase implements Database {
     return updated;
   }
 
+  async clearAgentExecutionHardDeadline(executionId: string) {
+    const execution = this.agentExecutions.get(executionId);
+    if (execution === undefined || isTerminalAgentExecutionStatus(execution.status))
+      return undefined;
+    const updated = { ...execution, deadlineAt: null };
+    this.agentExecutions.set(executionId, updated);
+    if (execution.workflowStepRunId !== null) {
+      const step = this.workflowStepRuns.get(execution.workflowStepRunId);
+      if (step !== undefined) {
+        this.workflowStepRuns.set(step.id, { ...step, deadlineAt: null });
+        const run = this.triggerRuns.get(step.triggerRunId);
+        if (run?.outcome === "accepted" && run.status === "running") {
+          this.triggerRuns.set(run.id, { ...run, deadlineAt: null });
+        }
+      }
+    }
+    return updated;
+  }
+
   async limitAgentExecutionDeadline(executionId: string, deadlineAt: Date) {
     const execution = this.readAgentExecution(executionId);
     if (isTerminalAgentExecutionStatus(execution.status)) return;
@@ -1799,7 +1821,7 @@ class MemoryDatabase implements Database {
         step.status !== "running" ||
         run === undefined ||
         run.status !== "running" ||
-        run.deadlineAt.getTime() <= processedAt.getTime()
+        hardDeadlinePassed(run.deadlineAt, processedAt)
       ) {
         return execution;
       }
@@ -3736,8 +3758,9 @@ function workflowDeadlineKind(
   run: AcceptedTriggerRunRecord,
   observedAt: Date,
 ): WorkflowDeadlineKind | undefined {
-  if (run.status === "running" && run.deadlineAt <= observedAt) return "whole_run";
-  const hardDeadline = execution?.deadlineAt ?? step.deadlineAt;
+  if (run.status === "running" && hardDeadlinePassed(run.deadlineAt, observedAt))
+    return "whole_run";
+  const hardDeadline = execution !== undefined ? execution.deadlineAt : step.deadlineAt;
   const idleDeadline = execution?.idleDeadlineAt ?? step.idleDeadlineAt;
   if (hardDeadline !== null && hardDeadline !== undefined && hardDeadline <= observedAt) {
     if (
