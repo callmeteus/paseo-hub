@@ -47,7 +47,12 @@ import type {
   AcceptLinearEventInput,
   AcceptSlackEventInput,
   DurableProviderEvent,
+  AutomationGitSyncRecord,
+  AutomationGitSyncResultInput,
   GitHubInstallationSyncOwner,
+  InsertOrganizationFindingInput,
+  OrganizationFindingRecord,
+  SaveAutomationGitSyncInput,
   GitHubInstallationSyncClaim,
   GitHubLifecycleReceiptClaimInput,
   AttachmentProvider,
@@ -136,6 +141,7 @@ export interface MemoryDatabaseOptions {
   }[];
   now?: () => Date;
   slackConnections?: readonly SlackConnectionRecord[];
+  githubConnections?: readonly GitHubConnectionRecord[];
 }
 
 function usageKey(organizationId: string, meter: string, periodStart: Date): string {
@@ -159,6 +165,12 @@ function transitionWithTerminalRun(
   return !transition.transitioned || run === undefined || run.status === "running"
     ? transition
     : { ...transition, terminalRun: run };
+}
+
+function findingText(finding: OrganizationFindingRecord): string {
+  return [finding.statement, finding.toolName, finding.toolResult, ...finding.replies]
+    .join("\n")
+    .toLowerCase();
 }
 
 export function createMemoryDatabase(options: MemoryDatabaseOptions = {}): Database {
@@ -225,6 +237,8 @@ class MemoryDatabase implements Database {
   private readonly migratedProjects = new Set<string>();
   private readonly organizationTriggerRoutes = new Map<string, OrganizationTriggerRoute[]>();
   private readonly githubRepositories = new Map<string, GitHubRepositoryRecord>();
+  private readonly automationGitSync = new Map<string, AutomationGitSyncRecord>();
+  private readonly organizationFindings: OrganizationFindingRecord[] = [];
   private readonly githubConnections = new Map<number, GitHubConnectionRecord>();
   private readonly discordConnections = new Map<string, DiscordConnectionRecord>();
   private readonly slackConnections = new Map<string, SlackConnectionRecord>();
@@ -235,6 +249,9 @@ class MemoryDatabase implements Database {
     this.organizationIds = new Set(options.organizationIds);
     for (const connection of options.slackConnections ?? []) {
       this.slackConnections.set(connection.teamId, connection);
+    }
+    for (const connection of options.githubConnections ?? []) {
+      this.githubConnections.set(connection.installationId, connection);
     }
   }
 
@@ -2487,6 +2504,11 @@ class MemoryDatabase implements Database {
       agentSessionAction: execution.agentSessionAction ?? action ?? null,
     });
   }
+  async clearExecutionAgentSession(executionId: string): Promise<void> {
+    const execution = this.agentExecutions.get(executionId);
+    if (!execution) return;
+    this.agentExecutions.set(executionId, { ...execution, agentSessionId: null });
+  }
   async listAgentSessionExecutions(sessionId: string): Promise<AgentExecutionRecord[]> {
     return [...this.agentExecutions.values()].filter(
       (execution) => execution.agentSessionId === sessionId,
@@ -3486,6 +3508,74 @@ class MemoryDatabase implements Database {
 
   removeDiscordConnection(): Promise<void> {
     return Promise.resolve();
+  }
+
+  async getAutomationGitSync(organizationId: string) {
+    return this.automationGitSync.get(organizationId);
+  }
+
+  async saveAutomationGitSync(input: SaveAutomationGitSyncInput) {
+    const current = this.automationGitSync.get(input.organizationId);
+    const saved: AutomationGitSyncRecord = {
+      organizationId: input.organizationId,
+      enabled: input.enabled,
+      githubConnectionId: input.githubConnectionId,
+      repositoryId: input.repositoryId,
+      repositoryFullName: input.repositoryFullName,
+      branch: input.branch,
+      commitMessage: input.commitMessage,
+      automationsDirectory: input.automationsDirectory,
+      intervalMinutes: input.intervalMinutes,
+      lastCheckedAt: current?.lastCheckedAt ?? null,
+      lastSyncedAt: current?.lastSyncedAt ?? null,
+      lastCommitSha: current?.lastCommitSha ?? null,
+      lastStatus: current?.lastStatus ?? null,
+      lastError: current?.lastError ?? null,
+    };
+    this.automationGitSync.set(input.organizationId, saved);
+    return saved;
+  }
+
+  async listEnabledAutomationGitSyncs() {
+    return Array.from(this.automationGitSync.values()).filter(
+      (row) => row.enabled && row.repositoryId !== null && row.repositoryFullName !== null,
+    );
+  }
+
+  async recordAutomationGitSyncResult(input: AutomationGitSyncResultInput) {
+    const current = this.automationGitSync.get(input.organizationId);
+    if (current === undefined) return;
+    this.automationGitSync.set(input.organizationId, {
+      ...current,
+      lastCheckedAt: input.checkedAt,
+      lastStatus: input.status,
+      lastError: input.error,
+      lastCommitSha: input.commitSha ?? current.lastCommitSha,
+      lastSyncedAt: input.syncedAt ?? current.lastSyncedAt,
+    });
+  }
+
+  async insertOrganizationFinding(input: InsertOrganizationFindingInput) {
+    const saved: OrganizationFindingRecord = {
+      id: randomUUID(),
+      organizationId: input.organizationId,
+      statement: input.statement,
+      replies: [...input.replies],
+      toolName: input.toolName,
+      toolResult: input.toolResult,
+      createdAt: new Date(),
+    };
+    this.organizationFindings.push(saved);
+    return saved;
+  }
+
+  async searchOrganizationFindings(organizationId: string, query: string) {
+    const needle = query.trim().toLowerCase();
+    return this.organizationFindings
+      .filter((finding) => finding.organizationId === organizationId)
+      .filter((finding) => needle.length === 0 || findingText(finding).includes(needle))
+      .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
+      .slice(0, 20);
   }
 
   async close(): Promise<void> {}

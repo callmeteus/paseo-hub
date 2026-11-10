@@ -277,7 +277,7 @@ function capInstructionWhen(value: string): string {
     : single;
 }
 
-function expandInstructionRoot(value: string): string {
+export function expandInstructionRoot(value: string): string {
   assertInstructionRoot(value);
   if (value === "~") return homedir();
   if (value.startsWith("~/")) return path.join(homedir(), value.slice(2));

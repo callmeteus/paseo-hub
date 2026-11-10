@@ -157,7 +157,7 @@ describe("execution capability MCP boundary", () => {
       await client.connect(transport);
       assert.deepEqual(
         (await client.listTools()).tools.map((tool) => tool.name),
-        ["finish_execution", "clear_hard_deadline", "reply"],
+        ["finish_execution", "clear_hard_deadline", "memory_save", "memory_search", "reply"],
       );
       const result = await client.callTool({
         name: "finish_execution",
@@ -216,6 +216,16 @@ describe("execution capability MCP boundary", () => {
             name: "clear_hard_deadline",
             description:
               "Removes the hard time limit on this execution and the run that owns it. The idle timeout still applies. Any execution can call this when the work will outlast the current limit.",
+          },
+          {
+            name: "memory_save",
+            description:
+              "Saves a finding for this organization. Requires the fact, the Slack replies that support it, and the tool call used to verify it. This does not post to Slack.",
+          },
+          {
+            name: "memory_search",
+            description:
+              "Searches this organization's findings. Each result includes the fact, the Slack replies, and the tool call stored with it.",
           },
           {
             name: "reply",
@@ -782,7 +792,13 @@ describe("execution capability MCP boundary", () => {
       const listed = ToolsListSchema.parse((await call("tools/list")).result).tools.map(
         (tool) => tool.name,
       );
-      assert.deepEqual(listed, ["finish_execution", "clear_hard_deadline", "load_instruction"]);
+      assert.deepEqual(listed, [
+        "finish_execution",
+        "clear_hard_deadline",
+        "memory_save",
+        "memory_search",
+        "load_instruction",
+      ]);
       const loaded = await call("tools/call", {
         name: "load_instruction",
         arguments: { path: "ajuste-de-saldo.md" },

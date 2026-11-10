@@ -32,6 +32,8 @@ import { executionFeatureValues, type TriggerProvider } from "../triggers/index.
 import type { ExecutionAuthority } from "../execution-authority/index.js";
 import { OutputExecutorRegistry } from "../execution-capabilities/outputs.js";
 import { executionToolPolicy } from "../execution-capabilities/tool-policy.js";
+import { automationDirectoryForLaunch } from "../automation-sync/files.js";
+import { automationFilesForDelivery } from "../automation-sync/snapshot.js";
 import { hardDeadlinePassed } from "../db/hard-deadline.js";
 import {
   notifyAgentExecutionCompleted,
@@ -611,6 +613,7 @@ export class DaemonDispatchLifecycle {
   private async buildCreateAgentOptions(
     intent: LaunchMachineIntent,
     hubExecutionEnv: HubExecutionEnv,
+    automationFiles: readonly { path: string; content: string }[],
   ): Promise<DaemonCreateAgentOptions> {
     const provider = this.findProviderForTriggerContext(intent.triggerContext);
     const materialized = await this.materializeLaunch(
@@ -623,7 +626,20 @@ export class DaemonDispatchLifecycle {
       hubExecutionEnv,
       this.executionCapabilities,
       materialized.env,
+      automationFiles,
     );
+  }
+
+  private async automationFilesFor(
+    intent: LaunchMachineIntent,
+  ): Promise<{ path: string; content: string }[]> {
+    const directory = automationDirectoryForLaunch(intent.instructions);
+    if (directory === undefined) return [];
+    try {
+      return await automationFilesForDelivery(directory);
+    } catch (error) {
+      throw new DaemonDispatchFailure("automation_files_unreadable", { cause: error });
+    }
   }
 
   async handleAgentStreamEvent(
@@ -1563,11 +1579,21 @@ export class DaemonDispatchLifecycle {
         intent: input.intent,
         connection: connection.agents,
         createOptions: () =>
-          this.buildCreateAgentOptions(input.intent, input.hubExecutionEnv).catch(
-            (error: unknown) => {
+          this.automationFilesFor(input.intent)
+            .then((automationFiles) => {
+              if (automationFiles.length > 0 && connection.automationFilesSupported !== true) {
+                throw new DaemonDispatchFailure("automation_files_unsupported");
+              }
+              return this.buildCreateAgentOptions(
+                input.intent,
+                input.hubExecutionEnv,
+                automationFiles,
+              );
+            })
+            .catch((error: unknown) => {
+              if (error instanceof DaemonDispatchFailure) throw error;
               throw toDispatchPreparationFailure(error);
-            },
-          ),
+            }),
         onEvent: (event) => this.observeSessionEvent(input.executionId, input.daemonId, event),
       })
       .catch(async (error: unknown) => {
@@ -1953,6 +1979,8 @@ const DISPATCH_PREPARATION_FAILURE_CODES = new Set([
   "github_integration_unavailable",
   "github_trigger_unavailable",
   "slack_trigger_unavailable",
+  "automation_files_unreadable",
+  "automation_files_unsupported",
 ]);
 
 function isDurablePrelaunchFailure(error: unknown): error is DaemonDispatchFailure {
@@ -1968,6 +1996,7 @@ async function buildCreateAgentOptions(
   },
   capabilities: OutputExecutorRegistry,
   materializedEnv: Readonly<Record<string, string>>,
+  automationFiles: readonly { path: string; content: string }[] = [],
 ): Promise<DaemonCreateAgentOptions> {
   return {
     provider: intent.agent.provider,
@@ -2004,6 +2033,7 @@ async function buildCreateAgentOptions(
       : {
           worktree: intent.environment.worktree,
         }),
+    ...(automationFiles.length === 0 ? {} : { automationFiles }),
   };
 }
 

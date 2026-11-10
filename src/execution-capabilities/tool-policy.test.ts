@@ -41,6 +41,8 @@ describe("execution tool policy", () => {
       preapproved: [
         { kind: "mcp", server: "hub", tool: "finish_execution" },
         { kind: "mcp", server: "hub", tool: "clear_hard_deadline" },
+        { kind: "mcp", server: "hub", tool: "memory_save" },
+        { kind: "mcp", server: "hub", tool: "memory_search" },
         { kind: "mcp", server: "hub", tool: "reply" },
         { kind: "mcp", server: "hub", tool: "publish" },
       ],
@@ -49,6 +51,8 @@ describe("execution tool policy", () => {
       preapproved: [
         { kind: "mcp", server: "hub", tool: "finish_execution" },
         { kind: "mcp", server: "hub", tool: "clear_hard_deadline" },
+        { kind: "mcp", server: "hub", tool: "memory_save" },
+        { kind: "mcp", server: "hub", tool: "memory_search" },
       ],
     });
     assert.deepEqual(
@@ -62,6 +66,8 @@ describe("execution tool policy", () => {
         preapproved: [
           { kind: "mcp", server: "hub", tool: "finish_execution" },
           { kind: "mcp", server: "hub", tool: "clear_hard_deadline" },
+          { kind: "mcp", server: "hub", tool: "memory_save" },
+          { kind: "mcp", server: "hub", tool: "memory_search" },
           { kind: "mcp", server: "hub", tool: "load_instruction" },
         ],
       },

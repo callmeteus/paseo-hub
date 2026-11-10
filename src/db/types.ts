@@ -321,6 +321,68 @@ export interface GitHubRepositoryRecord {
   defaultBranch: string;
 }
 
+export const AUTOMATION_GIT_SYNC_INTERVALS = [5, 15, 60] as const;
+export type AutomationGitSyncInterval = (typeof AUTOMATION_GIT_SYNC_INTERVALS)[number];
+export type AutomationGitSyncStatus = "unchanged" | "committed" | "failed";
+
+/** The organization's optional copy of automations in a GitHub repository. */
+export interface AutomationGitSyncRecord {
+  organizationId: string;
+  enabled: boolean;
+  githubConnectionId: string | null;
+  repositoryId: number | null;
+  repositoryFullName: string | null;
+  branch: string | null;
+  commitMessage: string | null;
+  automationsDirectory: string | null;
+  intervalMinutes: AutomationGitSyncInterval;
+  lastCheckedAt: Date | null;
+  lastSyncedAt: Date | null;
+  lastCommitSha: string | null;
+  lastStatus: AutomationGitSyncStatus | null;
+  lastError: string | null;
+}
+
+export interface SaveAutomationGitSyncInput {
+  organizationId: string;
+  enabled: boolean;
+  githubConnectionId: string | null;
+  repositoryId: number | null;
+  repositoryFullName: string | null;
+  branch: string | null;
+  commitMessage: string | null;
+  automationsDirectory: string | null;
+  intervalMinutes: AutomationGitSyncInterval;
+}
+
+export interface AutomationGitSyncResultInput {
+  organizationId: string;
+  checkedAt: Date;
+  status: AutomationGitSyncStatus;
+  error: string | null;
+  commitSha: string | null;
+  syncedAt: Date | null;
+}
+
+/** One fact the agent checked, with the Slack replies and the tool call that support it. */
+export interface OrganizationFindingRecord {
+  id: string;
+  organizationId: string;
+  statement: string;
+  replies: readonly string[];
+  toolName: string;
+  toolResult: string;
+  createdAt: Date;
+}
+
+export interface InsertOrganizationFindingInput {
+  organizationId: string;
+  statement: string;
+  replies: readonly string[];
+  toolName: string;
+  toolResult: string;
+}
+
 export interface GitHubConfigurationTarget extends GitHubRepositoryRecord {
   projectId: string;
   installationId: number;
@@ -1258,6 +1320,7 @@ export interface Database {
     sessionId: string,
     action?: import("../agent-sessions/index.js").AgentSessionAction,
   ): Promise<void>;
+  clearExecutionAgentSession(executionId: string): Promise<void>;
   listAgentSessionExecutions(sessionId: string): Promise<AgentExecutionRecord[]>;
 
   createAcceptedTriggerRun(
@@ -1751,5 +1814,16 @@ export interface Database {
     guildId: string,
   ): Promise<DiscordConnectionRecord | undefined>;
   removeDiscordConnection(guildId: string): Promise<void>;
+  getAutomationGitSync(organizationId: string): Promise<AutomationGitSyncRecord | undefined>;
+  saveAutomationGitSync(input: SaveAutomationGitSyncInput): Promise<AutomationGitSyncRecord>;
+  listEnabledAutomationGitSyncs(): Promise<AutomationGitSyncRecord[]>;
+  recordAutomationGitSyncResult(input: AutomationGitSyncResultInput): Promise<void>;
+  insertOrganizationFinding(
+    input: InsertOrganizationFindingInput,
+  ): Promise<OrganizationFindingRecord>;
+  searchOrganizationFindings(
+    organizationId: string,
+    query: string,
+  ): Promise<OrganizationFindingRecord[]>;
   close(): Promise<void>;
 }

@@ -8,6 +8,7 @@ import type {
   AttachmentProvider,
   AttachmentResolver,
 } from "../attachments/capabilities.js";
+import type { AutomationGitSyncPort } from "../automation-sync/contract.js";
 import type { SlackBotClient } from "../triggers/slack/client.js";
 import type { SlackDeliveryStatus } from "../triggers/slack/source/index.js";
 
@@ -84,4 +85,9 @@ export interface ProviderRegistration {
    * Absent when Slack is not configured.
    */
   slackNames?: SlackBotClient;
+  /**
+   * Copies automations to GitHub. On the live registration this is the worker.
+   * On the stable registration it forwards to whichever GitHub App is active.
+   */
+  automationSync?: AutomationGitSyncPort;
 }

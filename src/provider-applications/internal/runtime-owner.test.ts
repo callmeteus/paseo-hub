@@ -11,6 +11,7 @@ import type {
   ProviderApplicationIdentity,
   SlackProviderApplicationConfiguration,
 } from "../index.js";
+import { unconfiguredAutomationGitSyncView } from "../../automation-sync/contract.js";
 import { DynamicProviderRuntime } from "./runtime-owner.js";
 import { OutputExecutorRegistry, replyOutputTool } from "../../execution-capabilities/outputs.js";
 import { createGitHubReplyExecutor, githubReplyAvailable } from "../../triggers/github/reply.js";
@@ -70,6 +71,44 @@ describe("dynamic provider runtime", () => {
       github.outputs.some((output) => output.type === "slack.react"),
       false,
     );
+  });
+
+  it("forwards automation git sync to the GitHub App that is active", async () => {
+    let views = 0;
+    const runtime = new DynamicProviderRuntime({
+      database: createMemoryDatabase(),
+      auth: testAuth(),
+      applicationBaseUrl: "https://hub.test",
+      registrationFactory: () => ({
+        ...connectionRegistration("github", "A1"),
+        automationSync: {
+          view: () => {
+            views += 1;
+            return Promise.resolve(unconfiguredAutomationGitSyncView());
+          },
+          save: () => Promise.resolve(unconfiguredAutomationGitSyncView()),
+          syncNow: () => Promise.resolve({ status: "unchanged" as const, commitSha: "abc" }),
+        },
+      }),
+    });
+    const github = runtime
+      .registrations()
+      .find((registration) => registration.connection.name === "github");
+    assert.ok(github?.automationSync);
+    const before = await github.automationSync.view(new Request("https://hub.test"), "even7");
+    assert.equal(before.githubConfigured, false);
+    assert.equal(views, 0);
+    const candidate = await runtime.prepare(
+      "github",
+      providerConfiguration("github", "A1"),
+      "https://hub.test",
+      providerIdentity("github", "A1"),
+      1,
+    );
+    await candidate.start();
+    candidate.publish();
+    await github.automationSync.view(new Request("https://hub.test"), "even7");
+    assert.equal(views, 1);
   });
 
   it("exposes and delivers GitHub replies through the hosted provider registration", async () => {

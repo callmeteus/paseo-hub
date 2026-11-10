@@ -23,6 +23,11 @@ import { parseProviderApplicationConfiguration } from "./store.js";
 import type { SlackDeliveryStatus } from "../../triggers/slack/source/index.js";
 import { GITHUB_TRIGGER_SOURCE_NAMES } from "../../triggers/github/classification.js";
 import { hostedOutputs } from "./hosted-outputs.js";
+import {
+  AutomationSyncError,
+  unconfiguredAutomationGitSyncView,
+  type AutomationGitSyncPort,
+} from "../../automation-sync/contract.js";
 
 interface Slot {
   active: ActiveRegistration | undefined;
@@ -51,6 +56,29 @@ class ProviderRuntimeUnavailableError extends Error {
 
 function unavailable(code: string): ProviderRuntimeUnavailableError {
   return new ProviderRuntimeUnavailableError(code);
+}
+
+/**
+ * The page reads this object for the life of the process. The GitHub App behind it
+ * can be published later, so each call looks up the registration that is active now.
+ */
+function githubAutomationSync(slot: Slot): AutomationGitSyncPort {
+  const active = () => {
+    const sync = slot.active?.registration.automationSync;
+    if (sync === undefined) {
+      throw new AutomationSyncError("GitHub is not configured on this Hub.");
+    }
+    return sync;
+  };
+  return {
+    view: (request, organizationSlug) => {
+      const sync = slot.active?.registration.automationSync;
+      if (sync === undefined) return Promise.resolve(unconfiguredAutomationGitSyncView());
+      return sync.view(request, organizationSlug);
+    },
+    save: (request, organizationSlug, input) => active().save(request, organizationSlug, input),
+    syncNow: (request, organizationSlug) => active().syncNow(request, organizationSlug),
+  };
 }
 
 type SlackInstallationHandler = Parameters<
@@ -386,6 +414,7 @@ export class DynamicProviderRuntime implements ProviderRuntimeOwner {
             },
           }
         : {}),
+      ...(provider === "github" ? { automationSync: githubAutomationSync(slot) } : {}),
       triggerProviders: [
         (resources) => {
           slot.triggerResources = resources;

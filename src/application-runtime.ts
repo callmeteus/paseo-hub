@@ -13,6 +13,7 @@ import { OperatorConsole } from "./operator/console.js";
 import { UsageDashboard } from "./usage/dashboard.js";
 import { OrganizationResources } from "./organizations/resources.js";
 import { OutputExecutorRegistry } from "./execution-capabilities/outputs.js";
+import type { AutomationGitSyncPort } from "./automation-sync/contract.js";
 import type {
   ProviderIntegrationRegistration,
   ProviderRegistration,
@@ -152,6 +153,7 @@ async function createOwnedApplicationRuntime(
         ? null
         : new ProjectDashboard(options.database, options.auth),
     triggerDashboard: triggerDashboardFor(options, application.hub),
+    automationSync: automationSyncFor(registrations),
     daemonProviderCatalog: daemonProviderCatalogFor(options, application.hub),
     homeDashboard: homeDashboardFor(options, connections, slackNamesFor(registrations)),
     ...entitlementSurfaces(options),
@@ -425,6 +427,15 @@ function providerApplicationsFor(
   options: ApplicationCompositionOptions,
 ): ProviderApplications | null {
   return options.providerApplications ?? null;
+}
+
+function automationSyncFor(
+  registrations: readonly ProviderRegistration[],
+): AutomationGitSyncPort | null {
+  for (const registration of registrations) {
+    if (registration.automationSync !== undefined) return registration.automationSync;
+  }
+  return null;
 }
 
 function createConnectionsForProject(

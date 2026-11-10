@@ -30,17 +30,21 @@ export class AgentSessions {
     private readonly now: () => number = Date.now,
   ) {}
 
-  async dispatch(input: {
-    executionId: string;
-    intent: LaunchMachineIntent;
-    connection: AgentConnection;
-    createOptions: () => Promise<DaemonCreateAgentOptions>;
-    onEvent: (event: AgentEvent) => void;
-  }): Promise<{
+  async dispatch(
+    input: {
+      executionId: string;
+      intent: LaunchMachineIntent;
+      connection: AgentConnection;
+      createOptions: () => Promise<DaemonCreateAgentOptions>;
+      onEvent: (event: AgentEvent) => void;
+    },
+    attempt = 0,
+  ): Promise<{
     agentId: string;
     unsubscribe: () => void;
     action: "created" | "continued" | "restored";
   }> {
+    if (attempt > 3) throw new AgentSessionError("session_retry_limit");
     const incoming = await this.database.findAgentExecutionById(input.executionId);
     if (!incoming || !isActive(incoming)) throw new AgentSessionError("execution_terminal");
     const policy = input.intent.continuation;
@@ -92,7 +96,10 @@ export class AgentSessions {
       session = await this.releaseIncompatibleSession(session, compatibility, input.intent);
       const id = session?.id ?? deriveSessionId(projectId, `execution:${input.executionId}`);
       if (!session) {
-        if (!options) return undefined;
+        if (!options) {
+          await this.replacePinnedSession(input, compatibility, tools);
+          return undefined;
+        }
         const token = deriveAgentExecutionCompletionToken(this.secret, `session:${id}`);
         session = {
           id,
@@ -159,7 +166,36 @@ export class AgentSessions {
       const unsubscribe = await this.deliver(input, session.agentId, startupTimeoutMs);
       return { agentId: session.agentId, unsubscribe, action };
     });
-    return dispatched ?? this.dispatch(input);
+    return dispatched ?? this.dispatch(input, attempt + 1);
+  }
+
+  /**
+   * A session created for one execution uses that execution's id as its lookup
+   * key. Clearing the continuation key does not hide it, so a tool change has
+   * to rebuild the same row before the retry.
+   */
+  private async replacePinnedSession(
+    input: {
+      executionId: string;
+      intent: LaunchMachineIntent;
+    },
+    compatibility: string,
+    tools: AgentSessionRecord["tools"],
+  ): Promise<void> {
+    await this.database.clearExecutionAgentSession(input.executionId);
+    const continuationKey = input.intent.continuation?.key ?? null;
+    if (continuationKey !== null) return;
+    const pinnedId = deriveSessionId(input.intent.projectId, `execution:${input.executionId}`);
+    const pinned = await this.database.findAgentSession(pinnedId);
+    if (!pinned || pinned.daemonId !== input.intent.environment.daemonId) return;
+    if (pinned.compatibility === compatibility) return;
+    await this.database.saveAgentSession({
+      ...pinned,
+      compatibility,
+      tools,
+      agentId: null,
+      workspaceId: null,
+    });
   }
 
   /**

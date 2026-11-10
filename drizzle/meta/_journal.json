@@ -358,6 +358,20 @@
       "when": 1794112281916,
       "tag": "0050_faithful_steel_serpent",
       "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1794262134058,
+      "tag": "0051_demonic_cyclops",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1794277880725,
+      "tag": "0052_thick_jazinda",
+      "breakpoints": true
     }
   ]
 }

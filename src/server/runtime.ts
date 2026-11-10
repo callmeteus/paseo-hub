@@ -18,6 +18,7 @@ import type { UsageDashboard } from "../usage/dashboard.js";
 import type { ProviderApplications } from "../provider-applications/index.js";
 import type { DaemonProviderCatalog } from "../daemons/provider-catalog.js";
 import type { HomeDashboard } from "../home/dashboard.js";
+import type { AutomationGitSyncPort } from "../automation-sync/contract.js";
 
 /**
  * The public plan catalog shape is billing's own: `src/billing/public-catalog.ts` decides which
@@ -70,6 +71,8 @@ export interface ApplicationRuntime {
   billing: BillingRuntime | null;
   projectDashboard: ProjectDashboard | null;
   triggerDashboard?: TriggerDashboard | null;
+  /** Null when this Hub has no GitHub registration. Automations then stay where they are. */
+  automationSync: AutomationGitSyncPort | null;
   daemonProviderCatalog?: DaemonProviderCatalog | null;
   /** The organization landing: checklist facts and a recent-window overview. */
   homeDashboard?: HomeDashboard | null;

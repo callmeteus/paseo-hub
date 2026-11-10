@@ -37,8 +37,15 @@ import type {
   AttachmentRecord,
   ConfigurationSyncAttemptRecord,
   CreateProjectInput,
+  AutomationGitSyncInterval,
+  AutomationGitSyncRecord,
+  AutomationGitSyncResultInput,
+  AutomationGitSyncStatus,
   Database,
+  InsertOrganizationFindingInput,
   InsertProjectConfigurationRevisionInput,
+  OrganizationFindingRecord,
+  SaveAutomationGitSyncInput,
   InsertAgentExecutionInput,
   InsertAttachmentInput,
   InsertMachineInput,
@@ -2941,6 +2948,12 @@ class PgDatabase implements Database {
     if (result.rowCount !== 1) throw new Error("Agent session does not belong to this execution");
   }
 
+  async clearExecutionAgentSession(executionId: string): Promise<void> {
+    await this.pool.query("update agent_executions set agent_session_id = null where id = $1", [
+      executionId,
+    ]);
+  }
+
   async listAgentSessionExecutions(sessionId: string): Promise<AgentExecutionRecord[]> {
     const result = await this.pool.query<AgentExecutionRow>(
       "select * from agent_executions where agent_session_id = $1",
@@ -4478,6 +4491,131 @@ class PgDatabase implements Database {
     return this.connections.removeDiscord(guildId);
   }
 
+  async getAutomationGitSync(organizationId: string) {
+    const rows = await query<AutomationGitSyncRow>(
+      this.pool,
+      `select organization_id, enabled, github_connection_id, repository_id,
+              repository_full_name, branch, commit_message, automations_directory, interval_minutes,
+              last_checked_at, last_synced_at, last_commit_sha, last_status, last_error
+       from automation_git_sync where organization_id = $1`,
+      [organizationId],
+    );
+    return rows.rows[0] === undefined ? undefined : toAutomationGitSyncRecord(rows.rows[0]);
+  }
+
+  async saveAutomationGitSync(input: SaveAutomationGitSyncInput) {
+    const rows = await query<AutomationGitSyncRow>(
+      this.pool,
+      `insert into automation_git_sync (
+         organization_id, enabled, github_connection_id, repository_id, repository_full_name,
+         branch, commit_message, automations_directory, interval_minutes
+       ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       on conflict (organization_id) do update set
+         enabled = excluded.enabled,
+         github_connection_id = excluded.github_connection_id,
+         repository_id = excluded.repository_id,
+         repository_full_name = excluded.repository_full_name,
+         branch = excluded.branch,
+         commit_message = excluded.commit_message,
+         automations_directory = excluded.automations_directory,
+         interval_minutes = excluded.interval_minutes
+       returning organization_id, enabled, github_connection_id, repository_id,
+                 repository_full_name, branch, commit_message, automations_directory, interval_minutes,
+                 last_checked_at, last_synced_at, last_commit_sha, last_status, last_error`,
+      [
+        input.organizationId,
+        input.enabled,
+        input.githubConnectionId,
+        input.repositoryId,
+        input.repositoryFullName,
+        input.branch,
+        input.commitMessage,
+        input.automationsDirectory,
+        input.intervalMinutes,
+      ],
+    );
+    const row = rows.rows[0];
+    if (row === undefined) throw new Error("automation git sync was not saved");
+    return toAutomationGitSyncRecord(row);
+  }
+
+  async listEnabledAutomationGitSyncs() {
+    const rows = await query<AutomationGitSyncRow>(
+      this.pool,
+      `select organization_id, enabled, github_connection_id, repository_id,
+              repository_full_name, branch, commit_message, automations_directory, interval_minutes,
+              last_checked_at, last_synced_at, last_commit_sha, last_status, last_error
+       from automation_git_sync
+       where enabled = true and repository_id is not null and repository_full_name is not null
+       order by organization_id`,
+      [],
+    );
+    return rows.rows.map(toAutomationGitSyncRecord);
+  }
+
+  async recordAutomationGitSyncResult(input: AutomationGitSyncResultInput) {
+    await query(
+      this.pool,
+      `update automation_git_sync
+       set last_checked_at = $2,
+           last_status = $3,
+           last_error = $4,
+           last_commit_sha = coalesce($5, last_commit_sha),
+           last_synced_at = coalesce($6, last_synced_at)
+       where organization_id = $1`,
+      [
+        input.organizationId,
+        input.checkedAt,
+        input.status,
+        input.error,
+        input.commitSha,
+        input.syncedAt,
+      ],
+    );
+  }
+
+  async insertOrganizationFinding(input: InsertOrganizationFindingInput) {
+    const rows = await query<OrganizationFindingRow>(
+      this.pool,
+      `insert into organization_findings (
+         organization_id, statement, replies, tool_name, tool_result
+       ) values ($1, $2, $3::jsonb, $4, $5)
+       returning id, organization_id, statement, replies, tool_name, tool_result, created_at`,
+      [
+        input.organizationId,
+        input.statement,
+        JSON.stringify(input.replies),
+        input.toolName,
+        input.toolResult,
+      ],
+    );
+    const row = rows.rows[0];
+    if (row === undefined) throw new Error("organization finding was not saved");
+    return toOrganizationFindingRecord(row);
+  }
+
+  async searchOrganizationFindings(organizationId: string, queryText: string) {
+    const needle = queryText.trim();
+    const pattern = needle.length === 0 ? null : `%${escapeLike(needle)}%`;
+    const rows = await query<OrganizationFindingRow>(
+      this.pool,
+      `select id, organization_id, statement, replies, tool_name, tool_result, created_at
+       from organization_findings
+       where organization_id = $1
+         and (
+           $2::text is null
+           or statement ilike $2 escape '\\'
+           or tool_name ilike $2 escape '\\'
+           or tool_result ilike $2 escape '\\'
+           or replies::text ilike $2 escape '\\'
+         )
+       order by created_at desc
+       limit 20`,
+      [organizationId, pattern],
+    );
+    return rows.rows.map(toOrganizationFindingRecord);
+  }
+
   async close(): Promise<void> {
     await this.pool.close();
   }
@@ -4601,6 +4739,106 @@ async function query<T extends QueryRow = QueryRow>(
 
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string") ? value : [];
+}
+
+interface AutomationGitSyncRow extends QueryRow {
+  organization_id: string;
+  enabled: boolean;
+  github_connection_id: string | null;
+  repository_id: number | string | null;
+  repository_full_name: string | null;
+  branch: string | null;
+  commit_message: string | null;
+  automations_directory: string | null;
+  interval_minutes: number | string;
+  last_checked_at: Date | string | null;
+  last_synced_at: Date | string | null;
+  last_commit_sha: string | null;
+  last_status: string | null;
+  last_error: string | null;
+}
+
+interface OrganizationFindingRow extends QueryRow {
+  id: string;
+  organization_id: string;
+  statement: string;
+  replies: unknown;
+  tool_name: string;
+  tool_result: string;
+  created_at: Date | string;
+}
+
+function toAutomationGitSyncRecord(row: AutomationGitSyncRow): AutomationGitSyncRecord {
+  return {
+    organizationId: row.organization_id,
+    enabled: row.enabled,
+    githubConnectionId: row.github_connection_id,
+    repositoryId: optionalNumber(row.repository_id),
+    repositoryFullName: row.repository_full_name,
+    branch: row.branch,
+    commitMessage: row.commit_message,
+    automationsDirectory: row.automations_directory,
+    intervalMinutes: syncInterval(row.interval_minutes),
+    lastCheckedAt: optionalDate(row.last_checked_at),
+    lastSyncedAt: optionalDate(row.last_synced_at),
+    lastCommitSha: row.last_commit_sha,
+    lastStatus: syncStatus(row.last_status),
+    lastError: row.last_error,
+  };
+}
+
+function toOrganizationFindingRecord(row: OrganizationFindingRow): OrganizationFindingRecord {
+  return {
+    id: row.id,
+    organizationId: row.organization_id,
+    statement: row.statement,
+    replies: replyList(row.replies),
+    toolName: row.tool_name,
+    toolResult: row.tool_result,
+    createdAt: requiredDate(row.created_at),
+  };
+}
+
+function optionalNumber(value: number | string | null): number | null {
+  if (value === null) return null;
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isSafeInteger(parsed))
+    throw new Error("automation git sync repository id is invalid");
+  return parsed;
+}
+
+function syncInterval(value: number | string): AutomationGitSyncInterval {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return parsed === 5 || parsed === 15 || parsed === 60 ? parsed : 15;
+}
+
+function syncStatus(value: string | null): AutomationGitSyncStatus | null {
+  return value === "unchanged" || value === "committed" || value === "failed" ? value : null;
+}
+
+function optionalDate(value: Date | string | null): Date | null {
+  if (value === null) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function requiredDate(value: Date | string): Date {
+  const date = optionalDate(value);
+  if (date === null) throw new Error("organization finding timestamp is invalid");
+  return date;
+}
+
+function replyList(value: unknown): string[] {
+  if (typeof value !== "string") return stringArray(value);
+  try {
+    return stringArray(JSON.parse(value) as unknown);
+  } catch {
+    return [];
+  }
+}
+
+function escapeLike(value: string): string {
+  return value.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_");
 }
 
 function isDaemonSlugConflict(error: unknown): boolean {

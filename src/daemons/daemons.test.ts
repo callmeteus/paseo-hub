@@ -178,6 +178,8 @@ describe("daemon enrollment and execution", () => {
       preapproved: [
         { kind: "mcp", server: "hub", tool: "finish_execution" },
         { kind: "mcp", server: "hub", tool: "clear_hard_deadline" },
+        { kind: "mcp", server: "hub", tool: "memory_save" },
+        { kind: "mcp", server: "hub", tool: "memory_search" },
       ],
     });
     assert.deepEqual(agent.env, {
@@ -232,6 +234,8 @@ describe("daemon enrollment and execution", () => {
       preapproved: [
         { kind: "mcp", server: "hub", tool: "finish_execution" },
         { kind: "mcp", server: "hub", tool: "clear_hard_deadline" },
+        { kind: "mcp", server: "hub", tool: "memory_save" },
+        { kind: "mcp", server: "hub", tool: "memory_search" },
         { kind: "mcp", server: "hub", tool: "reply" },
       ],
     });
@@ -245,6 +249,8 @@ describe("daemon enrollment and execution", () => {
       preapproved: [
         { kind: "mcp", server: "hub", tool: "finish_execution" },
         { kind: "mcp", server: "hub", tool: "clear_hard_deadline" },
+        { kind: "mcp", server: "hub", tool: "memory_save" },
+        { kind: "mcp", server: "hub", tool: "memory_search" },
       ],
     });
   });
@@ -323,6 +329,21 @@ describe("daemon enrollment and execution", () => {
           description: "Completes this execution and records its optional structured output.",
         },
         {
+          name: "clear_hard_deadline",
+          description:
+            "Removes the hard time limit on this execution and the run that owns it. The idle timeout still applies. Any execution can call this when the work will outlast the current limit.",
+        },
+        {
+          name: "memory_save",
+          description:
+            "Saves a finding for this organization. Requires the fact, the Slack replies that support it, and the tool call used to verify it. This does not post to Slack.",
+        },
+        {
+          name: "memory_search",
+          description:
+            "Searches this organization's findings. Each result includes the fact, the Slack replies, and the tool call stored with it.",
+        },
+        {
           name: "reply",
           description:
             "Sends a reply to the conversation that triggered this execution. (up to 1 times).",
@@ -358,6 +379,16 @@ describe("daemon enrollment and execution", () => {
           name: "clear_hard_deadline",
           description:
             "Removes the hard time limit on this execution and the run that owns it. The idle timeout still applies. Any execution can call this when the work will outlast the current limit.",
+        },
+        {
+          name: "memory_save",
+          description:
+            "Saves a finding for this organization. Requires the fact, the Slack replies that support it, and the tool call used to verify it. This does not post to Slack.",
+        },
+        {
+          name: "memory_search",
+          description:
+            "Searches this organization's findings. Each result includes the fact, the Slack replies, and the tool call stored with it.",
         },
       ],
     );
@@ -400,7 +431,7 @@ describe("daemon enrollment and execution", () => {
     );
     assert.deepEqual(
       (await hub.listExecutionTools(classifier.id)).map(({ name }) => name),
-      ["finish_execution", "clear_hard_deadline"],
+      ["finish_execution", "clear_hard_deadline", "memory_save", "memory_search"],
     );
 
     const completion = await hub.callExecutionTool(classifier.id, "finish_execution", {
@@ -433,7 +464,7 @@ describe("daemon enrollment and execution", () => {
     });
     assert.deepEqual(
       (await hub.listExecutionTools(worker.id)).map(({ name }) => name),
-      ["finish_execution", "clear_hard_deadline", "reply"],
+      ["finish_execution", "clear_hard_deadline", "memory_save", "memory_search", "reply"],
     );
   });
 

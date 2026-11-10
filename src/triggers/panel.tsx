@@ -127,101 +127,103 @@ export function TriggersPanel() {
           </Button>
         ) : null}
       </PageHeader>
-      {data.canManage ? <AutomationTemplates to={triggerPath("new")} /> : null}
-      <Input
-        value={search}
-        onChange={(event) => setSearch(event.target.value)}
-        placeholder="Search automations"
-        aria-label="Search automations"
-      />
       <div className="grid gap-6">
-        {data.daemons.length === 0 ? (
-          <WarningAlert
-            title="Add a daemon first"
-            action={
-              <Button asChild variant="outline" size="sm">
-                <Link to={`/o/${scope.organizationSlug}/daemons` as never}>Go to Daemons</Link>
-              </Button>
-            }
-          >
-            <p>Automations need a daemon that can run agents.</p>
-          </WarningAlert>
-        ) : null}
-        <DataTable
-          label="Automations"
-          columns={TRIGGER_COLUMNS}
-          isEmpty={visibleTriggers.length === 0}
-          empty={{
-            title: search.trim().length === 0 ? "No automations" : "No matching automations",
-            description:
-              search.trim().length === 0
-                ? "Create one, or start from a template."
-                : "Try a different name.",
-          }}
-        >
-          {visibleTriggers.map((trigger) => (
-            <DataRow
-              key={trigger.id}
-              onSelect={() => {
-                void navigate({ to: triggerPath(trigger.id) });
-              }}
+        {data.canManage ? <AutomationTemplates to={triggerPath("new")} /> : null}
+        <Input
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder="Search automations"
+          aria-label="Search automations"
+        />
+        <div className="grid gap-6">
+          {data.daemons.length === 0 ? (
+            <WarningAlert
+              title="Add a daemon first"
+              action={
+                <Button asChild variant="outline" size="sm">
+                  <Link to={`/o/${scope.organizationSlug}/daemons` as never}>Go to Daemons</Link>
+                </Button>
+              }
             >
-              <DataCell>
-                <span className="flex items-center gap-3">
-                  <span
-                    className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-muted text-foreground"
-                    role="img"
-                    aria-label={`${trigger.provider} provider`}
-                  >
-                    <ProviderGlyph provider={trigger.provider} />
+              <p>Automations need a daemon that can run agents.</p>
+            </WarningAlert>
+          ) : null}
+          <DataTable
+            label="Automations"
+            columns={TRIGGER_COLUMNS}
+            isEmpty={visibleTriggers.length === 0}
+            empty={{
+              title: search.trim().length === 0 ? "No automations" : "No matching automations",
+              description:
+                search.trim().length === 0
+                  ? "Create one, or start from a template."
+                  : "Try a different name.",
+            }}
+          >
+            {visibleTriggers.map((trigger) => (
+              <DataRow
+                key={trigger.id}
+                onSelect={() => {
+                  void navigate({ to: triggerPath(trigger.id) });
+                }}
+              >
+                <DataCell>
+                  <span className="flex items-center gap-3">
+                    <span
+                      className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-muted text-foreground"
+                      role="img"
+                      aria-label={`${trigger.provider} provider`}
+                    >
+                      <ProviderGlyph provider={trigger.provider} />
+                    </span>
+                    <TwoLine
+                      primary={
+                        <Link
+                          to={triggerPath(trigger.id)}
+                          title={trigger.name}
+                          className="hover:underline"
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          {trigger.name}
+                        </Link>
+                      }
+                      secondary={
+                        trigger.format === "legacy_multistep"
+                          ? "Legacy YAML"
+                          : (trigger.draft?.agent ?? "Advanced YAML")
+                      }
+                    />
                   </span>
-                  <TwoLine
-                    primary={
-                      <Link
-                        to={triggerPath(trigger.id)}
-                        title={trigger.name}
-                        className="hover:underline"
-                        onClick={(event) => event.stopPropagation()}
-                      >
-                        {trigger.name}
-                      </Link>
-                    }
-                    secondary={
-                      trigger.format === "legacy_multistep"
-                        ? "Legacy YAML"
-                        : (trigger.draft?.agent ?? "Advanced YAML")
-                    }
-                  />
-                </span>
-              </DataCell>
-              <DataCell>
-                <TriggerEvent trigger={trigger} />
-              </DataCell>
-              <DataCell>
-                {trigger.draft === null ? (
-                  <span className="text-muted-foreground">Advanced configuration</span>
-                ) : (
-                  <TwoLine path primary={trigger.draft.daemon} secondary={trigger.draft.cwd} />
-                )}
-              </DataCell>
-              <DataCell>
-                {trigger.lastTriggered === null ? (
-                  <span className="text-muted-foreground">Never</span>
-                ) : (
-                  <TwoLine
-                    primary={<RelativeTime value={trigger.lastTriggered.receivedAt} />}
-                    secondary={statusLabel(trigger.lastTriggered.status)}
-                  />
-                )}
-              </DataCell>
-              <DataCell>
-                <StatusPill tone={trigger.enabled ? "success" : "neutral"}>
-                  {trigger.enabled ? "Active" : "Inactive"}
-                </StatusPill>
-              </DataCell>
-            </DataRow>
-          ))}
-        </DataTable>
+                </DataCell>
+                <DataCell>
+                  <TriggerEvent trigger={trigger} />
+                </DataCell>
+                <DataCell>
+                  {trigger.draft === null ? (
+                    <span className="text-muted-foreground">Advanced configuration</span>
+                  ) : (
+                    <TwoLine path primary={trigger.draft.daemon} secondary={trigger.draft.cwd} />
+                  )}
+                </DataCell>
+                <DataCell>
+                  {trigger.lastTriggered === null ? (
+                    <span className="text-muted-foreground">Never</span>
+                  ) : (
+                    <TwoLine
+                      primary={<RelativeTime value={trigger.lastTriggered.receivedAt} />}
+                      secondary={statusLabel(trigger.lastTriggered.status)}
+                    />
+                  )}
+                </DataCell>
+                <DataCell>
+                  <StatusPill tone={trigger.enabled ? "success" : "neutral"}>
+                    {trigger.enabled ? "Active" : "Inactive"}
+                  </StatusPill>
+                </DataCell>
+              </DataRow>
+            ))}
+          </DataTable>
+        </div>
       </div>
     </>
   );

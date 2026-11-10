@@ -29,6 +29,11 @@ export interface DaemonCreateAgentOptions {
   env: Record<string, string>;
   mcpServers?: Record<string, McpHttpServerConfig>;
   worktree?: WorktreeTarget;
+  /**
+   * Prompt files written under `.paseo/automations/` in the run directory before the agent starts.
+   * Absent when this run has no automations directory.
+   */
+  automationFiles?: readonly { path: string; content: string }[];
 }
 
 export interface McpToolRef {
@@ -87,6 +92,8 @@ export interface DaemonConnection {
   refreshProviderSnapshot(options: { cwd?: string; providers?: string[] }): Promise<void>;
   /** The daemon's own answer about whether it can run this agent as configured. */
   validateAgentConfiguration(agent: CompiledAgent): Promise<AgentValidationVerdict>;
+  /** True when this daemon writes `automationFiles` before the agent starts. */
+  automationFilesSupported?: boolean;
 }
 
 /** A durable daemon request may have succeeded before its acknowledgement was lost. */

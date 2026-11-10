@@ -43,6 +43,7 @@ import type { ConnectionResolutionContext } from "../../config/connections.js";
 import type { ProjectConfigurationStore } from "../../configuration/store.js";
 import { replyOutputTool } from "../../execution-capabilities/outputs.js";
 import { createGitHubReplyExecutor, githubReplyAvailable } from "../../triggers/github/reply.js";
+import { AutomationGitSync } from "../../automation-sync/service.js";
 
 export interface GitHubRegistrationConfiguration {
   appId: string;
@@ -182,6 +183,11 @@ export function createGitHubRegistration(
     },
   };
   logger.info("using webhook event source");
+  const automationSync = new AutomationGitSync({
+    database,
+    auth: options.auth,
+    github: appAuth,
+  });
   return {
     configurationSnapshot: {
       version: options.configurationVersion ?? 0,
@@ -267,8 +273,10 @@ export function createGitHubRegistration(
         async start(handler) {
           await webhook.start(handler);
           lifecycle.start();
+          automationSync.start();
         },
         async stop() {
+          automationSync.stop();
           await webhook.stop();
           await lifecycle.stop();
         },
@@ -283,6 +291,7 @@ export function createGitHubRegistration(
       },
     ],
     requests: [{ name: "webhook", handle: (request) => webhook.handle(request) }],
+    automationSync,
   };
 }
 

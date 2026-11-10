@@ -56,6 +56,7 @@ interface ActiveSocket {
   ready: boolean;
   presenceReady: Promise<void>;
   providerSnapshotSupported: boolean;
+  automationFilesSupported: boolean;
 }
 
 export type DaemonSessionProtocol = "legacy" | "session-v1";
@@ -99,6 +100,7 @@ export class ActiveDaemonRegistry {
       ready: false,
       presenceReady: Promise.resolve(),
       providerSnapshotSupported: false,
+      automationFilesSupported: false,
     };
     this.active.set(daemon.id, active);
     previous?.agents.close();
@@ -165,6 +167,7 @@ export class ActiveDaemonRegistry {
       getProviderSnapshot: (options) => this.getProviderSnapshot(daemonId, options),
       refreshProviderSnapshot: (options) => this.refreshProviderSnapshot(daemonId, options),
       validateAgentConfiguration: (agent) => this.validateAgentConfiguration(daemonId, agent),
+      automationFilesSupported: active.automationFilesSupported,
     };
   }
 
@@ -298,6 +301,7 @@ export class ActiveDaemonRegistry {
         active,
         serverInfo.data.message.payload.permissions,
         serverInfo.data.message.payload.features?.providersSnapshot === true,
+        serverInfo.data.message.payload.features?.hubAutomationFiles === true,
       );
       return;
     }
@@ -318,12 +322,14 @@ export class ActiveDaemonRegistry {
     active: ActiveSocket,
     permissions: readonly string[],
     providerSnapshotSupported = false,
+    automationFilesSupported = false,
   ): void {
     if (!samePermissions(permissions, active.daemon.permissions)) {
       active.socket.close(4403, "daemon session permissions do not match enrollment");
       return;
     }
     active.providerSnapshotSupported = providerSnapshotSupported;
+    active.automationFilesSupported = automationFilesSupported;
     this.markReady(active);
   }
 

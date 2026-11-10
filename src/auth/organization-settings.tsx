@@ -29,6 +29,7 @@ export function OrganizationSettingsLayout() {
       [
         { to: `${base}/team`, label: "Team", shown: true },
         { to: `${base}/api-keys`, label: "API keys", shown: manageResources },
+        { to: `${base}/git`, label: "Git", shown: manageResources },
         { to: `${base}/usage`, label: "Usage", shown: true },
         { to: `${base}/billing`, label: "Billing", shown: billingShown },
       ]

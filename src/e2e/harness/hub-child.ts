@@ -255,6 +255,7 @@ async function main(): Promise<void> {
     usageDashboard: null,
     operatorConsole: null,
     providerApplications: null,
+    automationSync: null,
     testTriggerRoutes: true,
     auth: (request) => auth.handle(request),
     browserAccount: (request) => auth.browserAccount!(request),

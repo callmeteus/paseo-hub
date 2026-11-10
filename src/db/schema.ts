@@ -1477,6 +1477,45 @@ export const executionAuthorities = pgTable("execution_authorities", {
   data: jsonb("data").notNull(),
 });
 
+/** One optional GitHub destination for an organization's automations. Absent means git sync is off. */
+export const automationGitSync = pgTable("automation_git_sync", {
+  organizationId: text("organization_id")
+    .primaryKey()
+    .references(() => organizations.id, { onDelete: "cascade" }),
+  enabled: boolean("enabled").notNull().default(false),
+  githubConnectionId: uuid("github_connection_id"),
+  repositoryId: bigint("repository_id", { mode: "number" }),
+  repositoryFullName: text("repository_full_name"),
+  branch: text("branch"),
+  commitMessage: text("commit_message"),
+  automationsDirectory: text("automations_directory"),
+  intervalMinutes: integer("interval_minutes").notNull().default(15),
+  lastCheckedAt: timestamp("last_checked_at", { withTimezone: true }),
+  lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+  lastCommitSha: text("last_commit_sha"),
+  lastStatus: text("last_status"),
+  lastError: text("last_error"),
+});
+
+/** Findings an agent saved for the organization. The worker searches these; they are not in git. */
+export const organizationFindings = pgTable(
+  "organization_findings",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    statement: text("statement").notNull(),
+    replies: jsonb("replies").notNull(),
+    toolName: text("tool_name").notNull(),
+    toolResult: text("tool_result").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("organization_findings_organization_idx").on(table.organizationId, table.createdAt),
+  ],
+);
+
 export const executionCredentialLeases = pgTable(
   "execution_credential_leases",
   {

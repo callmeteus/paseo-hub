@@ -58,6 +58,8 @@ export interface MaterializedOutputCapability {
 export const finishExecutionToolName = "finish_execution" as const;
 export const clearHardDeadlineToolName = "clear_hard_deadline" as const;
 export const loadInstructionToolName = "load_instruction" as const;
+export const memorySaveToolName = "memory_save" as const;
+export const memorySearchToolName = "memory_search" as const;
 
 const clearHardDeadlineTool: OutputToolDefinition = {
   name: clearHardDeadlineToolName,
@@ -80,6 +82,47 @@ const loadInstructionTool: OutputToolDefinition = {
       path: { type: "string", minLength: 1 },
     },
     required: ["path"],
+    additionalProperties: false,
+  },
+};
+
+const memorySaveTool: OutputToolDefinition = {
+  name: memorySaveToolName,
+  description:
+    "Saves a finding for this organization. Requires the fact, the Slack replies that support it, and the tool call used to verify it. This does not post to Slack.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      statement: { type: "string", minLength: 1 },
+      replies: {
+        type: "array",
+        minItems: 1,
+        items: { type: "string", minLength: 1 },
+      },
+      tool: {
+        type: "object",
+        properties: {
+          name: { type: "string", minLength: 1 },
+          result: { type: "string", minLength: 1 },
+        },
+        required: ["name", "result"],
+        additionalProperties: false,
+      },
+    },
+    required: ["statement", "replies", "tool"],
+    additionalProperties: false,
+  },
+};
+
+const memorySearchTool: OutputToolDefinition = {
+  name: memorySearchToolName,
+  description:
+    "Searches this organization's findings. Each result includes the fact, the Slack replies, and the tool call stored with it.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      query: { type: "string" },
+    },
     additionalProperties: false,
   },
 };
@@ -208,6 +251,8 @@ export function executionToolDefinitions(
       inputSchema: toolSchema(compileFinishExecutionArguments(outputSchema).schema),
     },
     clearHardDeadlineTool,
+    memorySaveTool,
+    memorySearchTool,
     ...(loadInstructions ? [loadInstructionTool] : []),
     ...materializedOutputs.map(({ declaration, capability }) => ({
       name: capability.tool.name,

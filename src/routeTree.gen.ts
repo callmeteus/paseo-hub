@@ -58,6 +58,7 @@ import { Route as ShellOOrganizationSlugActivityIndexRouteImport } from './route
 import { Route as ShellOOrganizationSlugTriggersTriggerIdRouteImport } from './routes/_shell/o/$organizationSlug/triggers/$triggerId'
 import { Route as ShellOOrganizationSlugSettingsUsageRouteImport } from './routes/_shell/o/$organizationSlug/settings/usage'
 import { Route as ShellOOrganizationSlugSettingsTeamRouteImport } from './routes/_shell/o/$organizationSlug/settings/team'
+import { Route as ShellOOrganizationSlugSettingsGitRouteImport } from './routes/_shell/o/$organizationSlug/settings/git'
 import { Route as ShellOOrganizationSlugSettingsBillingRouteImport } from './routes/_shell/o/$organizationSlug/settings/billing'
 import { Route as ShellOOrganizationSlugSettingsApiKeysRouteImport } from './routes/_shell/o/$organizationSlug/settings/api-keys'
 import { Route as ShellOOrganizationSlugDaemonsDaemonIdRouteImport } from './routes/_shell/o/$organizationSlug/daemons/$daemonId'
@@ -333,6 +334,12 @@ const ShellOOrganizationSlugSettingsTeamRoute =
     path: '/team',
     getParentRoute: () => ShellOOrganizationSlugSettingsRoute,
   } as any)
+const ShellOOrganizationSlugSettingsGitRoute =
+  ShellOOrganizationSlugSettingsGitRouteImport.update({
+    id: '/git',
+    path: '/git',
+    getParentRoute: () => ShellOOrganizationSlugSettingsRoute,
+  } as any)
 const ShellOOrganizationSlugSettingsBillingRoute =
   ShellOOrganizationSlugSettingsBillingRouteImport.update({
     id: '/billing',
@@ -404,6 +411,7 @@ export interface FileRoutesByFullPath {
   '/o/$organizationSlug/daemons/$daemonId': typeof ShellOOrganizationSlugDaemonsDaemonIdRoute
   '/o/$organizationSlug/settings/api-keys': typeof ShellOOrganizationSlugSettingsApiKeysRoute
   '/o/$organizationSlug/settings/billing': typeof ShellOOrganizationSlugSettingsBillingRoute
+  '/o/$organizationSlug/settings/git': typeof ShellOOrganizationSlugSettingsGitRoute
   '/o/$organizationSlug/settings/team': typeof ShellOOrganizationSlugSettingsTeamRoute
   '/o/$organizationSlug/settings/usage': typeof ShellOOrganizationSlugSettingsUsageRoute
   '/o/$organizationSlug/triggers/$triggerId': typeof ShellOOrganizationSlugTriggersTriggerIdRoute
@@ -454,6 +462,7 @@ export interface FileRoutesByTo {
   '/o/$organizationSlug/daemons/$daemonId': typeof ShellOOrganizationSlugDaemonsDaemonIdRoute
   '/o/$organizationSlug/settings/api-keys': typeof ShellOOrganizationSlugSettingsApiKeysRoute
   '/o/$organizationSlug/settings/billing': typeof ShellOOrganizationSlugSettingsBillingRoute
+  '/o/$organizationSlug/settings/git': typeof ShellOOrganizationSlugSettingsGitRoute
   '/o/$organizationSlug/settings/team': typeof ShellOOrganizationSlugSettingsTeamRoute
   '/o/$organizationSlug/settings/usage': typeof ShellOOrganizationSlugSettingsUsageRoute
   '/o/$organizationSlug/triggers/$triggerId': typeof ShellOOrganizationSlugTriggersTriggerIdRoute
@@ -510,6 +519,7 @@ export interface FileRoutesById {
   '/_shell/o/$organizationSlug/daemons/$daemonId': typeof ShellOOrganizationSlugDaemonsDaemonIdRoute
   '/_shell/o/$organizationSlug/settings/api-keys': typeof ShellOOrganizationSlugSettingsApiKeysRoute
   '/_shell/o/$organizationSlug/settings/billing': typeof ShellOOrganizationSlugSettingsBillingRoute
+  '/_shell/o/$organizationSlug/settings/git': typeof ShellOOrganizationSlugSettingsGitRoute
   '/_shell/o/$organizationSlug/settings/team': typeof ShellOOrganizationSlugSettingsTeamRoute
   '/_shell/o/$organizationSlug/settings/usage': typeof ShellOOrganizationSlugSettingsUsageRoute
   '/_shell/o/$organizationSlug/triggers/$triggerId': typeof ShellOOrganizationSlugTriggersTriggerIdRoute
@@ -566,6 +576,7 @@ export interface FileRouteTypes {
     | '/o/$organizationSlug/daemons/$daemonId'
     | '/o/$organizationSlug/settings/api-keys'
     | '/o/$organizationSlug/settings/billing'
+    | '/o/$organizationSlug/settings/git'
     | '/o/$organizationSlug/settings/team'
     | '/o/$organizationSlug/settings/usage'
     | '/o/$organizationSlug/triggers/$triggerId'
@@ -616,6 +627,7 @@ export interface FileRouteTypes {
     | '/o/$organizationSlug/daemons/$daemonId'
     | '/o/$organizationSlug/settings/api-keys'
     | '/o/$organizationSlug/settings/billing'
+    | '/o/$organizationSlug/settings/git'
     | '/o/$organizationSlug/settings/team'
     | '/o/$organizationSlug/settings/usage'
     | '/o/$organizationSlug/triggers/$triggerId'
@@ -671,6 +683,7 @@ export interface FileRouteTypes {
     | '/_shell/o/$organizationSlug/daemons/$daemonId'
     | '/_shell/o/$organizationSlug/settings/api-keys'
     | '/_shell/o/$organizationSlug/settings/billing'
+    | '/_shell/o/$organizationSlug/settings/git'
     | '/_shell/o/$organizationSlug/settings/team'
     | '/_shell/o/$organizationSlug/settings/usage'
     | '/_shell/o/$organizationSlug/triggers/$triggerId'
@@ -1057,6 +1070,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShellOOrganizationSlugSettingsTeamRouteImport
       parentRoute: typeof ShellOOrganizationSlugSettingsRoute
     }
+    '/_shell/o/$organizationSlug/settings/git': {
+      id: '/_shell/o/$organizationSlug/settings/git'
+      path: '/git'
+      fullPath: '/o/$organizationSlug/settings/git'
+      preLoaderRoute: typeof ShellOOrganizationSlugSettingsGitRouteImport
+      parentRoute: typeof ShellOOrganizationSlugSettingsRoute
+    }
     '/_shell/o/$organizationSlug/settings/billing': {
       id: '/_shell/o/$organizationSlug/settings/billing'
       path: '/billing'
@@ -1127,6 +1147,7 @@ const ShellOOrganizationSlugDaemonsRouteWithChildren =
 interface ShellOOrganizationSlugSettingsRouteChildren {
   ShellOOrganizationSlugSettingsApiKeysRoute: typeof ShellOOrganizationSlugSettingsApiKeysRoute
   ShellOOrganizationSlugSettingsBillingRoute: typeof ShellOOrganizationSlugSettingsBillingRoute
+  ShellOOrganizationSlugSettingsGitRoute: typeof ShellOOrganizationSlugSettingsGitRoute
   ShellOOrganizationSlugSettingsTeamRoute: typeof ShellOOrganizationSlugSettingsTeamRoute
   ShellOOrganizationSlugSettingsUsageRoute: typeof ShellOOrganizationSlugSettingsUsageRoute
   ShellOOrganizationSlugSettingsIndexRoute: typeof ShellOOrganizationSlugSettingsIndexRoute
@@ -1138,6 +1159,8 @@ const ShellOOrganizationSlugSettingsRouteChildren: ShellOOrganizationSlugSetting
       ShellOOrganizationSlugSettingsApiKeysRoute,
     ShellOOrganizationSlugSettingsBillingRoute:
       ShellOOrganizationSlugSettingsBillingRoute,
+    ShellOOrganizationSlugSettingsGitRoute:
+      ShellOOrganizationSlugSettingsGitRoute,
     ShellOOrganizationSlugSettingsTeamRoute:
       ShellOOrganizationSlugSettingsTeamRoute,
     ShellOOrganizationSlugSettingsUsageRoute:

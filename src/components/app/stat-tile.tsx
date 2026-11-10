@@ -13,11 +13,14 @@ export function StatTile({
   value,
   detail,
   icon: Icon,
+  children,
 }: {
   label: string;
   value: ReactNode;
-  detail?: string;
+  detail?: ReactNode;
   icon?: LucideIcon;
+  /** A detail line that is more than a string, such as a relative time. */
+  children?: ReactNode;
 }) {
   return (
     <Card>
@@ -28,7 +31,7 @@ export function StatTile({
         </div>
         <div className="grid min-h-11 content-start gap-1">
           <p className="text-2xl leading-none tabular-nums">{value}</p>
-          <p className="min-h-5 text-xs text-muted-foreground">{detail}</p>
+          <p className="min-h-5 text-xs text-muted-foreground">{children ?? detail}</p>
         </div>
       </div>
     </Card>

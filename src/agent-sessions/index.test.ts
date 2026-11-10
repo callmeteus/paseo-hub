@@ -232,6 +232,69 @@ test("a tool change on the same daemon starts a new agent instead of sticking th
   expect(current?.agentId).toBe(next.agentId);
 });
 
+test("a tool change without continuation replaces that execution's agent once", async () => {
+  const f = await fixture();
+  const first = await f.arrival(false);
+  const original = await first.dispatch();
+  const stored = await f.execution(first.executionId);
+  const intent = stored.launchIntent;
+  if (intent === null) throw new Error("missing intent");
+  let preparations = 0;
+  const next = await f.sessions.dispatch({
+    executionId: first.executionId,
+    intent: { ...intent, allowOutputs: [] },
+    connection: f.connection,
+    onEvent: () => {},
+    createOptions: async () => {
+      preparations += 1;
+      if (preparations > 2) throw new Error("dispatch loop");
+      return {
+        provider: "codex",
+        cwd: "/repo",
+        env: {},
+        toolPolicy: { preapproved: [] },
+      };
+    },
+  });
+  expect(next.agentId).not.toBe(original.agentId);
+  expect(next.action).toBe("created");
+  expect(preparations).toBe(0);
+  expect(f.connection.creates).toHaveLength(2);
+});
+
+test("re-dispatch of an attached execution replaces an incompatible session once", async () => {
+  const f = await fixture();
+  const first = await f.arrival("conversation", "daemon");
+  const original = await first.dispatch();
+  const stored = await f.execution(first.executionId);
+  const intent = stored.launchIntent;
+  if (intent === null) throw new Error("missing intent");
+  let preparations = 0;
+  const next = await f.sessions.dispatch({
+    executionId: first.executionId,
+    intent: {
+      ...intent,
+      continuation: { key: "conversation", compatibility: { target: "daemon", tools: "react" } },
+    },
+    connection: f.connection,
+    onEvent: () => {},
+    createOptions: async () => {
+      preparations += 1;
+      if (preparations > 2) throw new Error("dispatch loop");
+      return {
+        provider: "codex",
+        cwd: "/repo",
+        env: {},
+        toolPolicy: { preapproved: [] },
+      };
+    },
+  });
+  expect(next.agentId).not.toBe(original.agentId);
+  expect(next.action).toBe("created");
+  expect(preparations).toBe(1);
+  expect(f.connection.creates).toHaveLength(2);
+});
+
 test("new-agent policy isolates arrivals and incompatible targets fail without replacement", async () => {
   const f = await fixture();
   const a = await f.arrival(null);

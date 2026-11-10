@@ -10,12 +10,20 @@ import {
 import type { AgentExecutionRecord, Database } from "../db/types.js";
 import { registerResponseLifecycle } from "../http/response-lifecycle.js";
 import { reportFailure, withReference } from "../failures/index.js";
+import {
+  FindingInputError,
+  findingQuery,
+  formatFindings,
+  parseFinding,
+} from "../automation-sync/findings.js";
 import { compileJsonSchema, formatJsonSchemaErrors } from "../workflows/json-schema.js";
 import {
   executionToolDefinitions,
   clearHardDeadlineToolName,
   finishExecutionToolName,
   loadInstructionToolName,
+  memorySaveToolName,
+  memorySearchToolName,
   type MaterializedOutputCapability,
   type OutputExecutorRegistry,
   type OutputToolSchema,
@@ -260,6 +268,8 @@ async function callExecutionTool(
   const validation = contract.validate(args);
   if (!validation.valid) return toolFailure(validation.message);
   if (toolName === clearHardDeadlineToolName) return clearHardDeadlineCall(options, execution);
+  if (toolName === memorySaveToolName) return memorySaveCall(options, execution, args);
+  if (toolName === memorySearchToolName) return memorySearchCall(options, execution, args);
   if (toolName === loadInstructionToolName) return loadInstructionCall(execution, args);
   if (toolName === finishExecutionToolName)
     return finishExecutionCall(options, execution, token, args, materializedOutputs);
@@ -281,6 +291,50 @@ async function clearHardDeadlineCall(
   if (cleared === undefined) return toolFailure("This execution is not live.");
   options.onHardDeadlineCleared?.(cleared);
   return toolSuccess("Hard time limit removed. The idle timeout still applies.");
+}
+
+async function memorySaveCall(
+  options: Pick<ExecutionCapabilityOptions, "database">,
+  execution: AgentExecutionRecord,
+  args: Record<string, unknown>,
+) {
+  try {
+    const finding = parseFinding(args);
+    const saved = await options.database.insertOrganizationFinding({
+      organizationId: execution.organizationId,
+      ...finding,
+    });
+    return toolSuccess(`Saved finding ${saved.id}.`);
+  } catch (error) {
+    if (error instanceof FindingInputError) return toolFailure(error.message);
+    const failure = reportFailure(error, {
+      operation: "execution_capability.memory_save",
+      component: "execution_capabilities",
+      executionId: execution.id,
+    });
+    return toolFailure(withReference("The finding could not be saved.", failure.requestId));
+  }
+}
+
+async function memorySearchCall(
+  options: Pick<ExecutionCapabilityOptions, "database">,
+  execution: AgentExecutionRecord,
+  args: Record<string, unknown>,
+) {
+  try {
+    const findings = await options.database.searchOrganizationFindings(
+      execution.organizationId,
+      findingQuery(args["query"]),
+    );
+    return toolSuccess(formatFindings(findings));
+  } catch (error) {
+    const failure = reportFailure(error, {
+      operation: "execution_capability.memory_search",
+      component: "execution_capabilities",
+      executionId: execution.id,
+    });
+    return toolFailure(withReference("Findings could not be searched.", failure.requestId));
+  }
 }
 
 async function loadInstructionCall(execution: AgentExecutionRecord, args: Record<string, unknown>) {

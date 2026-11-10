@@ -103,7 +103,13 @@ export const HubDaemonServerInfoEnvelopeSchema = z.object({
       .object({
         status: z.literal("server_info"),
         permissions: z.array(z.string()),
-        features: z.object({ providersSnapshot: z.boolean().optional() }).optional(),
+        features: z
+          .object({
+            providersSnapshot: z.boolean().optional(),
+            // COMPAT(hubAutomationFiles): added in v0.13.2, remove gate after 2027-11-09.
+            hubAutomationFiles: z.boolean().optional(),
+          })
+          .optional(),
       })
       .passthrough(),
   }),

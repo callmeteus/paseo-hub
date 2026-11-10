@@ -1,0 +1,1 @@
+ALTER TABLE "automation_git_sync" ADD COLUMN "commit_message" text;
