@@ -1,3 +1,4 @@
+import { networkInterfaces } from "node:os";
 import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import { z } from "zod";
@@ -5,6 +6,7 @@ import { respondOk, type Result } from "../contract/respond.js";
 import { reportFailure, respondWithFailure } from "../failures/index.js";
 import { getApplication } from "../server/runtime.js";
 import type { HubProviderSnapshot } from "../hub/protocol.js";
+import { listHubListenOrigins, pageOriginFromRequest } from "./listen-origins.js";
 
 const daemonSchema = z.object({
   id: z.string().uuid(),
@@ -16,9 +18,18 @@ const daemonSchema = z.object({
   registeredAt: z.string().datetime(),
   permissions: z.array(z.string()),
 });
-const daemonListSchema = z.object({
+const listenOriginSchema = z.object({
+  kind: z.enum(["local", "lan", "tailscale", "netbird", "other"]),
+  address: z.string(),
+  origin: z.string(),
+  iface: z.string(),
+});
+const daemonListingSchema = z.object({
   daemons: z.array(daemonSchema),
   canManage: z.boolean(),
+});
+const daemonListSchema = daemonListingSchema.extend({
+  listenOrigins: z.array(listenOriginSchema),
 });
 const renameSchema = z.object({ daemonId: z.string().uuid(), slug: z.string() });
 const daemonIdSchema = z.object({ daemonId: z.string().uuid() });
@@ -81,7 +92,15 @@ export const daemonList = createServerFn({ method: "GET" })
           data.organizationSlug,
         );
       }
-      return respondOk(daemonListSchema.parse(await response.json()));
+      const listing = daemonListingSchema.parse(await response.json());
+      return respondOk({
+        ...listing,
+        listenOrigins: listHubListenOrigins({
+          pageOrigin: pageOriginFromRequest(getRequest()) ?? fallbackListenPageOrigin(),
+          bind: process.env["PASEO_HUB_BIND"] ?? "0.0.0.0",
+          interfaces: networkInterfaces(),
+        }),
+      });
     } catch (error) {
       return respondWithFailure(error, daemonContext("daemon.list", data.organizationSlug), {
         fallback: "Hub couldn't load this organization's daemons. Reload the page.",
@@ -185,6 +204,12 @@ export const revokeDaemon = createServerFn({ method: "POST" })
       );
     }
   });
+
+function fallbackListenPageOrigin(): string {
+  const configured = process.env["PASEO_HUB_APP_URL"]?.trim();
+  if (configured !== undefined && configured.length > 0) return configured;
+  return `http://127.0.0.1:${process.env["PORT"] ?? "3000"}`;
+}
 
 function operationRequest(
   method: "GET" | "POST",

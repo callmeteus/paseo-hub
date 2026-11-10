@@ -1,11 +1,11 @@
 /* oxlint-disable typescript-eslint/no-unsafe-type-assertion -- generated routes cannot express server-resolved organization URLs */
-/* oxlint-disable eslint-plugin-react-perf/jsx-no-jsx-as-prop -- the daemon name is the link that opens this registration */
+/* oxlint-disable eslint-plugin-react-perf/jsx-no-jsx-as-prop, eslint-plugin-react-perf/jsx-no-new-object-as-prop -- the daemon name is the link that opens this registration; the empty state's action is this page's connect hint */
 import { useSnapshotQuery } from "../queries/index.js";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { BookOpen } from "lucide-react";
-import { useCallback, useState, type FormEvent } from "react";
+import { BookOpen, Plus } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { ConfirmMenuItem } from "../components/app/confirm-action.js";
 import { CopyField } from "../components/app/copy-field.js";
 import {
@@ -21,9 +21,18 @@ import { FormField } from "../components/app/form-field.js";
 import { PageHeader } from "../components/app/page.js";
 import { RelativeTime } from "../components/app/relative-time.js";
 import { RowActions } from "../components/app/row-actions.js";
+import { SegmentedControl, type SegmentedOption } from "../components/app/segmented-control.js";
 import { StatusPill } from "../components/app/status-pill.js";
 import { TwoLine } from "../components/app/two-line.js";
 import { Button } from "../components/ui/button.js";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "../components/ui/dialog.js";
 import { DropdownMenuItem } from "../components/ui/dropdown-menu.js";
 import {
   daemonList,
@@ -34,7 +43,13 @@ import {
 } from "./functions.js";
 import type { Result } from "../contract/respond.js";
 import { DAEMON_MUTATION_KEY } from "../auth/tenant-mutation.js";
-import { daemonLoginCommand, GRANT_EXECUTE_COMMAND } from "./handoff.js";
+import { CONNECT_COMMAND, daemonLoginCommand, GRANT_EXECUTE_COMMAND } from "./handoff.js";
+import {
+  addressOptionLabel,
+  defaultListenOrigin,
+  groupListenOrigins,
+  type HubListenOrigin,
+} from "./listen-origins.js";
 import { daemonDetailPath } from "../navigation/detail-paths.js";
 import { daemonsQueryKey, refreshDaemons } from "./status.js";
 
@@ -49,34 +64,150 @@ const DAEMON_COLUMNS: readonly DataColumn[] = [
 ];
 const DAEMONS_DESCRIPTION = "Stable daemon identities registered to this organization.";
 const DAEMON_DOCS_URL = "https://paseo.sh/docs/hub/daemons";
-const DAEMONS_EMPTY = {
-  title: "No daemons connected",
-  description:
-    "Hub runs your workflows on machines you own. Log in from the machine where your code lives and the CLI offers to connect it.",
-  action: <ConnectDaemonHint />,
-} as const;
+const ADD_DAEMON_DESCRIPTION =
+  "Hub runs your workflows on machines you own. Run this on the machine you want to add.";
+const DAEMONS_EMPTY_TITLE = "No daemons connected";
+const DAEMONS_EMPTY_DESCRIPTION =
+  "Hub runs your workflows on machines you own. Log in from the machine where your code lives and the CLI offers to connect it.";
+const NO_LISTEN_ORIGINS: readonly HubListenOrigin[] = [];
 
 /**
- * The same handoff the operator saw during setup, for the operator who skipped it: the exact
- * command with this Hub's address already in it, and the page that explains the rest.
+ * The address this page was opened at, which is the address a daemon has to be told.
+ * Read after mount so a server render and the first client paint agree: the login command
+ * appears once the window is known, instead of mismatching the HTML the server sent.
  */
-function ConnectDaemonHint() {
-  // The address the operator reached this Hub at is the address their daemon has to be told.
-  // An empty table is only reached after a client-side query settles, so there is no server
-  // render standing between this and a window.
-  const origin = typeof window === "undefined" ? undefined : window.location.origin;
+function usePageOrigin(): string | undefined {
+  const [origin, setOrigin] = useState<string | undefined>();
+  useEffect(() => {
+    setOrigin(window.location.origin);
+  }, []);
+  return origin;
+}
+
+function DaemonDocsLink() {
   return (
-    <>
-      {origin === undefined ? null : (
-        <CopyField label="Command" value={daemonLoginCommand(origin)} />
+    <Button asChild variant="outline" size="sm">
+      <a href={DAEMON_DOCS_URL} target="_blank" rel="noreferrer">
+        <BookOpen aria-hidden="true" />
+        How to connect a daemon
+      </a>
+    </Button>
+  );
+}
+
+/**
+ * The commands a machine needs to enroll. Login is the usual path; connect is the path when that
+ * machine already has a Hub login. When this Hub is reachable on more than one address, the
+ * operator picks the network the daemon can actually use.
+ */
+export function AddDaemonInstructions({
+  pageOrigin,
+  origins,
+}: {
+  pageOrigin?: string | undefined;
+  origins?: readonly HubListenOrigin[] | undefined;
+}) {
+  const list = origins ?? NO_LISTEN_ORIGINS;
+  const groups = useMemo(() => groupListenOrigins(list), [list]);
+  const initial = defaultListenOrigin(list, pageOrigin);
+  const [kind, setKind] = useState(initial?.kind ?? "");
+  const [address, setAddress] = useState(initial?.address ?? "");
+  useEffect(() => {
+    if (list.length === 0) return;
+    const current = list.find((item) => item.kind === kind && item.address === address);
+    if (current !== undefined) return;
+    const next = defaultListenOrigin(list, pageOrigin);
+    if (next === undefined) return;
+    setKind(next.kind);
+    setAddress(next.address);
+  }, [address, kind, list, pageOrigin]);
+  const selectedGroup = groups.find((group) => group.kind === kind);
+  const selected =
+    selectedGroup?.origins.find((item) => item.address === address) ?? selectedGroup?.origins[0];
+  const commandOrigin = selected?.origin ?? pageOrigin;
+  const kindOptions = useMemo((): readonly SegmentedOption[] => {
+    return groups.map((group) => {
+      const only = group.origins.length === 1 ? group.origins[0] : undefined;
+      return only === undefined
+        ? { value: group.kind, label: group.label }
+        : { value: group.kind, label: group.label, hint: only.address };
+    });
+  }, [groups]);
+  const addressOptions = useMemo(
+    (): readonly SegmentedOption[] =>
+      (selectedGroup?.origins ?? []).map((item) => ({
+        value: item.address,
+        label: addressOptionLabel(selectedGroup?.origins ?? [], item),
+      })),
+    [selectedGroup],
+  );
+  const selectKind = useCallback(
+    (value: string) => {
+      setKind(value);
+      const group = list.filter((item) => item.kind === value);
+      const preferred = group.find((item) => !item.address.includes(":")) ?? group[0];
+      if (preferred !== undefined) setAddress(preferred.address);
+    },
+    [list],
+  );
+  const selectAddress = useCallback((value: string) => {
+    setAddress(value);
+  }, []);
+
+  return (
+    <div className="grid gap-4">
+      {groups.length > 1 ? (
+        <SegmentedControl
+          label="Network"
+          description="The network the daemon can reach this Hub on."
+          value={kind}
+          options={kindOptions}
+          onChange={selectKind}
+        />
+      ) : null}
+      {addressOptions.length > 1 ? (
+        <SegmentedControl
+          label="Address"
+          value={address}
+          options={addressOptions}
+          onChange={selectAddress}
+        />
+      ) : null}
+      {commandOrigin === undefined ? null : (
+        <CopyField label="Login command" value={daemonLoginCommand(commandOrigin)} />
       )}
-      <Button asChild variant="outline" size="sm">
-        <a href={DAEMON_DOCS_URL} target="_blank" rel="noreferrer">
-          <BookOpen aria-hidden="true" />
-          How to connect a daemon
-        </a>
-      </Button>
-    </>
+      <CopyField label="Already logged in" value={CONNECT_COMMAND} />
+      <DaemonDocsLink />
+    </div>
+  );
+}
+
+function AddDaemonButton({ origins }: { origins?: readonly HubListenOrigin[] | undefined }) {
+  const pageOrigin = usePageOrigin();
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        <Button type="button">
+          <Plus aria-hidden="true" />
+          Add daemon
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Add daemon</DialogTitle>
+          <DialogDescription>{ADD_DAEMON_DESCRIPTION}</DialogDescription>
+        </DialogHeader>
+        <AddDaemonInstructions pageOrigin={pageOrigin} origins={origins} />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function DaemonsHeader({ origins }: { origins?: readonly HubListenOrigin[] | undefined }) {
+  return (
+    <PageHeader id="daemons-heading" title="Daemons" description={DAEMONS_DESCRIPTION}>
+      <AddDaemonButton origins={origins} />
+    </PageHeader>
   );
 }
 
@@ -92,6 +223,7 @@ export function DaemonsPanel({
   const queryClient = useQueryClient();
   const queryKey = daemonsQueryKey(accountId, organizationId);
   const loadDaemons = useServerFn(daemonList);
+  const pageOrigin = usePageOrigin();
   const snapshot = useSnapshotQuery({
     queryKey,
     queryFn: () => loadDaemons({ data: { organizationSlug } }),
@@ -149,11 +281,14 @@ export function DaemonsPanel({
   if (snapshot.status === "pending") return <DaemonLoading />;
   if (snapshot.status === "error") {
     return (
-      <FailureAlert
-        title="Daemons unavailable"
-        error={snapshot.error}
-        fallback="Hub did not receive the daemon list. Check your connection and reload the page."
-      />
+      <>
+        <DaemonsHeader />
+        <FailureAlert
+          title="Daemons unavailable"
+          error={snapshot.error}
+          fallback="Hub did not receive the daemon list. Check your connection and reload the page."
+        />
+      </>
     );
   }
   const daemons = snapshot.data;
@@ -161,7 +296,7 @@ export function DaemonsPanel({
   const busy = rename.isPending || revoke.isPending;
   return (
     <>
-      <PageHeader id="daemons-heading" title="Daemons" description={DAEMONS_DESCRIPTION} />
+      <DaemonsHeader origins={daemons.listenOrigins} />
       {revokeFailed ? (
         <FailureAlert
           standalone
@@ -174,7 +309,11 @@ export function DaemonsPanel({
         label="Daemons"
         columns={DAEMON_COLUMNS}
         isEmpty={daemons.daemons.length === 0}
-        empty={DAEMONS_EMPTY}
+        empty={{
+          title: DAEMONS_EMPTY_TITLE,
+          description: DAEMONS_EMPTY_DESCRIPTION,
+          action: <AddDaemonInstructions pageOrigin={pageOrigin} origins={daemons.listenOrigins} />,
+        }}
       >
         {daemons.daemons.map((daemon) => (
           <DaemonRow
@@ -353,7 +492,7 @@ function DaemonStatus({ daemon }: { daemon: BrowserDaemon }) {
 function DaemonLoading() {
   return (
     <>
-      <PageHeader id="daemons-heading" title="Daemons" description={DAEMONS_DESCRIPTION} />
+      <DaemonsHeader />
       <DataTableSkeleton label="Daemons" columns={DAEMON_COLUMNS} />
     </>
   );

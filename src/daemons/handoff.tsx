@@ -9,22 +9,22 @@ import { FailureAlert } from "../components/app/failure-alert.js";
 import { LoadingLine } from "../components/app/loading.js";
 import { Button } from "../components/ui/button.js";
 import { daemonList, type BrowserDaemonList } from "./functions.js";
+import { HOSTED_HUB_ORIGIN } from "./listen-origins.js";
 import { daemonsQueryKey } from "./status.js";
 
 const POLL_INTERVAL_MS = 2_000;
-
-/**
- * The origin `paseo hub login` resolves to when it is given no argument (`DEFAULT_HUB_ORIGIN` in
- * the CLI). Every other Hub has to be named on the command line, so the argument is omitted only
- * when this Hub is that one — no deployment flag, and nothing to configure per instance.
- */
-const HOSTED_HUB_ORIGIN = "https://hub.paseo.sh";
 
 /**
  * What a daemon enrolled without `hub.execute` needs run on it before Hub can launch anything.
  * The CLI's login asks for that permission with a default of No, so this is the common case.
  */
 export const GRANT_EXECUTE_COMMAND = "paseo hub permissions grant hub.execute";
+
+/**
+ * What to run on a machine that already has a Hub login. Login itself offers to connect;
+ * this is the path when that offer was declined, or the login already exists.
+ */
+export const CONNECT_COMMAND = "paseo hub connect";
 
 /** The exact command to paste into a terminal on the machine that will run the agents. */
 export function daemonLoginCommand(origin: string): string {

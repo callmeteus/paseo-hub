@@ -149,6 +149,15 @@ test("a connected-only daemon's grant command gives way before the daemons table
   await page.setViewportSize({ width: 1100, height: 900 });
   await projectApp(page).navigation.openOrganizationSection("Daemons");
 
+  await expect(page.getByRole("button", { name: "Add daemon" })).toBeVisible();
+  await page.getByRole("button", { name: "Add daemon" }).click();
+  const dialog = page.getByRole("dialog", { name: "Add daemon" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText("paseo hub login", { exact: false })).toBeVisible();
+  await expect(dialog.getByText("paseo hub connect", { exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+
   const table = page.getByRole("table", { name: "Daemons" });
   await expect(table.getByTitle("paseo hub permissions grant hub.execute")).toBeAttached();
   await expect(
@@ -194,7 +203,10 @@ async function endsInView(line: Locator): Promise<boolean> {
   return line.evaluate((element) => {
     const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
     let last: Text | null = null;
-    while (walker.nextNode()) last = walker.currentNode as Text;
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      if (node instanceof Text) last = node;
+    }
     if (last === null || last.length === 0) return false;
     const range = document.createRange();
     range.setStart(last, last.length - 1);

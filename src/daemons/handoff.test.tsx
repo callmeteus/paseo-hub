@@ -27,7 +27,7 @@ function daemon(overrides: Partial<BrowserDaemon> = {}): BrowserDaemon {
 }
 
 function listing(daemons: readonly BrowserDaemon[]): BrowserDaemonList {
-  return { daemons: [...daemons], canManage: true };
+  return { daemons: [...daemons], canManage: true, listenOrigins: [] };
 }
 
 function markup(

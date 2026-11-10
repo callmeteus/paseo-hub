@@ -3851,6 +3851,7 @@ class HubUser {
     await expect(this.page).toHaveURL(/\/o\/[^/]+\/daemons$/u);
     await expect(sidebar).toBeHidden();
     await expect(this.page.getByRole("heading", { name: "Daemons", exact: true })).toBeVisible();
+    await expect(this.page.getByRole("button", { name: "Add daemon" })).toBeVisible();
     await expect(this.page.getByText("No daemons connected", { exact: true })).toBeVisible();
     await expect(
       this.page.getByText(`paseo hub login ${this.origin}`, { exact: true }),
