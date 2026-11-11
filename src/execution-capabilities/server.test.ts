@@ -157,7 +157,14 @@ describe("execution capability MCP boundary", () => {
       await client.connect(transport);
       assert.deepEqual(
         (await client.listTools()).tools.map((tool) => tool.name),
-        ["finish_execution", "clear_hard_deadline", "memory_save", "memory_search", "reply"],
+        [
+          "finish_execution",
+          "clear_hard_deadline",
+          "memory_save",
+          "memory_search",
+          "feedback_search",
+          "reply",
+        ],
       );
       const result = await client.callTool({
         name: "finish_execution",
@@ -226,6 +233,11 @@ describe("execution capability MCP boundary", () => {
             name: "memory_search",
             description:
               "Searches this organization's findings. Each result includes the fact, the Slack replies, and the tool call stored with it.",
+          },
+          {
+            name: "feedback_search",
+            description:
+              "Searches thumbs on this organization's agent cards. Each result is a rating, an optional comment, the channel, and the message timestamp. Findings stay in memory_search.",
           },
           {
             name: "reply",
@@ -797,6 +809,7 @@ describe("execution capability MCP boundary", () => {
         "clear_hard_deadline",
         "memory_save",
         "memory_search",
+        "feedback_search",
         "load_instruction",
       ]);
       const loaded = await call("tools/call", {

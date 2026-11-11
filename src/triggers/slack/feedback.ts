@@ -32,6 +32,41 @@ export function slackChoiceArrival(choice: Pick<SlackChoice, "label" | "value">)
  * @param choices - Options the agent asked the person to pick
  * @returns One actions block
  */
+/**
+ * Thumbs on a finished agent card. A click is stored; it does not start a new turn.
+ */
+export function slackFeedbackBlocks(): Record<string, unknown>[] {
+  return [
+    {
+      type: "context_actions",
+      block_id: "paseo_feedback",
+      elements: [
+        {
+          type: "feedback_buttons",
+          action_id: "paseo_feedback",
+          positive_button: {
+            text: { type: "plain_text", text: "Boa" },
+            value: "positive",
+          },
+          negative_button: {
+            text: { type: "plain_text", text: "Ruim" },
+            value: "negative",
+          },
+        },
+      ],
+    },
+  ];
+}
+
+export function slackFeedbackRating(action: {
+  action_id: string;
+  value?: string | undefined;
+}): "positive" | "negative" | undefined {
+  if (action.action_id !== "paseo_feedback") return undefined;
+  if (action.value === "positive" || action.value === "negative") return action.value;
+  return undefined;
+}
+
 export function slackChoiceBlocks(choices: readonly SlackChoice[]): Record<string, unknown>[] {
   return [
     {

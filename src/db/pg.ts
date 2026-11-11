@@ -43,8 +43,10 @@ import type {
   AutomationGitSyncStatus,
   Database,
   InsertOrganizationFindingInput,
+  InsertOrganizationResponseFeedbackInput,
   InsertProjectConfigurationRevisionInput,
   OrganizationFindingRecord,
+  OrganizationResponseFeedbackRecord,
   SaveAutomationGitSyncInput,
   InsertAgentExecutionInput,
   InsertAttachmentInput,
@@ -4616,6 +4618,50 @@ class PgDatabase implements Database {
     return rows.rows.map(toOrganizationFindingRecord);
   }
 
+  async insertOrganizationResponseFeedback(input: InsertOrganizationResponseFeedbackInput) {
+    const rows = await query<OrganizationResponseFeedbackRow>(
+      this.pool,
+      `insert into organization_response_feedback (
+         organization_id, team_id, channel_id, message_ts, execution_id, rating, comment
+       ) values ($1, $2, $3, $4, $5, $6, $7)
+       returning id, organization_id, team_id, channel_id, message_ts, execution_id, rating, comment, created_at`,
+      [
+        input.organizationId,
+        input.teamId,
+        input.channelId,
+        input.messageTs,
+        input.executionId ?? null,
+        input.rating,
+        input.comment ?? null,
+      ],
+    );
+    const row = rows.rows[0];
+    if (row === undefined) throw new Error("response feedback was not saved");
+    return toOrganizationResponseFeedbackRecord(row);
+  }
+
+  async searchOrganizationResponseFeedback(organizationId: string, queryText: string) {
+    const needle = queryText.trim();
+    const pattern = needle.length === 0 ? null : `%${escapeLike(needle)}%`;
+    const rows = await query<OrganizationResponseFeedbackRow>(
+      this.pool,
+      `select id, organization_id, team_id, channel_id, message_ts, execution_id, rating, comment, created_at
+       from organization_response_feedback
+       where organization_id = $1
+         and (
+           $2::text is null
+           or rating ilike $2 escape '\\'
+           or comment ilike $2 escape '\\'
+           or channel_id ilike $2 escape '\\'
+           or message_ts ilike $2 escape '\\'
+         )
+       order by created_at desc
+       limit 20`,
+      [organizationId, pattern],
+    );
+    return rows.rows.map(toOrganizationResponseFeedbackRecord);
+  }
+
   async close(): Promise<void> {
     await this.pool.close();
   }
@@ -4784,6 +4830,37 @@ function toAutomationGitSyncRecord(row: AutomationGitSyncRow): AutomationGitSync
     lastCommitSha: row.last_commit_sha,
     lastStatus: syncStatus(row.last_status),
     lastError: row.last_error,
+  };
+}
+
+interface OrganizationResponseFeedbackRow extends QueryRow {
+  id: string;
+  organization_id: string;
+  team_id: string;
+  channel_id: string;
+  message_ts: string;
+  execution_id: string | null;
+  rating: string;
+  comment: string | null;
+  created_at: Date | string;
+}
+
+function toOrganizationResponseFeedbackRecord(
+  row: OrganizationResponseFeedbackRow,
+): OrganizationResponseFeedbackRecord {
+  if (row.rating !== "positive" && row.rating !== "negative") {
+    throw new Error("response feedback rating is invalid");
+  }
+  return {
+    id: row.id,
+    organizationId: row.organization_id,
+    teamId: row.team_id,
+    channelId: row.channel_id,
+    messageTs: row.message_ts,
+    executionId: row.execution_id,
+    rating: row.rating,
+    comment: row.comment,
+    createdAt: requiredDate(row.created_at),
   };
 }
 

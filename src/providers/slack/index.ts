@@ -146,6 +146,18 @@ export function createSlackRegistration(
       botHolder.current === undefined
         ? Promise.resolve()
         : settleSlackPlanDecision(botHolder.current, input),
+    recordFeedback: async (input) => {
+      if (database === null) return;
+      const connection = await database.findSlackConnection(input.teamId);
+      if (connection === undefined) return;
+      await database.insertOrganizationResponseFeedback({
+        organizationId: connection.organizationId,
+        teamId: input.teamId,
+        channelId: input.channelId,
+        messageTs: input.messageTs,
+        rating: input.rating,
+      });
+    },
     ...slackSocketOptions(options),
   });
   if (database === null) {

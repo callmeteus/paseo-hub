@@ -4,6 +4,8 @@ features:
   bot_user:
     display_name: Paseo
     always_online: false
+  code_channels:
+    enabled: true
 oauth_config:
   scopes:
     bot:
@@ -12,6 +14,7 @@ oauth_config:
       - channels:history
       - channels:read
       - chat:write
+      - code_channels:manage
       - files:read
       - groups:history
       - groups:read

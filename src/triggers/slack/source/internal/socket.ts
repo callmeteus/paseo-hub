@@ -41,6 +41,7 @@ export interface SlackSocketSource extends TriggerSource {
 
 export interface SlackSocketSourceOptions extends SlackEventIntakeOptions {
   settlePlanDecision?: SlackInteractionIntakeOptions["settlePlanDecision"];
+  recordFeedback?: SlackInteractionIntakeOptions["recordFeedback"];
   appToken: string;
   apiUrl?: string;
   random?: () => number;
@@ -324,6 +325,9 @@ export function createSlackSocketSource(options: SlackSocketSourceOptions): Slac
             ...(options.settlePlanDecision === undefined
               ? {}
               : { settlePlanDecision: options.settlePlanDecision }),
+            ...(options.recordFeedback === undefined
+              ? {}
+              : { recordFeedback: options.recordFeedback }),
           })
         ).settlement;
       } catch (error) {

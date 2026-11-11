@@ -180,6 +180,7 @@ describe("daemon enrollment and execution", () => {
         { kind: "mcp", server: "hub", tool: "clear_hard_deadline" },
         { kind: "mcp", server: "hub", tool: "memory_save" },
         { kind: "mcp", server: "hub", tool: "memory_search" },
+        { kind: "mcp", server: "hub", tool: "feedback_search" },
       ],
     });
     assert.deepEqual(agent.env, {
@@ -236,6 +237,7 @@ describe("daemon enrollment and execution", () => {
         { kind: "mcp", server: "hub", tool: "clear_hard_deadline" },
         { kind: "mcp", server: "hub", tool: "memory_save" },
         { kind: "mcp", server: "hub", tool: "memory_search" },
+        { kind: "mcp", server: "hub", tool: "feedback_search" },
         { kind: "mcp", server: "hub", tool: "reply" },
       ],
     });
@@ -251,6 +253,7 @@ describe("daemon enrollment and execution", () => {
         { kind: "mcp", server: "hub", tool: "clear_hard_deadline" },
         { kind: "mcp", server: "hub", tool: "memory_save" },
         { kind: "mcp", server: "hub", tool: "memory_search" },
+        { kind: "mcp", server: "hub", tool: "feedback_search" },
       ],
     });
   });
@@ -344,6 +347,11 @@ describe("daemon enrollment and execution", () => {
             "Searches this organization's findings. Each result includes the fact, the Slack replies, and the tool call stored with it.",
         },
         {
+          name: "feedback_search",
+          description:
+            "Searches thumbs on this organization's agent cards. Each result is a rating, an optional comment, the channel, and the message timestamp. Findings stay in memory_search.",
+        },
+        {
           name: "reply",
           description:
             "Sends a reply to the conversation that triggered this execution. (up to 1 times).",
@@ -390,6 +398,11 @@ describe("daemon enrollment and execution", () => {
           description:
             "Searches this organization's findings. Each result includes the fact, the Slack replies, and the tool call stored with it.",
         },
+        {
+          name: "feedback_search",
+          description:
+            "Searches thumbs on this organization's agent cards. Each result is a rating, an optional comment, the channel, and the message timestamp. Findings stay in memory_search.",
+        },
       ],
     );
     assert.equal(launch.prompt, "Classify the request.");
@@ -431,7 +444,13 @@ describe("daemon enrollment and execution", () => {
     );
     assert.deepEqual(
       (await hub.listExecutionTools(classifier.id)).map(({ name }) => name),
-      ["finish_execution", "clear_hard_deadline", "memory_save", "memory_search"],
+      [
+        "finish_execution",
+        "clear_hard_deadline",
+        "memory_save",
+        "memory_search",
+        "feedback_search",
+      ],
     );
 
     const completion = await hub.callExecutionTool(classifier.id, "finish_execution", {
@@ -464,7 +483,14 @@ describe("daemon enrollment and execution", () => {
     });
     assert.deepEqual(
       (await hub.listExecutionTools(worker.id)).map(({ name }) => name),
-      ["finish_execution", "clear_hard_deadline", "memory_save", "memory_search", "reply"],
+      [
+        "finish_execution",
+        "clear_hard_deadline",
+        "memory_save",
+        "memory_search",
+        "feedback_search",
+        "reply",
+      ],
     );
   });
 
@@ -1889,6 +1915,10 @@ describe("daemon enrollment and execution", () => {
       );
       assert.equal(await hub.completeExecution(execution.id), 200);
       await hub.waitForExecutionStatus(execution.id, "succeeded");
+      // The step names a worktree, so the watch stays until the turn ends and Hub archives it.
+      const recovered = await hub.execution(execution.id);
+      assert.ok(recovered.daemonAgentId);
+      await hub.completeCurrentTurn(recovered.daemonAgentId);
       assert.deepEqual(
         await hub.runtimeResources({
           executionSubscriptions: 0,

@@ -1516,6 +1516,30 @@ export const organizationFindings = pgTable(
   ],
 );
 
+/** A thumb on an agent card. This is not a finding and `memory_search` does not read it. */
+export const organizationResponseFeedback = pgTable(
+  "organization_response_feedback",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    teamId: text("team_id").notNull(),
+    channelId: text("channel_id").notNull(),
+    messageTs: text("message_ts").notNull(),
+    executionId: uuid("execution_id"),
+    rating: text("rating").notNull(),
+    comment: text("comment"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("organization_response_feedback_organization_idx").on(
+      table.organizationId,
+      table.createdAt,
+    ),
+  ],
+);
+
 export const executionCredentialLeases = pgTable(
   "execution_credential_leases",
   {

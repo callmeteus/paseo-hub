@@ -731,6 +731,69 @@ describe("Slack Web API client", () => {
       prompts: [{ title: "Status", message: "What is the status?" }],
     });
   });
+
+  it("opens a code channel, publishes the diff, and archives without a thread", async () => {
+    const requests: Array<{ url: string; body: unknown }> = [];
+    const client = createSlackBotClient({
+      tokenForWorkspace: () => Promise.resolve("xoxb-secret"),
+      fetch: async (input, init) => {
+        requests.push({
+          url: requestUrl(input),
+          body: typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
+        });
+        return Response.json({ ok: true, channel_id: "CCODE" });
+      },
+    });
+    const created = await client.createCodeChannel?.({
+      organizationId: "org-1",
+      teamId: "T1",
+      name: "Pedido",
+      sessionId: "exec-1",
+      originChannelId: "C1",
+      originMessageTs: "1.1",
+    });
+    assert.deepEqual(created, { ok: true, channel: "CCODE" });
+    await client.setCodeChannelView?.({
+      organizationId: "org-1",
+      teamId: "T1",
+      channelId: "CCODE",
+      patch: "diff --git a/a b/a",
+      baseBranch: "main",
+      headBranch: "agent",
+    });
+    await client.archiveCodeChannel?.({
+      organizationId: "org-1",
+      teamId: "T1",
+      channelId: "CCODE",
+      summaryMessageTs: "1.2",
+    });
+    await client.setAgentSessionStatus?.({
+      organizationId: "org-1",
+      teamId: "T1",
+      channelId: "CCODE",
+      status: "processing",
+    });
+    assert.deepEqual(
+      requests.map((request) => request.body),
+      [
+        {
+          name: "Pedido",
+          session_id: "exec-1",
+          origin_channel_id: "C1",
+          origin_message_ts: "1.1",
+        },
+        {
+          channel_id: "CCODE",
+          type: "diff",
+          content: "diff --git a/a b/a",
+          base_branch: "main",
+          head_branch: "agent",
+        },
+        { channel_id: "CCODE", summary_message_ts: "1.2" },
+        { channel_id: "CCODE", status: "processing" },
+      ],
+    );
+  });
 });
 
 function requestUrl(input: RequestInfo | URL): string {

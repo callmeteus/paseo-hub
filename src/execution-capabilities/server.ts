@@ -24,6 +24,7 @@ import {
   loadInstructionToolName,
   memorySaveToolName,
   memorySearchToolName,
+  feedbackSearchToolName,
   type MaterializedOutputCapability,
   type OutputExecutorRegistry,
   type OutputToolSchema,
@@ -270,6 +271,7 @@ async function callExecutionTool(
   if (toolName === clearHardDeadlineToolName) return clearHardDeadlineCall(options, execution);
   if (toolName === memorySaveToolName) return memorySaveCall(options, execution, args);
   if (toolName === memorySearchToolName) return memorySearchCall(options, execution, args);
+  if (toolName === feedbackSearchToolName) return feedbackSearchCall(options, execution, args);
   if (toolName === loadInstructionToolName) return loadInstructionCall(execution, args);
   if (toolName === finishExecutionToolName)
     return finishExecutionCall(options, execution, token, args, materializedOutputs);
@@ -313,6 +315,36 @@ async function memorySaveCall(
       executionId: execution.id,
     });
     return toolFailure(withReference("The finding could not be saved.", failure.requestId));
+  }
+}
+
+async function feedbackSearchCall(
+  options: Pick<ExecutionCapabilityOptions, "database">,
+  execution: AgentExecutionRecord,
+  args: Record<string, unknown>,
+) {
+  try {
+    const rows = await options.database.searchOrganizationResponseFeedback(
+      execution.organizationId,
+      findingQuery(args["query"]),
+    );
+    if (rows.length === 0) return toolSuccess("No feedback.");
+    return toolSuccess(
+      rows
+        .map((row) =>
+          [row.rating, row.comment ?? "", row.channelId, row.messageTs]
+            .filter((part) => part.length > 0)
+            .join(" "),
+        )
+        .join("\n"),
+    );
+  } catch (error) {
+    const failure = reportFailure(error, {
+      operation: "execution_capability.feedback_search",
+      component: "execution_capabilities",
+      executionId: execution.id,
+    });
+    return toolFailure(withReference("Feedback could not be searched.", failure.requestId));
   }
 }
 

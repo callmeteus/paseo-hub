@@ -13,6 +13,7 @@ import {
   blocksAfterChoice,
   slackChoiceArrival,
   slackChoiceFromAction,
+  slackFeedbackRating,
   type SlackChoice,
 } from "./feedback.js";
 import {
@@ -74,8 +75,17 @@ export interface SettleSlackPlanDecisionInput {
   label: string;
 }
 
+export interface RecordSlackFeedbackInput {
+  teamId: string;
+  channelId: string;
+  messageTs: string;
+  rating: "positive" | "negative";
+}
+
 export interface SlackInteractionIntakeOptions extends SlackEventIntakeOptions {
   settlePlanDecision?: (this: void, input: SettleSlackPlanDecisionInput) => Promise<void>;
+  /** Stores a thumb. The click does not start a run. */
+  recordFeedback?: (this: void, input: RecordSlackFeedbackInput) => Promise<void>;
 }
 
 export interface SlackInteractionIntakeResult {
@@ -170,6 +180,18 @@ export async function intakeSlackInteraction(
     return {};
   }
   if (parsed.data.api_app_id !== options.appId) throw new SlackEventIntakeValidationError();
+  const thumb = parsed.data.actions
+    .map((candidate) => slackFeedbackRating(candidate))
+    .find((rating) => rating !== undefined);
+  if (thumb !== undefined) {
+    await options.recordFeedback?.({
+      teamId: parsed.data.team.id,
+      channelId: parsed.data.channel.id,
+      messageTs: parsed.data.message.ts,
+      rating: thumb,
+    });
+    return {};
+  }
   const action = parsed.data.actions
     .map((candidate) => ({ candidate, choice: slackChoiceFromAction(candidate) }))
     .find((item) => item.choice !== undefined);

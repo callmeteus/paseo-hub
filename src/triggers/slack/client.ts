@@ -9,6 +9,7 @@ const SlackApiResponseSchema = z
 const SlackApiResultSchema = SlackApiResponseSchema.extend({
   warning: z.string().optional(),
   channel: z.string().optional(),
+  channel_id: z.string().optional(),
   ts: z.string().optional(),
 });
 const SlackFileSchema = z
@@ -197,7 +198,8 @@ export interface SlackBotClient {
     organizationId: string;
     teamId: string;
     channelId: string;
-    threadTs: string;
+    /** Omitted inside a code channel. Slack rejects a separate thread session there. */
+    threadTs?: string;
     status: SlackAgentSessionStatus;
     title?: string;
   }): Promise<SlackApiResult>;
@@ -255,6 +257,38 @@ export interface SlackBotClient {
    * Replaces the suggested prompts on the latest message in the channel.
    * An agent app ignores `thread_ts`, so this call never sends one.
    */
+  /**
+   * Opens a Slack Code channel for this run. `missing_scope` means the app was not
+   * reinstalled with `code_channels:manage`; the thread stream continues.
+   */
+  createCodeChannel?(input: {
+    organizationId: string;
+    teamId: string;
+    name: string;
+    sessionId: string;
+    originChannelId: string;
+    originMessageTs: string;
+  }): Promise<SlackApiResult>;
+  setCodeChannelProperties?(input: {
+    organizationId: string;
+    teamId: string;
+    channelId: string;
+    items: readonly { key: string; label: string }[];
+  }): Promise<SlackApiResult>;
+  setCodeChannelView?(input: {
+    organizationId: string;
+    teamId: string;
+    channelId: string;
+    patch: string;
+    baseBranch?: string;
+    headBranch?: string;
+  }): Promise<SlackApiResult>;
+  archiveCodeChannel?(input: {
+    organizationId: string;
+    teamId: string;
+    channelId: string;
+    summaryMessageTs?: string;
+  }): Promise<SlackApiResult>;
   setSuggestedPrompts?(input: {
     organizationId: string;
     teamId: string;
@@ -326,7 +360,9 @@ export function createSlackBotClient(options: {
       ok: result.ok,
       ...(result.error === undefined ? {} : { error: result.error }),
       ...(result.warning === undefined ? {} : { warning: result.warning }),
-      ...(result.channel === undefined ? {} : { channel: result.channel }),
+      ...(result.channel === undefined && result.channel_id === undefined
+        ? {}
+        : { channel: result.channel ?? result.channel_id }),
       ...(result.ts === undefined ? {} : { ts: result.ts }),
     };
   }
@@ -613,7 +649,7 @@ export function createSlackBotClient(options: {
     organizationId: string;
     teamId: string;
     channelId: string;
-    threadTs: string;
+    threadTs?: string;
     status: SlackAgentSessionStatus;
     title?: string;
   }): Promise<SlackApiResult> {
@@ -722,6 +758,75 @@ export function createSlackBotClient(options: {
     });
   }
 
+  async function createCodeChannel(input: {
+    organizationId: string;
+    teamId: string;
+    name: string;
+    sessionId: string;
+    originChannelId: string;
+    originMessageTs: string;
+  }): Promise<SlackApiResult> {
+    return postAgentJson(input.organizationId, input.teamId, "agents.conversations.create", {
+      name: input.name,
+      session_id: input.sessionId,
+      origin_channel_id: input.originChannelId,
+      origin_message_ts: input.originMessageTs,
+    });
+  }
+
+  async function setCodeChannelProperties(input: {
+    organizationId: string;
+    teamId: string;
+    channelId: string;
+    items: readonly { key: string; label: string }[];
+  }): Promise<SlackApiResult> {
+    return postAgentJson(input.organizationId, input.teamId, "agents.conversations.setProperties", {
+      channel_id: input.channelId,
+      code_channel: {
+        context_bar_items: input.items.map((item) => ({ key: item.key, label: item.label })),
+      },
+    });
+  }
+
+  async function setCodeChannelView(input: {
+    organizationId: string;
+    teamId: string;
+    channelId: string;
+    patch: string;
+    baseBranch?: string;
+    headBranch?: string;
+  }): Promise<SlackApiResult> {
+    return postAgentJson(
+      input.organizationId,
+      input.teamId,
+      "agents.conversations.setView",
+      definedBody({
+        channel_id: input.channelId,
+        type: "diff",
+        content: input.patch,
+        base_branch: input.baseBranch,
+        head_branch: input.headBranch,
+      }),
+    );
+  }
+
+  async function archiveCodeChannel(input: {
+    organizationId: string;
+    teamId: string;
+    channelId: string;
+    summaryMessageTs?: string;
+  }): Promise<SlackApiResult> {
+    return postAgentJson(
+      input.organizationId,
+      input.teamId,
+      "agents.conversations.archive",
+      definedBody({
+        channel_id: input.channelId,
+        summary_message_ts: input.summaryMessageTs,
+      }),
+    );
+  }
+
   async function setSuggestedPrompts(input: {
     organizationId: string;
     teamId: string;
@@ -756,6 +861,10 @@ export function createSlackBotClient(options: {
     appendAgentStream,
     stopAgentStream,
     updateMessage,
+    createCodeChannel,
+    setCodeChannelProperties,
+    setCodeChannelView,
+    archiveCodeChannel,
     setSuggestedPrompts,
     addReaction: (input) =>
       call(input.organizationId, input.teamId, "reactions.add", {

@@ -60,6 +60,7 @@ export const clearHardDeadlineToolName = "clear_hard_deadline" as const;
 export const loadInstructionToolName = "load_instruction" as const;
 export const memorySaveToolName = "memory_save" as const;
 export const memorySearchToolName = "memory_search" as const;
+export const feedbackSearchToolName = "feedback_search" as const;
 
 const clearHardDeadlineTool: OutputToolDefinition = {
   name: clearHardDeadlineToolName,
@@ -110,6 +111,19 @@ const memorySaveTool: OutputToolDefinition = {
       },
     },
     required: ["statement", "replies", "tool"],
+    additionalProperties: false,
+  },
+};
+
+const feedbackSearchTool: OutputToolDefinition = {
+  name: feedbackSearchToolName,
+  description:
+    "Searches thumbs on this organization's agent cards. Each result is a rating, an optional comment, the channel, and the message timestamp. Findings stay in memory_search.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      query: { type: "string" },
+    },
     additionalProperties: false,
   },
 };
@@ -253,6 +267,7 @@ export function executionToolDefinitions(
     clearHardDeadlineTool,
     memorySaveTool,
     memorySearchTool,
+    feedbackSearchTool,
     ...(loadInstructions ? [loadInstructionTool] : []),
     ...materializedOutputs.map(({ declaration, capability }) => ({
       name: capability.tool.name,

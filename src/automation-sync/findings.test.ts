@@ -33,4 +33,22 @@ describe("organization findings", () => {
     assert.match(formatFindings(found), /mensagem citada/);
     assert.deepEqual(await database.searchOrganizationFindings("other", "engage"), []);
   });
+
+  it("keeps a thumb out of the findings search", async () => {
+    const database = createMemoryDatabase();
+    await database.insertOrganizationResponseFeedback({
+      organizationId: "org",
+      teamId: "T1",
+      channelId: "C1",
+      messageTs: "1.1",
+      rating: "negative",
+      comment: "the answer missed the date",
+    });
+    assert.deepEqual(await database.searchOrganizationFindings("org", "date"), []);
+    const feedback = await database.searchOrganizationResponseFeedback("org", "date");
+    assert.equal(feedback.length, 1);
+    assert.equal(feedback[0]?.rating, "negative");
+    assert.equal(feedback[0]?.channelId, "C1");
+    assert.equal(feedback[0]?.messageTs, "1.1");
+  });
 });

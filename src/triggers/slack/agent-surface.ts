@@ -15,7 +15,12 @@ import type {
   SlackStreamSource,
   SlackStreamTaskStatus,
 } from "./client.js";
-import { slackChoiceBlocks, SLACK_CHOICE_LIMIT, type SlackChoice } from "./feedback.js";
+import {
+  slackChoiceBlocks,
+  slackFeedbackBlocks,
+  SLACK_CHOICE_LIMIT,
+  type SlackChoice,
+} from "./feedback.js";
 
 const STREAM_ROTATE_AFTER_MS = 9 * 60 * 1000;
 const PROCESSING_RENEW_AFTER_MS = 50 * 60 * 1000;
@@ -160,6 +165,9 @@ interface ThreadBook {
   processingAt: number | undefined;
   heldSession: SlackAgentSessionStatus | undefined;
   agentClosed: boolean;
+  codeChannelId: string | undefined;
+  /** `missing_scope` or `not_agent_channel` already answered. The thread stream stays. */
+  codeChannelSkipped: boolean;
 }
 
 interface ExecutionStream {
@@ -170,6 +178,10 @@ interface ExecutionStream {
   ts: string | undefined;
   openedAt: number | undefined;
   tasks: Map<string, TaskState>;
+  /** Task ids the model set with slack.agent.stage. The mirror does not overwrite them. */
+  explicitTaskIds: Set<string>;
+  /** Full assistant text already streamed, keyed by message id. */
+  assistantText: Map<string, string>;
 }
 
 const threads = new Map<string, ThreadBook>();
@@ -314,16 +326,21 @@ export async function finishSlackAgentRun(
   }
   const api = requireApi(client);
   const open = streamsFor(target);
-  if (kind === "success" && book?.agentClosed === true) {
-    await finishHeldSession(api, target, open, book);
-    return;
+  const summaryTs = open.find((stream) => stream.ts !== undefined)?.ts;
+  try {
+    if (kind === "success" && book?.agentClosed === true) {
+      await finishHeldSession(api, target, open, book);
+      return;
+    }
+    if (kind === "failure") {
+      await finishFailedSession(api, target, open, book);
+      return;
+    }
+    await closeOpenStreams(api, target, open, "active");
+    forgetStreams(target);
+  } finally {
+    await archiveOpenedCodeChannel(client, target, book, summaryTs);
   }
-  if (kind === "failure") {
-    await finishFailedSession(api, target, open, book);
-    return;
-  }
-  await closeOpenStreams(api, target, open, "active");
-  forgetStreams(target);
 }
 
 /** Leaves a session the model already parked, and closes a stream that is still open. */
@@ -741,6 +758,7 @@ async function publishStage(
   args: z.infer<typeof StageArgsSchema>,
 ): Promise<void> {
   const stream = executionStream(executionId, target);
+  stream.explicitTaskIds.add(args.id);
   if (args.plan_title !== undefined && stream.display === "plan")
     stream.planTitle = args.plan_title;
   const task = rememberTask(stream, {
@@ -791,6 +809,231 @@ async function publishSay(
 ): Promise<void> {
   const stream = executionStream(executionId, target);
   await deliver(api, book, target, stream, [{ type: "markdown_text", text: args.text }]);
+}
+
+/**
+ * Draws a timeline row the agent already emitted onto the Slack card.
+ *
+ * A step that opted into `slack_agent` gets this without the model calling
+ * `slack.agent.stage`. An explicit stage call keeps the same task id.
+ */
+export async function projectSlackAgentTimeline(input: {
+  executionId: string;
+  outputContext: unknown;
+  triggerContext: unknown;
+  item: unknown;
+}): Promise<void> {
+  if (boundClient === undefined) return;
+  const target = targetFromRun(input.outputContext, input.triggerContext);
+  if (target === undefined) return;
+  const book = threads.get(threadKey(target));
+  if (book?.fallback === true) return;
+  const api = agentApi(boundClient);
+  if (api === undefined) return;
+  if (!isRecord(input.item) || typeof input.item["type"] !== "string") return;
+  try {
+    if (input.item["type"] === "todo") {
+      await projectTodo(api, bookFor(target), target, input.executionId, input.item);
+      return;
+    }
+    if (input.item["type"] === "assistant_message") {
+      await projectAssistantText(api, bookFor(target), target, input.executionId, input.item);
+      return;
+    }
+    if (input.item["type"] === "diff") {
+      await projectDiff(boundClient, bookFor(target), target, input.executionId, input.item);
+    }
+  } catch (error) {
+    if (error instanceof SlackAgentSurfaceError) return;
+    reportSlackFailure(error, "slack.agent.mirror", target);
+  }
+}
+
+async function projectTodo(
+  api: SlackAgentApi,
+  book: ThreadBook,
+  target: SlackAgentRunTarget,
+  executionId: string,
+  item: Record<string, unknown>,
+): Promise<void> {
+  const stream = executionStream(executionId, target);
+  const tasks = Array.isArray(item["items"]) ? item["items"] : [];
+  const chunks: SlackStreamChunk[] = [];
+  if (stream.display === "plan" && stream.planTitle !== undefined && stream.tasks.size === 0) {
+    chunks.push({ type: "plan_update", title: stream.planTitle });
+  }
+  for (const entry of tasks) {
+    if (!isRecord(entry)) continue;
+    const title = typeof entry["text"] === "string" ? entry["text"].trim() : "";
+    if (title.length === 0) continue;
+    const id = typeof entry["id"] === "string" && entry["id"].length > 0 ? entry["id"] : title;
+    if (stream.explicitTaskIds.has(id)) continue;
+    const task = rememberTask(stream, {
+      id,
+      title,
+      status: slackTaskStatus(entry["status"], entry["completed"] === true),
+    });
+    chunks.push(taskChunk(task));
+  }
+  if (chunks.length === 0) return;
+  await ensureCodeChannel(boundClient, book, target, executionId, chunks[0]);
+  await deliver(api, book, target, stream, chunks);
+}
+
+async function projectAssistantText(
+  api: SlackAgentApi,
+  book: ThreadBook,
+  target: SlackAgentRunTarget,
+  executionId: string,
+  item: Record<string, unknown>,
+): Promise<void> {
+  const text = typeof item["text"] === "string" ? item["text"] : "";
+  if (text.length === 0) return;
+  const messageId = typeof item["messageId"] === "string" ? item["messageId"] : "assistant";
+  const stream = executionStream(executionId, target);
+  const previous = stream.assistantText.get(messageId) ?? "";
+  const next = text.startsWith(previous) ? text.slice(previous.length) : text;
+  stream.assistantText.set(messageId, previous + next);
+  if (next.length === 0) return;
+  await deliver(api, book, target, stream, [{ type: "markdown_text", text: next }]);
+}
+
+async function projectDiff(
+  client: SlackBotClient | undefined,
+  book: ThreadBook,
+  target: SlackAgentRunTarget,
+  executionId: string,
+  item: Record<string, unknown>,
+): Promise<void> {
+  const patch = typeof item["patch"] === "string" ? item["patch"] : "";
+  if (patch.trim().length === 0) return;
+  const channelId = await ensureCodeChannel(client, book, target, executionId, undefined);
+  if (channelId === undefined || client?.setCodeChannelView === undefined) return;
+  const baseBranch = typeof item["baseBranch"] === "string" ? item["baseBranch"] : undefined;
+  const headBranch = typeof item["headBranch"] === "string" ? item["headBranch"] : undefined;
+  const viewed = await client.setCodeChannelView({
+    organizationId: target.organizationId,
+    teamId: target.teamId,
+    channelId,
+    patch,
+    ...(baseBranch === undefined ? {} : { baseBranch }),
+    ...(headBranch === undefined ? {} : { headBranch }),
+  });
+  if (!viewed.ok) {
+    reportSlackFailure(
+      new Error(`Slack API ${viewed.error ?? "unknown_error"}`),
+      "slack.agent.code_channel.view",
+      target,
+    );
+  }
+}
+
+async function ensureCodeChannel(
+  client: SlackBotClient | undefined,
+  book: ThreadBook,
+  target: SlackAgentRunTarget,
+  executionId: string,
+  firstChunk: SlackStreamChunk | undefined,
+): Promise<string | undefined> {
+  if (book.codeChannelId !== undefined) return book.codeChannelId;
+  if (book.codeChannelSkipped || client?.createCodeChannel === undefined) return undefined;
+  const title =
+    target.block.plan_title ??
+    target.block.session_title ??
+    (firstChunk !== undefined && "title" in firstChunk ? firstChunk.title : "Code");
+  const created = await client.createCodeChannel({
+    organizationId: target.organizationId,
+    teamId: target.teamId,
+    name: title.slice(0, 80),
+    sessionId: executionId,
+    originChannelId: target.channelId,
+    originMessageTs: target.threadTs,
+  });
+  if (!created.ok || created.channel === undefined) {
+    if (
+      created.error === "missing_scope" ||
+      created.error === "not_agent_channel" ||
+      created.error === "feature_disabled"
+    ) {
+      book.codeChannelSkipped = true;
+    }
+    return undefined;
+  }
+  book.codeChannelId = created.channel;
+  if (client.setAgentSessionStatus !== undefined) {
+    await client.setAgentSessionStatus({
+      organizationId: target.organizationId,
+      teamId: target.teamId,
+      channelId: created.channel,
+      status: "processing",
+    });
+  }
+  if (client.setCodeChannelProperties !== undefined) {
+    await client.setCodeChannelProperties({
+      organizationId: target.organizationId,
+      teamId: target.teamId,
+      channelId: created.channel,
+      items: [{ key: "session", label: title.slice(0, 80) }],
+    });
+  }
+  return created.channel;
+}
+
+async function archiveOpenedCodeChannel(
+  client: SlackBotClient,
+  target: SlackAgentRunTarget,
+  book: ThreadBook | undefined,
+  messageTs: string | undefined,
+): Promise<void> {
+  if (book?.codeChannelId === undefined || client.archiveCodeChannel === undefined) return;
+  try {
+    await client.archiveCodeChannel({
+      organizationId: target.organizationId,
+      teamId: target.teamId,
+      channelId: book.codeChannelId,
+      ...(messageTs === undefined ? {} : { summaryMessageTs: messageTs }),
+    });
+  } catch (error) {
+    reportSlackFailure(error, "slack.agent.code_channel.archive", target);
+  }
+}
+
+function slackTaskStatus(status: unknown, completed: boolean): SlackStreamTaskStatus {
+  if (status === "in_progress") return "in_progress";
+  if (status === "completed" || status === "complete" || completed) return "complete";
+  if (status === "error") return "error";
+  return "pending";
+}
+
+function targetFromRun(
+  outputContext: unknown,
+  triggerContext: unknown,
+): SlackAgentRunTarget | undefined {
+  if (!isRecord(outputContext)) return undefined;
+  const block = outputContext["slackAgent"];
+  if (!isRecord(block)) return undefined;
+  const organizationId = outputContext["organizationId"];
+  const teamId = outputContext["teamId"];
+  const channelId = outputContext["channelId"];
+  const threadTs = outputContext["threadTs"];
+  if (
+    typeof organizationId !== "string" ||
+    typeof teamId !== "string" ||
+    typeof channelId !== "string" ||
+    typeof threadTs !== "string"
+  ) {
+    return undefined;
+  }
+  const parsed = SlackAgentBlockSchema.safeParse(block);
+  if (!parsed.success) return undefined;
+  return {
+    organizationId,
+    teamId,
+    channelId,
+    threadTs,
+    authorId: readAuthorId(triggerContext),
+    block: parsed.data,
+  };
 }
 
 async function publishFinish(
@@ -895,7 +1138,12 @@ async function closeModelStream(
   text: string | undefined,
   choices: readonly SlackChoice[] | undefined,
 ): Promise<void> {
-  const blocks = choices === undefined ? undefined : slackChoiceBlocks(choices);
+  const choiceBlocks = choices === undefined ? [] : slackChoiceBlocks(choices);
+  const feedback = session === "processing" ? [] : slackFeedbackBlocks();
+  const blocks =
+    (stream?.ts !== undefined && feedback.length > 0) || choiceBlocks.length > 0
+      ? [...choiceBlocks, ...feedback]
+      : undefined;
   if (stream?.ts !== undefined) {
     const chunks: SlackStreamChunk[] = text === undefined ? [] : [{ type: "markdown_text", text }];
     const stopped = await api.stopAgentStream({
@@ -1020,12 +1268,14 @@ async function closeStream(
   session: SlackAgentSessionStatus,
 ): Promise<void> {
   if (stream.ts === undefined) return;
+  const blocks = session === "processing" ? undefined : slackFeedbackBlocks();
   const stopped = await api.stopAgentStream({
     organizationId: target.organizationId,
     teamId: target.teamId,
     channelId: target.channelId,
     streamTs: stream.ts,
     sessionStatus: session,
+    ...(blocks === undefined ? {} : { blocks }),
   });
   stream.ts = undefined;
   if (stopped.ok || stopped.error === "message_not_in_streaming_state") return;
@@ -1168,6 +1418,8 @@ function executionStream(executionId: string, target: SlackAgentRunTarget): Exec
     ts: undefined,
     openedAt: undefined,
     tasks: new Map(),
+    explicitTaskIds: new Set(),
+    assistantText: new Map(),
   };
   streams.set(executionId, created);
   return created;
@@ -1215,6 +1467,8 @@ function bookFor(target: SlackAgentRunTarget): ThreadBook {
     processingAt: undefined,
     heldSession: undefined,
     agentClosed: false,
+    codeChannelId: undefined,
+    codeChannelSkipped: false,
   };
   threads.set(key, created);
   return created;

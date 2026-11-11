@@ -51,7 +51,9 @@ import type {
   AutomationGitSyncResultInput,
   GitHubInstallationSyncOwner,
   InsertOrganizationFindingInput,
+  InsertOrganizationResponseFeedbackInput,
   OrganizationFindingRecord,
+  OrganizationResponseFeedbackRecord,
   SaveAutomationGitSyncInput,
   GitHubInstallationSyncClaim,
   GitHubLifecycleReceiptClaimInput,
@@ -239,6 +241,7 @@ class MemoryDatabase implements Database {
   private readonly githubRepositories = new Map<string, GitHubRepositoryRecord>();
   private readonly automationGitSync = new Map<string, AutomationGitSyncRecord>();
   private readonly organizationFindings: OrganizationFindingRecord[] = [];
+  private readonly organizationResponseFeedback: OrganizationResponseFeedbackRecord[] = [];
   private readonly githubConnections = new Map<number, GitHubConnectionRecord>();
   private readonly discordConnections = new Map<string, DiscordConnectionRecord>();
   private readonly slackConnections = new Map<string, SlackConnectionRecord>();
@@ -3574,6 +3577,37 @@ class MemoryDatabase implements Database {
     return this.organizationFindings
       .filter((finding) => finding.organizationId === organizationId)
       .filter((finding) => needle.length === 0 || findingText(finding).includes(needle))
+      .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
+      .slice(0, 20);
+  }
+
+  async insertOrganizationResponseFeedback(input: InsertOrganizationResponseFeedbackInput) {
+    const saved: OrganizationResponseFeedbackRecord = {
+      id: randomUUID(),
+      organizationId: input.organizationId,
+      teamId: input.teamId,
+      channelId: input.channelId,
+      messageTs: input.messageTs,
+      executionId: input.executionId ?? null,
+      rating: input.rating,
+      comment: input.comment ?? null,
+      createdAt: new Date(),
+    };
+    this.organizationResponseFeedback.push(saved);
+    return saved;
+  }
+
+  async searchOrganizationResponseFeedback(organizationId: string, query: string) {
+    const needle = query.trim().toLowerCase();
+    return this.organizationResponseFeedback
+      .filter((row) => row.organizationId === organizationId)
+      .filter((row) => {
+        if (needle.length === 0) return true;
+        return [row.rating, row.comment ?? "", row.channelId, row.messageTs]
+          .join("\n")
+          .toLowerCase()
+          .includes(needle);
+      })
       .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
       .slice(0, 20);
   }

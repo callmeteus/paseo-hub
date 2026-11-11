@@ -28,6 +28,7 @@ import {
 import { logger as defaultLogger } from "../logger.js";
 import { MAX_EXPLICIT_AGENT_TITLE_CHARS } from "@getpaseo/protocol/agent-title-limits";
 import { reportFailure } from "../failures/index.js";
+import { projectSlackAgentTimeline } from "../triggers/slack/agent-surface.js";
 import { executionFeatureValues, type TriggerProvider } from "../triggers/index.js";
 import type { ExecutionAuthority } from "../execution-authority/index.js";
 import { OutputExecutorRegistry } from "../execution-capabilities/outputs.js";
@@ -672,6 +673,29 @@ export class DaemonDispatchLifecycle {
     return assertNeverAgentStreamEvent(event);
   }
 
+  /**
+   * Projects a timeline row onto the Slack card when this run opted into `slack_agent`.
+   * A Slack error stays in the failure log and does not fail the execution.
+   */
+  private async mirrorSlackAgentTimeline(executionId: string, item: unknown): Promise<void> {
+    try {
+      const execution = await this.options.database.findAgentExecutionById(executionId);
+      if (execution === undefined) return;
+      await projectSlackAgentTimeline({
+        executionId,
+        outputContext: execution.outputContext,
+        triggerContext: execution.triggerContext,
+        item,
+      });
+    } catch (error) {
+      reportFailure(
+        error,
+        { operation: "slack.agent.mirror", component: "daemons" },
+        { diagnostic: { executionId } },
+      );
+    }
+  }
+
   private async handleDaemonEvent(
     executionId: string,
     daemonId: string,
@@ -707,6 +731,7 @@ export class DaemonDispatchLifecycle {
         await this.acknowledgeAgentExecutionHubAction(executionId, event.agentId, observedAt);
       } else if (event.event.type === "timeline") {
         await this.acknowledgeAgentExecutionHubAction(executionId, event.agentId, observedAt);
+        await this.mirrorSlackAgentTimeline(executionId, event.event.item);
       }
       return;
     }

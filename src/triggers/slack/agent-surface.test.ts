@@ -6,6 +6,7 @@ import {
   bindSlackAgentClient,
   createSlackAgentExecutor,
   finishSlackAgentRun,
+  projectSlackAgentTimeline,
   noteSlackAgentSessionStopped,
   resetSlackAgentSurfaceForTests,
   setSlackAgentClockForTests,
@@ -233,7 +234,7 @@ describe("Slack agent surface", () => {
     await beginSlackAgentRun(plain.client, target);
     await runTool(plain.client, "slack.agent.say", { text: "Plan." }, context(block));
     await runTool(plain.client, "slack.agent.finish", { session: "suspended" }, context(block));
-    assert.equal(lastCall(plain.calls, "stop")?.input.blocks, undefined);
+    assert.equal(lastCall(plain.calls, "stop")?.input.blocks?.[0]?.["block_id"], "paseo_feedback");
 
     resetSlackAgentSurfaceForTests();
     const closed = surfaceClient();
@@ -289,7 +290,7 @@ describe("Slack agent surface", () => {
       context(block),
     );
     assert.equal(lastCall(failed.calls, "stop")?.input.sessionStatus, "active");
-    assert.equal(lastCall(failed.calls, "stop")?.input.blocks, undefined);
+    assert.equal(lastCall(failed.calls, "stop")?.input.blocks?.[0]?.["block_id"], "paseo_feedback");
 
     resetSlackAgentSurfaceForTests();
     const idle = surfaceClient();
@@ -297,7 +298,7 @@ describe("Slack agent surface", () => {
     await runTool(idle.client, "slack.agent.say", { text: "Plan." }, context(block));
     await finishSlackAgentRun(idle.client, target, "success");
     assert.equal(lastCall(idle.calls, "stop")?.input.sessionStatus, "active");
-    assert.equal(lastCall(idle.calls, "stop")?.input.blocks, undefined);
+    assert.equal(lastCall(idle.calls, "stop")?.input.blocks?.[0]?.["block_id"], "paseo_feedback");
 
     resetSlackAgentSurfaceForTests();
     const asked = surfaceClient();
@@ -335,6 +336,65 @@ describe("Slack agent surface", () => {
     await noteSlackAgentSessionStopped({ teamId: "T1", channelId: "C1", threadTs: "1.1" });
     assert.equal(lastCall(stopped.calls, "stop")?.input.sessionStatus, "active");
     assert.equal(lastCall(stopped.calls, "stop")?.input.blocks, undefined);
+  });
+
+  it("mirrors a todo and an assistant delta, and leaves an explicit stage alone", async () => {
+    const { client, calls } = surfaceClient();
+    bindSlackAgentClient(client);
+    const block = { display: "plan" as const, plan_title: "Pedido" };
+    const launch = context(block);
+    await beginSlackAgentRun(client, runTarget(block));
+    await projectSlackAgentTimeline({
+      executionId: "exec-1",
+      outputContext: launch.outputContext,
+      triggerContext: launch.triggerContext,
+      item: {
+        type: "todo",
+        items: [{ id: "1", text: "Ler o pedido", status: "pending", completed: false }],
+      },
+    });
+    const opened = calls.find((call) => call.method === "start");
+    assert.equal(opened?.input.taskDisplayMode, "plan");
+    assert.equal(
+      opened?.input.chunks?.some((chunk) => chunk.id === "1"),
+      true,
+    );
+
+    await projectSlackAgentTimeline({
+      executionId: "exec-1",
+      outputContext: launch.outputContext,
+      triggerContext: launch.triggerContext,
+      item: { type: "assistant_message", text: "Olá", messageId: "m1" },
+    });
+    await projectSlackAgentTimeline({
+      executionId: "exec-1",
+      outputContext: launch.outputContext,
+      triggerContext: launch.triggerContext,
+      item: { type: "assistant_message", text: "Olá, mundo", messageId: "m1" },
+    });
+    const appended = calls.filter((call) => call.method === "append");
+    assert.deepEqual(
+      appended.flatMap((call) => call.input.chunks ?? []).map((chunk) => chunk.text),
+      ["Olá", ", mundo"],
+    );
+
+    await runTool(
+      client,
+      "slack.agent.stage",
+      { id: "1", title: "Lendo agora", status: "in_progress" },
+      launch,
+    );
+    const before = calls.length;
+    await projectSlackAgentTimeline({
+      executionId: "exec-1",
+      outputContext: launch.outputContext,
+      triggerContext: launch.triggerContext,
+      item: {
+        type: "todo",
+        items: [{ id: "1", text: "Ler o pedido", status: "pending", completed: false }],
+      },
+    });
+    assert.equal(calls.length, before);
   });
 });
 
@@ -414,7 +474,7 @@ interface RecordedCall {
     taskDisplayMode?: string;
     recipientUserId?: string;
     recipientTeamId?: string;
-    chunks?: Array<{ type: string; title?: string; status?: string; id?: string }>;
+    chunks?: Array<{ type: string; title?: string; status?: string; id?: string; text?: string }>;
   };
 }
 

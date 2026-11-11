@@ -23,6 +23,7 @@ export interface CreateSlackEventSourceOptions {
   configuration: SlackProviderApplicationConfiguration;
   accept: SlackEventIntakeOptions["accept"];
   settlePlanDecision?: SlackInteractionIntakeOptions["settlePlanDecision"];
+  recordFeedback?: SlackInteractionIntakeOptions["recordFeedback"];
   socket?: Pick<
     SlackSocketSourceOptions,
     "apiUrl" | "random" | "timeoutMs" | "pingIntervalMs" | "pongTimeoutMs"
@@ -38,6 +39,7 @@ export function createSlackEventSource(options: CreateSlackEventSourceOptions): 
       ...(options.settlePlanDecision === undefined
         ? {}
         : { settlePlanDecision: options.settlePlanDecision }),
+      ...(options.recordFeedback === undefined ? {} : { recordFeedback: options.recordFeedback }),
     };
     const webhook = createSlackWebhookSource(shared);
     const interactivity = createSlackInteractivitySource(shared);
@@ -63,6 +65,7 @@ export function createSlackEventSource(options: CreateSlackEventSourceOptions): 
     ...(options.settlePlanDecision === undefined
       ? {}
       : { settlePlanDecision: options.settlePlanDecision }),
+    ...(options.recordFeedback === undefined ? {} : { recordFeedback: options.recordFeedback }),
     ...options.socket,
   });
   return socket;

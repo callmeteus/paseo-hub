@@ -80,6 +80,30 @@ describe("Slack interactivity", () => {
     assert.equal(accepted, false);
   });
 
+  it("stores a thumb and does not start a run", async () => {
+    let accepted = false;
+    const recorded: Array<{ rating: string; messageTs: string }> = [];
+    const endpoint = createSlackInteractivitySource({
+      appId: APP_ID,
+      signingSecret: SECRET,
+      now: () => NOW,
+      accept: () => {
+        accepted = true;
+        return Promise.reject(new Error("unused"));
+      },
+      recordFeedback: (input) => {
+        recorded.push({ rating: input.rating, messageTs: input.messageTs });
+        return Promise.resolve();
+      },
+    });
+    const response = await endpoint.handle(
+      formRequest(blockActions("paseo_feedback", "negative", "Ruim")),
+    );
+    assert.equal(response.status, 200);
+    assert.equal(accepted, false);
+    assert.deepEqual(recorded, [{ rating: "negative", messageTs: CARD_TS }]);
+  });
+
   it("rejects a bad signature and a click for another app", async () => {
     const endpoint = source(() => Promise.resolve(acceptance(storedInput())));
     const unsigned = new Request("https://hub.test/api/integrations/slack/interactivity", {

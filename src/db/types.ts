@@ -375,6 +375,29 @@ export interface OrganizationFindingRecord {
   createdAt: Date;
 }
 
+/** One thumb on an agent card. A negative rating does not open a modal. */
+export interface OrganizationResponseFeedbackRecord {
+  id: string;
+  organizationId: string;
+  teamId: string;
+  channelId: string;
+  messageTs: string;
+  executionId: string | null;
+  rating: "positive" | "negative";
+  comment: string | null;
+  createdAt: Date;
+}
+
+export interface InsertOrganizationResponseFeedbackInput {
+  organizationId: string;
+  teamId: string;
+  channelId: string;
+  messageTs: string;
+  executionId?: string | null;
+  rating: "positive" | "negative";
+  comment?: string | null;
+}
+
 export interface InsertOrganizationFindingInput {
   organizationId: string;
   statement: string;
@@ -1825,5 +1848,12 @@ export interface Database {
     organizationId: string,
     query: string,
   ): Promise<OrganizationFindingRecord[]>;
+  insertOrganizationResponseFeedback(
+    input: InsertOrganizationResponseFeedbackInput,
+  ): Promise<OrganizationResponseFeedbackRecord>;
+  searchOrganizationResponseFeedback(
+    organizationId: string,
+    query: string,
+  ): Promise<OrganizationResponseFeedbackRecord[]>;
   close(): Promise<void>;
 }
