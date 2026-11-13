@@ -119,6 +119,15 @@ export class DaemonRegistration {
   }
 }
 
+function daemonSocketBase(requestUrl: string, publicBaseUrl: string | undefined): string {
+  if (publicBaseUrl === undefined) return requestUrl;
+  const requested = new URL(requestUrl);
+  const pinned = new URL(publicBaseUrl);
+  // The embedded Hub pins its public URL to loopback. A daemon that enrolled
+  // through another host has to receive that same host, or it rejects the socket.
+  return requested.host === pinned.host ? publicBaseUrl : requestUrl;
+}
+
 export async function enrollDaemon(
   request: Request,
   database: Database,
@@ -147,7 +156,7 @@ export async function enrollDaemon(
     return Response.json({ error: "invalid enrollment token" }, { status: 401 });
   }
   if (daemon.status === "slug_conflict") return daemonSlugConflict(daemon.slug);
-  const webSocketUrl = new URL("/api/daemons/socket", publicBaseUrl ?? request.url);
+  const webSocketUrl = new URL("/api/daemons/socket", daemonSocketBase(request.url, publicBaseUrl));
   webSocketUrl.protocol = webSocketUrl.protocol === "https:" ? "wss:" : "ws:";
   const response = {
     daemonId: daemon.id,
