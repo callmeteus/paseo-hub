@@ -16,9 +16,10 @@ import {
 import type { TriggerFormValue } from "./editor.js";
 
 /**
- * Events the form can show together. They share one connection and one channel list.
- * Each event may listen to different people and match different message text. A filter the form
- * does not own stays on the document. Two events that disagree stay in YAML.
+ * Events the form can show together. They share one connection.
+ * Each event may listen to different channels, different people, and different message text.
+ * A filter the form does not own stays on the document. Two events that disagree on the
+ * connection stay in YAML.
  *
  * @param trigger - Parsed trigger document
  * @returns The shared event fields, or why the form cannot open
@@ -60,14 +61,6 @@ export function projectEditorEvents(
   ) {
     return { status: "yaml_only", reason: "These events use different connections." };
   }
-  if (
-    definitions.some(
-      (definition) =>
-        listKey(definition.filters?.channels) !== listKey(firstDefinition.filters?.channels),
-    )
-  ) {
-    return { status: "yaml_only", reason: "These events listen to different channels." };
-  }
   const botValues = definitions.flatMap((definition) =>
     definition.filters?.include_bots === undefined ? [] : [definition.filters.include_bots],
   );
@@ -93,10 +86,12 @@ export function projectEditorEvents(
       };
     }
   }
+  const message = entries.find(([event]) => event === "slack.message");
   return {
     status: "editable",
     events,
     includeBots: botValues.some((value) => value),
+    directMessages: message?.[1].filters?.direct_messages === true,
     ...readProjectedEventFields(entries),
   };
 }
@@ -109,9 +104,10 @@ export function projectEditorEvents(
  */
 function readProjectedEventFields(
   entries: [string, TriggerDocument["on"][string]][],
-): Pick<ProjectedEvents, "eventUsers" | "regex"> {
+): Pick<ProjectedEvents, "eventUsers" | "regex" | "eventChannels"> {
   const eventUsers: Partial<Record<EditorEvent, string>> = {};
   const regex: Partial<Record<EditorEvent, string>> = {};
+  const eventChannels: Partial<Record<EditorEvent, string>> = {};
   for (const [event, definition] of entries) {
     if (!isEditorEvent(event)) continue;
     eventUsers[event] = definition.filters?.from_users?.join(", ") ?? "*";
@@ -120,15 +116,20 @@ function readProjectedEventFields(
         text: definition.filters?.text,
         regex: definition.filters?.regex,
       }) ?? "";
+    eventChannels[event] = definition.filters?.channels?.join(", ") ?? "";
   }
-  return { eventUsers, regex };
+  return { eventUsers, regex, eventChannels };
 }
 
 /** People and message text the form keeps per event. */
 export interface ProjectedEvents {
   events: EditorEvent[];
   includeBots: boolean;
+  /** `slack.message` also runs for a one-to-one direct message. */
+  directMessages: boolean;
   eventUsers: Partial<Record<EditorEvent, string>>;
+  /** Channel ids for one event, comma-separated. Empty listens to every channel. */
+  eventChannels: Partial<Record<EditorEvent, string>>;
   /**
    * One message item per line. A line that starts with `regex:` is an expression.
    * Any other line is literal text. Empty when that event does not filter on text.
@@ -170,7 +171,9 @@ export function formEventDefinition(
   }
   if (eventDefinition(event).origin === "hub") return {};
   const channels =
-    eventDefinition(event).provider === "slack" ? commaSeparated(value.channels) : [];
+    eventDefinition(event).provider === "slack"
+      ? commaSeparated(eventChannelText(value, event))
+      : [];
   return {
     connection: value.connection,
     filters: {
@@ -179,6 +182,9 @@ export function formEventDefinition(
       ...slackMessageFilters(value, event),
       ...(channels.length === 0 ? {} : { channels }),
       ...(event === "slack.message" && value.includeBots ? { include_bots: true } : {}),
+      ...(event === "slack.message" && value.directMessages === true
+        ? { direct_messages: true }
+        : {}),
     },
   };
 }
@@ -217,7 +223,7 @@ export function writeEvent(
   );
   if (event === "schedule.tick") deleteIfPresent(document, ["on", event, "filters"]);
   if (eventDefinition(event).provider === "slack") {
-    const channels = commaSeparated(value.channels);
+    const channels = commaSeparated(eventChannelText(value, event));
     setOptional(
       document,
       ["on", event, "filters", "channels"],
@@ -229,6 +235,11 @@ export function writeEvent(
       document,
       ["on", event, "filters", "include_bots"],
       value.includeBots ? true : undefined,
+    );
+    setOptional(
+      document,
+      ["on", event, "filters", "direct_messages"],
+      value.directMessages === true ? true : undefined,
     );
   }
   setOptional(
@@ -285,24 +296,61 @@ export function toggleTriggerEvent(
   const primary = events[0] ?? value.event;
   const eventUsers = { ...value.eventUsers };
   const regex = { ...value.regex };
-  // A newly checked event starts with the primary audience. Its text filter stays empty.
-  if (selected && !current.includes(event)) eventUsers[event] = value.allowedUsers;
+  const eventChannels = { ...value.eventChannels };
+  // A newly checked event starts with the primary audience and channel list. Its text filter stays empty.
+  if (selected && !current.includes(event)) {
+    eventUsers[event] = value.allowedUsers;
+    eventChannels[event] = eventChannelText(value, value.event);
+  }
   if (!selected) {
     delete eventUsers[event];
     delete regex[event];
+    delete eventChannels[event];
   }
   // The primary audience is `allowedUsers`. Promote the next event's own list when it takes over.
   const allowedUsers =
     primary === value.event ? value.allowedUsers : (eventUsers[primary] ?? value.allowedUsers);
   if (primary !== value.event) eventUsers[primary] = allowedUsers;
+  const channels = eventChannelText({ ...value, event: primary, eventChannels }, primary);
   return {
     ...value,
     event: primary,
     events,
     allowedUsers,
+    channels,
     eventUsers,
+    eventChannels,
     regex,
   };
+}
+
+/**
+ * Channel ids one event listens to. Empty listens to every channel.
+ *
+ * @param value - Current form
+ * @param event - Event being read or written
+ * @returns Comma-separated channel ids
+ */
+export function eventChannelText(value: TriggerFormValue, event: EditorEvent): string {
+  return value.eventChannels?.[event] ?? value.channels;
+}
+
+/**
+ * Sets the channels one event listens to.
+ *
+ * @param value - Current form
+ * @param event - Event whose channels change
+ * @param channels - Comma-separated channel ids, or empty for every channel
+ * @returns The form with that list stored
+ */
+export function setEventChannels(
+  value: TriggerFormValue,
+  event: EditorEvent,
+  channels: string,
+): TriggerFormValue {
+  const eventChannels = { ...value.eventChannels, [event]: channels };
+  if (event !== value.event) return { ...value, eventChannels };
+  return { ...value, channels, eventChannels };
 }
 
 /**
@@ -556,16 +604,6 @@ function authoredQualifiers(value: TriggerFormValue, event: EditorEvent): Qualif
     if (selection !== undefined) filters[qualifier.key] = selection.trim();
   }
   return filters;
-}
-
-/**
- * Stable text for comparing string lists across events.
- *
- * @param values - List from the document, when present
- * @returns One line per entry
- */
-function listKey(values: readonly string[] | undefined): string {
-  return (values ?? []).join("\n");
 }
 
 /**

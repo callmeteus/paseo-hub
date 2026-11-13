@@ -129,46 +129,172 @@ function ReactionList({
             onChange={(id) => onChange(rename(reactions, reaction.id, id))}
             {...flowError(errors, reaction.id, "id")}
           />
-          {reaction.type === "wait" ? (
-            <FormField
-              id={`reaction-${reaction.id}-for`}
-              label="Wait"
-              description="How long to wait before the next reaction, for example 5m."
-              kind="text"
-              name={`reaction-${reaction.id}-for`}
-              value={reaction.duration}
-              onChange={(duration) =>
-                onChange(ReactionFlow.update(reactions, reaction.id, { duration }))
-              }
-              required
-              {...flowError(errors, reaction.id, "duration")}
-            />
-          ) : null}
-          {reaction.type === "agent" ? (
-            <AgentReactionFields
-              reaction={reaction}
-              errors={errors}
-              entries={entries}
-              loading={loading}
-              githubConnectionOptions={githubConnectionOptions}
-              showSlackAgent={showSlackAgent}
-              onChange={(patch) => onChange(ReactionFlow.update(reactions, reaction.id, patch))}
-            />
-          ) : null}
-          {reaction.type === "if" ? (
-            <ConditionFields
-              reaction={reaction}
-              reactions={reactions}
-              errors={errors}
-              entries={entries}
-              loading={loading}
-              githubConnectionOptions={githubConnectionOptions}
-              showSlackAgent={showSlackAgent}
-              onChange={onChange}
-            />
-          ) : null}
+          <ReactionBody
+            reaction={reaction}
+            reactions={reactions}
+            errors={errors}
+            entries={entries}
+            loading={loading}
+            githubConnectionOptions={githubConnectionOptions}
+            showSlackAgent={showSlackAgent}
+            onChange={onChange}
+          />
         </section>
       ))}
+    </div>
+  );
+}
+
+function ReactionBody({
+  reaction,
+  reactions,
+  errors,
+  entries,
+  loading,
+  githubConnectionOptions,
+  showSlackAgent,
+  onChange,
+}: {
+  reaction: ReactionFlow.Reaction;
+  reactions: readonly ReactionFlow.Reaction[];
+  errors: TriggerFieldErrors;
+  entries: HubProviderSnapshotEntry[] | undefined;
+  loading: boolean;
+  githubConnectionOptions: readonly ComboboxOption[];
+  showSlackAgent: boolean;
+  onChange: (reactions: ReactionFlow.Reaction[]) => void;
+}) {
+  if (reaction.type === "wait") {
+    return (
+      <FormField
+        id={`reaction-${reaction.id}-for`}
+        label="Wait"
+        description="How long to wait before the next reaction, for example 5m."
+        kind="text"
+        name={`reaction-${reaction.id}-for`}
+        value={reaction.duration}
+        onChange={(duration) => onChange(ReactionFlow.update(reactions, reaction.id, { duration }))}
+        required
+        {...flowError(errors, reaction.id, "duration")}
+      />
+    );
+  }
+  if (reaction.type === "env" || reaction.type === "http" || reaction.type === "notice") {
+    return (
+      <PlainReactionFields
+        reaction={reaction}
+        errors={errors}
+        onChange={(patch) => onChange(ReactionFlow.update(reactions, reaction.id, patch))}
+      />
+    );
+  }
+  if (reaction.type === "agent") {
+    return (
+      <AgentReactionFields
+        reaction={reaction}
+        errors={errors}
+        entries={entries}
+        loading={loading}
+        githubConnectionOptions={githubConnectionOptions}
+        showSlackAgent={showSlackAgent}
+        onChange={(patch) => onChange(ReactionFlow.update(reactions, reaction.id, patch))}
+      />
+    );
+  }
+  return (
+    <ConditionFields
+      reaction={reaction}
+      reactions={reactions}
+      errors={errors}
+      entries={entries}
+      loading={loading}
+      githubConnectionOptions={githubConnectionOptions}
+      showSlackAgent={showSlackAgent}
+      onChange={onChange}
+    />
+  );
+}
+
+function PlainReactionFields({
+  reaction,
+  errors,
+  onChange,
+}: {
+  reaction: ReactionFlow.Env | ReactionFlow.Http | ReactionFlow.Notice;
+  errors: TriggerFieldErrors;
+  onChange: (
+    patch: Partial<ReactionFlow.Env> | Partial<ReactionFlow.Http> | Partial<ReactionFlow.Notice>,
+  ) => void;
+}) {
+  if (reaction.type === "env") {
+    return (
+      <FormField
+        id={`reaction-${reaction.id}-files`}
+        label="Env files"
+        description="One dotenv path per line, for example ~/.lm.credentials."
+        kind="multiline"
+        name={`reaction-${reaction.id}-files`}
+        value={reaction.files}
+        onChange={(files) => onChange({ files })}
+        required
+        {...flowError(errors, reaction.id, "files")}
+      />
+    );
+  }
+  if (reaction.type === "notice") {
+    return (
+      <FormField
+        id={`reaction-${reaction.id}-text`}
+        label="Notice"
+        description="Stored on the run. It does not send a message."
+        kind="multiline"
+        name={`reaction-${reaction.id}-text`}
+        value={reaction.text}
+        onChange={(text) => onChange({ text })}
+        required
+        {...flowError(errors, reaction.id, "text")}
+      />
+    );
+  }
+  return (
+    <div className="grid gap-4">
+      <FormField id={`reaction-${reaction.id}-method`} label="Method">
+        {() => (
+          <SegmentedControl
+            label="Method"
+            value={reaction.method}
+            options={[
+              { value: "GET", label: "GET" },
+              { value: "POST", label: "POST" },
+            ]}
+            onChange={(method) => {
+              if (method === "GET" || method === "POST") onChange({ method });
+            }}
+          />
+        )}
+      </FormField>
+      <FormField
+        id={`reaction-${reaction.id}-url`}
+        label="URL"
+        description="HTTPS only. POST sends the assign path."
+        kind="text"
+        name={`reaction-${reaction.id}-url`}
+        value={reaction.url}
+        onChange={(url) => onChange({ url })}
+        required
+        {...flowError(errors, reaction.id, "url")}
+      />
+      <FormField
+        id={`reaction-${reaction.id}-headers`}
+        label="Headers"
+        description="One header per line, Name: value."
+        kind="multiline"
+        name={`reaction-${reaction.id}-headers`}
+        value={reaction.headers}
+        onChange={(headers) => onChange({ headers })}
+        required
+        {...flowError(errors, reaction.id, "headers")}
+      />
     </div>
   );
 }
@@ -362,6 +488,30 @@ function AgentReactionFields({
           )}
         </FormField>
       </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <FormField
+          id={`reaction-${reaction.id}-max-runtime`}
+          label="Maximum runtime"
+          description="Hard deadline for this agent, for example 2h."
+          kind="text"
+          name={`reaction-${reaction.id}-max-runtime`}
+          value={reaction.maxRuntime}
+          onChange={(maxRuntime) => onChange({ maxRuntime })}
+          required
+          {...flowError(errors, reaction.id, "maxRuntime")}
+        />
+        <FormField
+          id={`reaction-${reaction.id}-idle-timeout`}
+          label="Idle timeout"
+          description="Stop this agent when it goes quiet, for example 10m."
+          kind="text"
+          name={`reaction-${reaction.id}-idle-timeout`}
+          value={reaction.idleTimeout}
+          onChange={(idleTimeout) => onChange({ idleTimeout })}
+          required
+          {...flowError(errors, reaction.id, "idleTimeout")}
+        />
+      </div>
       {reaction.agent.startsWith("cursor") ? (
         <FormField id={`reaction-${reaction.id}-fast`} label="Fast">
           {() => (
@@ -485,6 +635,9 @@ export function AddReaction({ onAdd }: { onAdd: (kind: ReactionFlow.Kind) => voi
         <DropdownMenuItem onSelect={() => onAdd("agent")}>Agent</DropdownMenuItem>
         <DropdownMenuItem onSelect={() => onAdd("wait")}>Wait</DropdownMenuItem>
         <DropdownMenuItem onSelect={() => onAdd("if")}>Condition</DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => onAdd("env")}>Load env files</DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => onAdd("http")}>HTTP request</DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => onAdd("notice")}>Notice</DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -493,6 +646,9 @@ export function AddReaction({ onAdd }: { onAdd: (kind: ReactionFlow.Kind) => voi
 function reactionLabel(kind: ReactionFlow.Kind): string {
   if (kind === "wait") return "Wait";
   if (kind === "if") return "Condition";
+  if (kind === "env") return "Env files";
+  if (kind === "http") return "HTTP request";
+  if (kind === "notice") return "Notice";
   return "Agent";
 }
 

@@ -187,6 +187,27 @@ export class TriggerDashboard {
     });
   }
 
+  async delete(request: Request, organizationSlug: string, triggerId: string): Promise<void> {
+    const { tenant } = await resolveRouteTenant(this.auth, this.database, request, {
+      organizationSlug,
+    });
+    if (!capabilitiesFor(tenant.membership.role).manageResources) {
+      throw new ProjectCommandError("forbidden");
+    }
+    try {
+      await new OrganizationTriggerStore(
+        this.database,
+        tenant.organization.id,
+        this.agentValidator,
+      ).remove(triggerId);
+    } catch (error) {
+      if (error instanceof Error && error.message === "organization trigger not found") {
+        throw new ProjectCommandError("not_found");
+      }
+      throw error;
+    }
+  }
+
   /**
    * Channel names for the selected Slack connection.
    *

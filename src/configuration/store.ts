@@ -1,3 +1,4 @@
+import { ANY_DAEMON, isAnyDaemonTarget } from "../triggers/configuration/any-daemon.js";
 import { parseTriggerDocument } from "../triggers/configuration/index.js";
 import { dump, load } from "js-yaml";
 import { z } from "zod";
@@ -503,7 +504,7 @@ async function resolveCompiledConfiguration(
   );
   const resolutions = await Promise.all(
     configuration.environments.map(async (environment) =>
-      environment.kind === "daemon"
+      environment.kind === "daemon" && !isAnyDaemonTarget(environment.daemon)
         ? {
             environment,
             daemon: await database.findDaemonBySlugForOrganization(
@@ -516,6 +517,7 @@ async function resolveCompiledConfiguration(
   );
   const daemonIssues = resolutions.flatMap(({ environment, daemon }) =>
     environment.kind === "daemon" &&
+    !isAnyDaemonTarget(environment.daemon) &&
     (daemon === undefined || !daemon.permissions.includes("hub.execute"))
       ? [
           {
@@ -612,6 +614,9 @@ function resolveEnvironment(
   resolution: EnvironmentResolution,
 ): CompiledHubConfig["environments"][number] {
   const { environment, daemon } = resolution;
+  if (environment.kind === "daemon" && isAnyDaemonTarget(environment.daemon)) {
+    return Object.assign({}, environment, { daemonId: ANY_DAEMON });
+  }
   if (environment.kind !== "daemon" || daemon === undefined) return environment;
   return Object.assign({}, environment, { daemonId: daemon.id });
 }

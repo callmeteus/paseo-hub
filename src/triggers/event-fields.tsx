@@ -4,7 +4,12 @@ import { FormField } from "../components/app/form-field.js";
 import { CopyButton } from "../components/app/copy-field.js";
 import { eventDefinition, type QualifierKey } from "./configuration/events.js";
 import { type TriggerFieldErrors, type TriggerFormValue } from "./configuration/editor.js";
-import { selectedTriggerEvents, setEventRegex } from "./configuration/form-events.js";
+import {
+  eventChannelText,
+  selectedTriggerEvents,
+  setEventChannels,
+  setEventRegex,
+} from "./configuration/form-events.js";
 import { ScheduleFields } from "./schedule/fields.js";
 import { SlackChannelPicker } from "./slack/channel-picker.js";
 
@@ -33,21 +38,7 @@ export function EventFields({
         onChange={(recurrence) => onChange({ ...value, recurrence })}
       />
       {slack ? (
-        <FormField
-          id="trigger-channels"
-          label="Channels"
-          description="Leave empty to include every channel."
-        >
-          {(control) => (
-            <SlackChannelPicker
-              control={control}
-              organizationSlug={organizationSlug}
-              connection={value.connection}
-              value={value.channels}
-              onChange={(channels) => onChange({ ...value, channels })}
-            />
-          )}
-        </FormField>
+        <ChannelFields value={value} organizationSlug={organizationSlug} onChange={onChange} />
       ) : null}
       {events.includes("slack.message") ? (
         <CheckboxField
@@ -56,6 +47,15 @@ export function EventFields({
           description="Run when another app posts in the channel."
           checked={value.includeBots}
           onChange={(includeBots) => onChange({ ...value, includeBots })}
+        />
+      ) : null}
+      {events.includes("slack.message") ? (
+        <CheckboxField
+          id="trigger-direct-messages"
+          label="Direct messages"
+          description="Also run for a one-to-one direct message."
+          checked={value.directMessages === true}
+          onChange={(directMessages) => onChange({ ...value, directMessages })}
         />
       ) : null}
       <MessageTextFields value={value} onChange={onChange} />
@@ -81,6 +81,49 @@ export function EventFields({
         );
       })}
     </>
+  );
+}
+
+/**
+ * One channel list per Slack event. A single event keeps the original field.
+ */
+function ChannelFields({
+  value,
+  organizationSlug,
+  onChange,
+}: {
+  value: TriggerFormValue;
+  organizationSlug: string;
+  onChange: (value: TriggerFormValue) => void;
+}) {
+  const events = selectedTriggerEvents(value).filter(
+    (event) => eventDefinition(event).provider === "slack",
+  );
+  return (
+    <div className="grid gap-4">
+      {events.map((event) => (
+        <div key={event} className="grid gap-4">
+          {events.length > 1 ? (
+            <p className="text-sm text-muted-foreground">{eventDefinition(event).label}</p>
+          ) : null}
+          <FormField
+            id={`trigger-channels-${event}`}
+            label="Channels"
+            description="Leave empty to include every channel."
+          >
+            {(control) => (
+              <SlackChannelPicker
+                control={control}
+                organizationSlug={organizationSlug}
+                connection={value.connection}
+                value={eventChannelText(value, event)}
+                onChange={(channels) => onChange(setEventChannels(value, event, channels))}
+              />
+            )}
+          </FormField>
+        </div>
+      ))}
+    </div>
   );
 }
 

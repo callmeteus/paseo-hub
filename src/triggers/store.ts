@@ -16,6 +16,7 @@ import {
   type TriggerDocument,
   type TriggerDocumentIssue,
 } from "./configuration/index.js";
+import { isAnyDaemonTarget } from "./configuration/any-daemon.js";
 import { supportsUnattendedRuns, unattendedProviderRefusal } from "./configuration/unattended.js";
 import { isEnvReaction, type AgentReaction, type TriggerReaction } from "./configuration/schema.js";
 
@@ -43,6 +44,10 @@ export class OrganizationTriggerStore {
 
   list(): Promise<OrganizationTriggerRecord[]> {
     return this.database.listOrganizationTriggers(this.organizationId);
+  }
+
+  async remove(triggerId: string): Promise<void> {
+    await this.database.deleteOrganizationTrigger(this.organizationId, triggerId);
   }
 
   async activeRevision(
@@ -125,6 +130,10 @@ export class OrganizationTriggerStore {
   ): Promise<void> {
     const target = configuration.environments.find((environment) => environment.kind === "daemon");
     if (target === undefined) throw new Error("compiled trigger target is missing");
+    const daemons = await this.validationDaemons(
+      target.daemonId,
+      compiled.authored.run.target.daemon,
+    );
     const issues: TriggerDocumentIssue[] = [];
     for (const { path, agent } of authoredAgents(compiled.authored)) {
       if (!supportsUnattendedRuns(agent.provider)) {
@@ -134,29 +143,42 @@ export class OrganizationTriggerStore {
         });
         continue;
       }
-      let verdict: Awaited<
-        ReturnType<DaemonAgentConfigurationValidator["validateAgentConfiguration"]>
-      >;
-      try {
-        verdict = await this.agentValidator.validateAgentConfiguration(target.daemonId, agent);
-      } catch (error) {
-        throw new TriggerDocumentError([
-          {
-            path: ["run", "target", "daemon"],
-            message: daemonUnavailable(compiled.authored.run.target.daemon, error),
-          },
-        ]);
-      }
-      if (!verdict.valid) {
+      for (const daemon of daemons) {
         issues.push(
-          ...verdict.issues.map((issue) => ({
-            path: [...path, ...issue.path.map(authoredFieldName)],
-            message: issue.message,
-          })),
+          ...(await agentIssuesOnDaemon(
+            this.agentValidator,
+            daemon,
+            path,
+            agent,
+            daemons.length > 1,
+          )),
         );
       }
     }
     if (issues.length > 0) throw new TriggerDocumentError(issues);
+  }
+
+  private async validationDaemons(
+    daemonId: string,
+    slug: string,
+  ): Promise<readonly { id: string; slug: string }[]> {
+    if (!isAnyDaemonTarget(daemonId)) return [{ id: daemonId, slug }];
+    const connected = (await this.database.listDaemonsForOrganization(this.organizationId)).filter(
+      (daemon) =>
+        daemon.status === "active" &&
+        daemon.presence === "connected" &&
+        daemon.permissions.includes("hub.execute"),
+    );
+    if (connected.length === 0) {
+      throw new TriggerDocumentError([
+        {
+          path: ["run", "target", "daemon"],
+          message:
+            "No daemon is connected, so Hub cannot check this agent. Connect a daemon and save again.",
+        },
+      ]);
+    }
+    return connected.map((daemon) => ({ id: daemon.id, slug: daemon.slug }));
   }
 }
 
@@ -209,6 +231,28 @@ function authoredFieldName(segment: string | number): string | number {
   if (segment === "modeId") return "mode";
   if (segment === "providerOptions") return "options";
   return segment;
+}
+
+async function agentIssuesOnDaemon(
+  validator: DaemonAgentConfigurationValidator,
+  daemon: { id: string; slug: string },
+  path: readonly (string | number)[],
+  agent: AuthoredAgent,
+  nameDaemon: boolean,
+): Promise<TriggerDocumentIssue[]> {
+  let verdict: Awaited<ReturnType<DaemonAgentConfigurationValidator["validateAgentConfiguration"]>>;
+  try {
+    verdict = await validator.validateAgentConfiguration(daemon.id, agent);
+  } catch (error) {
+    throw new TriggerDocumentError([
+      { path: ["run", "target", "daemon"], message: daemonUnavailable(daemon.slug, error) },
+    ]);
+  }
+  if (verdict.valid) return [];
+  return verdict.issues.map((issue) => ({
+    path: [...path, ...issue.path.map(authoredFieldName)],
+    message: nameDaemon ? `${daemon.slug}: ${issue.message}` : issue.message,
+  }));
 }
 
 function daemonUnavailable(slug: string, error: unknown): string {

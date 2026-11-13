@@ -1848,6 +1848,56 @@ run:
     assert.equal(statuses.get("run"), "skipped");
     assert.equal(statuses.get("later"), "pending");
   });
+
+  it("runs an unpinned automation on the first connected daemon", async () => {
+    const fixture = await workflowFixture({
+      daemonId: "*",
+      rawConfiguration: {
+        environments: [{ name: "runner", kind: "daemon", daemon: "*", cwd: "/workspace" }],
+        triggers: [
+          {
+            name: "anywhere",
+            on: "manual.run",
+            max_runtime: "1h",
+            steps: [
+              {
+                id: "work",
+                environment: "runner",
+                max_runtime: "10m",
+                idle_timeout: "1m",
+                agent: { provider: "codex" },
+                prompt: [{ text: "Work" }],
+              },
+            ],
+          },
+        ],
+      },
+    });
+    await enrollConnectedDaemon(fixture.database, "daemon-zeta", "zeta");
+    await enrollConnectedDaemon(fixture.database, "daemon-alpha", "alpha");
+    const intents: LaunchMachineIntent[] = [];
+    const { handler, engine } = createDurableWorkflowHandler({
+      database: fixture.database,
+      entitlements: fixture.entitlements,
+      providers: [providerMatch(fixture.configuration, fixture.revisionId)],
+      canDispatchToDaemon: (id) => id === "daemon-alpha" || id === "daemon-zeta",
+      dispatchLaunchMachineIntent: async (intent) => {
+        intents.push(intent);
+        const execution = await fixture.database.findAgentExecutionByWorkflowStepRunId(
+          intent.workflowStepRunId!,
+        );
+        assert.ok(execution);
+        return { execution };
+      },
+    });
+
+    await handler(fixture.trigger("go"));
+    await engine.processAvailable();
+
+    assert.equal(intents.length, 1);
+    assert.equal(intents[0]?.environment.daemonId, "daemon-alpha");
+    assert.equal(intents[0]?.environment.authoredSlug, "alpha");
+  });
 });
 
 interface Fixture {
@@ -1962,11 +2012,38 @@ async function stepStatuses(fixture: Fixture): Promise<Map<string, string>> {
   return new Map(steps.map((step) => [step.stepId, step.status]));
 }
 
+async function enrollConnectedDaemon(
+  database: Database,
+  daemonId: string,
+  slug: string,
+): Promise<void> {
+  await database.issueEnrollmentToken({
+    id: `token-${daemonId}`,
+    verifier: `verifier-${daemonId}`,
+    organizationId: "org-1",
+    expiresAt: new Date("2026-08-29T22:00:00.000Z"),
+    consumedAt: null,
+  });
+  await database.enrollDaemon({
+    daemonId,
+    idempotencyKey: `key-${daemonId}`,
+    suggestedSlug: slug,
+    tokenVerifier: `verifier-${daemonId}`,
+    serverId: `server-${daemonId}`,
+    daemonPublicKey: `key-${daemonId}`,
+    credentialVerifier: `credential-${daemonId}`,
+    permissions: ["hub.execute"],
+    now: new Date("2026-08-29T21:00:00.000Z"),
+  });
+  await database.setDaemonPresence(daemonId, "connected");
+}
+
 async function workflowFixture(
   options: {
     unavailableValue?: boolean;
     terminalRecovery?: boolean;
     rawConfiguration?: Record<string, unknown>;
+    daemonId?: string;
     compiledConfiguration?: CompiledHubConfig;
     resolvedPromptPartials?: ResolvedPromptPartials;
     namedAgents?: Record<string, CompiledAgent>;
@@ -2003,7 +2080,7 @@ async function workflowFixture(
         name: environment.name,
         kind: "daemon",
         daemon: environment.daemon,
-        daemonId: "daemon-1",
+        daemonId: options.daemonId ?? "daemon-1",
         cwd: environment.cwd,
         ...(environment.worktree === undefined ? {} : { worktree: environment.worktree }),
       };

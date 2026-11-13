@@ -61,6 +61,23 @@ describe("trusted request origin metadata", () => {
     );
   });
 
+  it("keeps a direct non-loopback host when the pinned public URL is loopback", async () => {
+    assert.equal(
+      await observedOrigin(
+        { canonicalRequestOrigin: "http://127.0.0.1:25000" },
+        { host: "100.89.201.14:25000" },
+      ),
+      "http://100.89.201.14:25000",
+    );
+    assert.equal(
+      await observedOrigin(
+        { canonicalRequestOrigin: "http://127.0.0.1:25000" },
+        { host: "127.0.0.1:25000" },
+      ),
+      "http://127.0.0.1:25000",
+    );
+  });
+
   it("rejects a non-HTTP or credential-bearing configured public URL at startup", () => {
     const handler = () => new Response("ok");
     assert.throws(

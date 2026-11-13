@@ -2830,6 +2830,30 @@ class MemoryDatabase implements Database {
     return trigger;
   }
 
+  async deleteOrganizationTrigger(organizationId: string, triggerId: string): Promise<void> {
+    const trigger = this.organizationTriggers.get(triggerId);
+    if (trigger === undefined || trigger.organizationId !== organizationId) {
+      throw new Error("organization trigger not found");
+    }
+    this.organizationTriggers.delete(triggerId);
+    for (const [revisionId, revision] of this.organizationTriggerRevisions) {
+      if (revision.triggerId === triggerId) this.organizationTriggerRevisions.delete(revisionId);
+    }
+    this.organizationTriggerRoutes.delete(triggerId);
+    this.projectTriggerRoutes.delete(trigger.runtimeProjectId);
+    const project = this.projects.get(trigger.runtimeProjectId);
+    if (project !== undefined && project.organizationId === organizationId) {
+      const now = this.now();
+      this.projects.set(trigger.runtimeProjectId, {
+        ...project,
+        status: "archived",
+        archivedAt: now,
+        updatedAt: now,
+        activeConfigurationRevisionId: null,
+      });
+    }
+  }
+
   private createTriggerRuntimeProject(input: {
     organizationId: string;
     name: string;

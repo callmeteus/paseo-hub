@@ -27,6 +27,21 @@ describe("organization trigger store", () => {
     assert.equal((await store.activeRevision(second)).version, 2);
   });
 
+  it("removes a trigger and stops its runtime project from matching events", async () => {
+    const database = await enrolledDatabase();
+    const store = new OrganizationTriggerStore(database, "org", acceptingAgentValidator());
+    const saved = await store.save({ yaml: triggerYaml(true), userId: null });
+
+    await store.remove(saved.id);
+
+    assert.equal((await store.list()).length, 0);
+    assert.equal((await database.listEnabledTriggerDocuments()).length, 0);
+    const project = await database.findProjectById(saved.runtimeProjectId);
+    assert.equal(project?.status, "archived");
+    assert.equal(project?.activeConfigurationRevisionId, null);
+    await assert.rejects(store.remove(saved.id), /organization trigger not found/u);
+  });
+
   it("fails validation before creating storage when the daemon is unknown", async () => {
     const database = createMemoryDatabase({ organizationIds: ["org"] });
     const store = new OrganizationTriggerStore(database, "org", acceptingAgentValidator());
@@ -168,6 +183,33 @@ describe("organization trigger store", () => {
       }),
       /"devbox" is not connected/u,
     );
+  });
+
+  it("saves an unpinned target when a daemon is connected", async () => {
+    const database = await enrolledDatabase();
+    await database.setDaemonPresence("daemon-00000000", "connected");
+    const store = new OrganizationTriggerStore(database, "org", acceptingAgentValidator());
+
+    const saved = await store.save({
+      yaml: triggerYaml(true).replace("daemon: devbox", 'daemon: "*"'),
+      userId: null,
+    });
+
+    assert.match((await store.activeRevision(saved)).yaml, /daemon: ["']?\*["']?/u);
+  });
+
+  it("refuses an unpinned target when no daemon is connected", async () => {
+    const database = await enrolledDatabase();
+    const store = new OrganizationTriggerStore(database, "org", acceptingAgentValidator());
+
+    await assert.rejects(
+      store.save({
+        yaml: triggerYaml(true).replace("daemon: devbox", 'daemon: "*"'),
+        userId: null,
+      }),
+      /No daemon is connected/u,
+    );
+    assert.equal((await store.list()).length, 0);
   });
 
   it("validates every agent choice against the daemon", async () => {

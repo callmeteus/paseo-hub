@@ -8,6 +8,8 @@ import { ArrowLeft, Braces, FileText, LockKeyhole, Plus } from "lucide-react";
 import { useMemo, useState, type FormEvent } from "react";
 
 import { Card } from "../components/app/card.js";
+import { ConfirmAction, ConfirmMenuItem } from "../components/app/confirm-action.js";
+import { RowActions } from "../components/app/row-actions.js";
 import { Combobox, type ComboboxOption } from "../components/app/combobox.js";
 import { CheckboxField } from "../components/app/checkbox-field.js";
 import { CopyButton } from "../components/app/copy-field.js";
@@ -28,6 +30,7 @@ import { Input } from "../components/ui/input.js";
 import { GuardrailFields } from "./guardrail-fields.js";
 import { InstructionsEditor } from "./instructions-editor.js";
 import { WorktreeFields } from "./worktree-fields.js";
+import { ANY_DAEMON, daemonAffinityLabel, isAnyDaemonTarget } from "./configuration/any-daemon.js";
 import { emptyWorktree, textInstructions } from "./configuration/form-drafts.js";
 import { SiteHeaderActions } from "../shell/site-header-actions.js";
 import { ProviderGlyph } from "../connections/provider-glyph.js";
@@ -47,7 +50,7 @@ import {
 import { selectedTriggerEvents, toggleTriggerEvent } from "./configuration/form-events.js";
 import { blankSlackAgentDraft, eventsAllowSlackAgent } from "./slack/agent-block.js";
 import { SlackAgentFields } from "./slack-agent-fields.js";
-import { saveTrigger, triggerSnapshot, type TriggerSnapshot } from "./functions.js";
+import { deleteTrigger, saveTrigger, triggerSnapshot, type TriggerSnapshot } from "./functions.js";
 import { daemonProviderSnapshot } from "../daemons/functions.js";
 import type { HubProviderSnapshotEntry } from "../hub/protocol.js";
 import { AudienceFields } from "./audience-fields.js";
@@ -73,9 +76,10 @@ type TriggerTextField = Exclude<
 const TRIGGER_COLUMNS = [
   { header: "Automation", fill: true },
   { header: "Event", fill: true, className: "hidden md:table-cell" },
-  { header: "Target", fill: true, className: "hidden xl:table-cell" },
+  { header: "Daemon", fill: true },
   { header: "Last triggered", className: "hidden xl:table-cell" },
   { header: "Status" },
+  { header: "", align: "end" },
 ] as const;
 
 const EVENT_OPTIONS: readonly ComboboxOption[] = EDITOR_EVENTS.map((value) => {
@@ -97,6 +101,17 @@ export function TriggersPanel() {
   const scope = { organizationSlug: tenant.organization.slug };
   const snapshot = useTriggerSnapshot(scope.organizationSlug);
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const removeCommand = useServerFn(deleteTrigger) as (input: {
+    data: { organizationSlug: string; triggerId: string };
+  }) => Promise<Result<{ state: "complete" }>>;
+  const remove = useMutation({
+    mutationFn: removeCommand,
+    onSuccess: async (result) => {
+      if (result.status !== "ok") return;
+      await queryClient.invalidateQueries({ queryKey: ["triggers", scope.organizationSlug] });
+    },
+  });
   const [search, setSearch] = useState("");
   if (snapshot.status === "pending") {
     return (
@@ -147,6 +162,14 @@ export function TriggersPanel() {
             >
               <p>Automations need a daemon that can run agents.</p>
             </WarningAlert>
+          ) : null}
+          {remove.data?.status === "error" ? (
+            <FailureAlert
+              standalone
+              title="Automation not deleted"
+              error={remove.data.error.message}
+              fallback="Hub couldn't delete this automation."
+            />
           ) : null}
           <DataTable
             label="Automations"
@@ -202,7 +225,11 @@ export function TriggersPanel() {
                   {trigger.draft === null ? (
                     <span className="text-muted-foreground">Advanced configuration</span>
                   ) : (
-                    <TwoLine path primary={trigger.draft.daemon} secondary={trigger.draft.cwd} />
+                    <TwoLine
+                      path
+                      primary={daemonAffinityLabel(trigger.draft.daemon)}
+                      secondary={trigger.draft.cwd}
+                    />
                   )}
                 </DataCell>
                 <DataCell>
@@ -219,6 +246,29 @@ export function TriggersPanel() {
                   <StatusPill tone={trigger.enabled ? "success" : "neutral"}>
                     {trigger.enabled ? "Active" : "Inactive"}
                   </StatusPill>
+                </DataCell>
+                <DataCell>
+                  {data.canManage ? (
+                    <RowActions label={`Actions for ${trigger.name}`}>
+                      <ConfirmMenuItem
+                        busy={remove.isPending}
+                        destructive
+                        label="Delete"
+                        title={`Delete ${trigger.name}?`}
+                        description="This automation stops. Past runs stay in the activity list."
+                        cancelLabel="Cancel"
+                        confirmLabel="Delete automation"
+                        onConfirm={() =>
+                          remove.mutate({
+                            data: {
+                              organizationSlug: scope.organizationSlug,
+                              triggerId: trigger.id,
+                            },
+                          })
+                        }
+                      />
+                    </RowActions>
+                  ) : null}
                 </DataCell>
               </DataRow>
             ))}
@@ -251,6 +301,17 @@ export function TriggerEditorPanel({ triggerId }: { triggerId: string }) {
       await navigate({ to: `/o/${organizationSlug}/triggers` as never });
     },
   });
+  const removeCommand = useServerFn(deleteTrigger) as (input: {
+    data: { organizationSlug: string; triggerId: string };
+  }) => Promise<Result<{ state: "complete" }>>;
+  const remove = useMutation({
+    mutationFn: removeCommand,
+    onSuccess: async (result) => {
+      if (result.status !== "ok") return;
+      await queryClient.invalidateQueries({ queryKey: ["triggers", organizationSlug] });
+      await navigate({ to: `/o/${organizationSlug}/triggers` as never });
+    },
+  });
   if (snapshot.status === "pending") return <TriggerEditorSkeleton />;
   if (snapshot.status === "error") {
     return <TriggerLoadError error={snapshot.error} />;
@@ -276,6 +337,16 @@ export function TriggerEditorPanel({ triggerId }: { triggerId: string }) {
       snapshot={data}
       saving={save.isPending}
       saveError={save.data?.status === "error" ? save.data.error.message : undefined}
+      deleting={remove.isPending}
+      deleteError={remove.data?.status === "error" ? remove.data.error.message : undefined}
+      onDelete={
+        trigger === null || trigger === undefined
+          ? undefined
+          : () =>
+              remove.mutate({
+                data: { organizationSlug, triggerId: trigger.id },
+              })
+      }
       onCancel={returnToList}
       onSave={(yaml) =>
         save.mutate({
@@ -313,6 +384,9 @@ function TriggerEditor({
   snapshot,
   saving,
   saveError,
+  deleting,
+  deleteError,
+  onDelete,
   onCancel,
   onSave,
 }: {
@@ -320,6 +394,9 @@ function TriggerEditor({
   snapshot: TriggerSnapshot;
   saving: boolean;
   saveError: string | undefined;
+  deleting: boolean;
+  deleteError: string | undefined;
+  onDelete: (() => void) | undefined;
   onCancel: () => void;
   onSave: (yaml: string) => void;
 }) {
@@ -380,6 +457,12 @@ function TriggerEditor({
         <Button asChild variant="outline" size="sm">
           <Link to={`/o/${snapshot.organization.slug}/activity` as never}>Run history</Link>
         </Button>
+        <DeleteAutomationAction
+          name={trigger?.name}
+          canManage={snapshot.canManage}
+          busy={deleting || saving}
+          onDelete={onDelete}
+        />
       </PageHeader>
       <div className="grid gap-6">
         <TriggerCompatibilityAlert
@@ -387,13 +470,7 @@ function TriggerEditor({
           advanced={editor.mode === "yaml" && editor.yamlOnly}
           reason={editor.mode === "yaml" ? editor.blocked : undefined}
         />
-        {saveError === undefined ? null : (
-          <FailureAlert
-            title="Trigger not saved"
-            error={saveError}
-            fallback="Hub couldn't save this trigger."
-          />
-        )}
+        <TriggerEditorAlerts saveError={saveError} deleteError={deleteError} />
         {editor.mode === "form" ? <TriggerRefusalSummary errors={editor.errors} /> : null}
         <div className="sm:hidden">{modeSwitch}</div>
         {/*
@@ -437,6 +514,59 @@ function TriggerEditor({
           </FormActions>
         </form>
       </div>
+    </>
+  );
+}
+
+function DeleteAutomationAction({
+  name,
+  canManage,
+  busy,
+  onDelete,
+}: {
+  name: string | undefined;
+  canManage: boolean;
+  busy: boolean;
+  onDelete: (() => void) | undefined;
+}) {
+  if (onDelete === undefined || !canManage) return null;
+  return (
+    <ConfirmAction
+      busy={busy}
+      destructive
+      label="Delete"
+      title={`Delete ${name ?? "this automation"}?`}
+      description="This automation stops. Past runs stay in the activity list."
+      cancelLabel="Cancel"
+      confirmLabel="Delete automation"
+      onConfirm={onDelete}
+    />
+  );
+}
+
+function TriggerEditorAlerts({
+  saveError,
+  deleteError,
+}: {
+  saveError: string | undefined;
+  deleteError: string | undefined;
+}) {
+  return (
+    <>
+      {saveError === undefined ? null : (
+        <FailureAlert
+          title="Trigger not saved"
+          error={saveError}
+          fallback="Hub couldn't save this trigger."
+        />
+      )}
+      {deleteError === undefined ? null : (
+        <FailureAlert
+          title="Automation not deleted"
+          error={deleteError}
+          fallback="Hub couldn't delete this automation."
+        />
+      )}
     </>
   );
 }
@@ -597,6 +727,99 @@ function fieldError(errors: TriggerFieldErrors, key: keyof TriggerFormValue) {
   return error === undefined ? {} : { error };
 }
 
+function catalogDaemon(
+  daemons: TriggerSnapshot["daemons"],
+  slug: string,
+): TriggerSnapshot["daemons"][number] | undefined {
+  if (!isAnyDaemonTarget(slug)) return daemons.find((daemon) => daemon.slug === slug);
+  return daemons.find((daemon) => daemon.presence === "connected") ?? daemons[0];
+}
+
+function DaemonAffinityField({
+  daemons,
+  value,
+  error,
+  onChange,
+}: {
+  daemons: TriggerSnapshot["daemons"];
+  value: string;
+  error: string | undefined;
+  onChange: (daemon: string) => void;
+}) {
+  if (daemons.length === 0) return null;
+  const options = [
+    { value: ANY_DAEMON, label: "Any", detail: "Whichever is connected" },
+    ...daemons.map((daemon) => ({
+      value: daemon.slug,
+      label: daemon.slug,
+      detail: daemon.presence === "connected" ? "Connected" : "Offline",
+    })),
+  ];
+  return (
+    <FormField
+      id="trigger-daemon"
+      label="Run on daemon"
+      description={
+        isAnyDaemonTarget(value)
+          ? "This automation runs on whichever daemon is connected. If none is connected, the run waits."
+          : "This automation runs on this daemon only. If that daemon is offline, the run waits."
+      }
+      required
+      {...(error === undefined ? {} : { error })}
+    >
+      {(control) => (
+        <Combobox
+          {...control}
+          required
+          value={value}
+          options={options}
+          placeholder="Select a daemon"
+          empty="No daemons found."
+          onChange={(option) => onChange(option.value)}
+        />
+      )}
+    </FormField>
+  );
+}
+
+function SingleAgentDeadlines({
+  form,
+  errors,
+  onChange,
+}: {
+  form: TriggerFormValue;
+  errors: TriggerFieldErrors;
+  onChange: (key: TriggerTextField) => (value: string) => void;
+}) {
+  if (form.flow !== undefined) return null;
+  return (
+    <>
+      <FormField
+        id="trigger-max-runtime"
+        label="Maximum runtime"
+        description="Hard deadline for the agent, for example 2h."
+        kind="text"
+        name="maxRuntime"
+        value={form.maxRuntime}
+        onChange={onChange("maxRuntime")}
+        required
+        {...fieldError(errors, "maxRuntime")}
+      />
+      <FormField
+        id="trigger-idle-timeout"
+        label="Idle timeout"
+        description="Stop an unresponsive agent, for example 10m."
+        kind="text"
+        name="idleTimeout"
+        value={form.idleTimeout}
+        onChange={onChange("idleTimeout")}
+        required
+        {...fieldError(errors, "idleTimeout")}
+      />
+    </>
+  );
+}
+
 function applyReactionFlow(
   form: TriggerFormValue,
   flow: ReactionFlow.Reaction[],
@@ -619,6 +842,8 @@ function applyReactionFlow(
         githubPermissions: agent.githubPermissions,
         githubDuration: agent.githubDuration,
         prompt: agent.prompt,
+        maxRuntime: agent.maxRuntime,
+        idleTimeout: agent.idleTimeout,
         slackAgent: agent.slackAgent,
       };
     }
@@ -649,11 +874,6 @@ function TriggerForm({
     value: connection.slug,
     label: connection.label,
   }));
-  const daemonOptions = snapshot.daemons.map((daemon) => ({
-    value: daemon.slug,
-    label: daemon.slug,
-    detail: daemon.presence,
-  }));
   const githubConnectionOptions = [
     { value: "", label: "Do not inject a GitHub token" },
     ...githubConnections.map((connection) => ({
@@ -668,7 +888,7 @@ function TriggerForm({
   const update = <Key extends keyof TriggerFormValue>(key: Key, value: TriggerFormValue[Key]) =>
     onChange({ ...form, [key]: value });
   const text = (key: TriggerTextField) => (value: string) => update(key, value);
-  const selectedDaemon = snapshot.daemons.find((daemon) => daemon.slug === form.daemon);
+  const selectedDaemon = catalogDaemon(snapshot.daemons, form.daemon);
   const noDaemons = snapshot.daemons.length === 0;
   const providerCatalog = useDaemonProviderCatalog(
     snapshot.organization.slug,
@@ -706,6 +926,22 @@ function TriggerForm({
           description="An inactive automation keeps its configuration and stops responding to events."
           checked={form.enabled}
           onChange={(checked) => update("enabled", checked)}
+        />
+        <DaemonAffinityField
+          daemons={snapshot.daemons}
+          value={form.daemon}
+          error={errors.daemon}
+          onChange={(daemon) =>
+            onChange({
+              ...form,
+              daemon,
+              agent: "",
+              mode: "",
+              thinkingOptionId: "",
+              cursorFast: "",
+              providerOptions: "",
+            })
+          }
         />
       </Card>
 
@@ -753,7 +989,12 @@ function TriggerForm({
                         eventDefinition(form.event).provider === "slack" &&
                         option.value !== form.connection
                       ) {
-                        onChange({ ...form, connection: option.value, channels: "" });
+                        onChange({
+                          ...form,
+                          connection: option.value,
+                          channels: "",
+                          eventChannels: {},
+                        });
                         return;
                       }
 
@@ -794,79 +1035,26 @@ function TriggerForm({
               }
             : {})}
         >
-          {noDaemons ? null : (
-            <>
+          {noDaemons || selectedDaemon === undefined ? null : (
+            <div className="grid gap-4 sm:grid-cols-2">
               <FormField
-                id="trigger-daemon"
-                label="Run on daemon"
+                id="trigger-cwd"
+                label="Working directory"
+                description="Absolute path of the checkout on the daemon, for example /home/you/repo. The agents you can run are read from there."
+                kind="text"
+                name="cwd"
+                value={form.cwd}
+                onChange={text("cwd")}
                 required
-                {...fieldError(errors, "daemon")}
-              >
-                {(control) => (
-                  <Combobox
-                    {...control}
-                    required
-                    value={form.daemon}
-                    options={daemonOptions}
-                    placeholder="Select a daemon"
-                    empty="No daemons found."
-                    onChange={(option) =>
-                      onChange({
-                        ...form,
-                        daemon: option.value,
-                        agent: "",
-                        mode: "",
-                        thinkingOptionId: "",
-                        cursorFast: "",
-                        providerOptions: "",
-                      })
-                    }
-                  />
-                )}
-              </FormField>
-              {selectedDaemon === undefined ? null : (
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <FormField
-                    id="trigger-cwd"
-                    label="Working directory"
-                    description="Absolute path of the checkout on the daemon, for example /home/you/repo. The agents you can run are read from there."
-                    kind="text"
-                    name="cwd"
-                    value={form.cwd}
-                    onChange={text("cwd")}
-                    required
-                    {...fieldError(errors, "cwd")}
-                  />
-                  <FormField
-                    id="trigger-max-runtime"
-                    label="Maximum runtime"
-                    description="Hard deadline for the agent, for example 2h."
-                    kind="text"
-                    name="maxRuntime"
-                    value={form.maxRuntime}
-                    onChange={text("maxRuntime")}
-                    required
-                    {...fieldError(errors, "maxRuntime")}
-                  />
-                  <FormField
-                    id="trigger-idle-timeout"
-                    label="Idle timeout"
-                    description="Stop an unresponsive agent, for example 10m."
-                    kind="text"
-                    name="idleTimeout"
-                    value={form.idleTimeout}
-                    onChange={text("idleTimeout")}
-                    required
-                    {...fieldError(errors, "idleTimeout")}
-                  />
-                  <WorktreeFields
-                    value={form.worktree}
-                    onChange={(worktree) => update("worktree", worktree)}
-                    {...fieldError(errors, "worktree")}
-                  />
-                </div>
-              )}
-            </>
+                {...fieldError(errors, "cwd")}
+              />
+              <SingleAgentDeadlines form={form} errors={errors} onChange={text} />
+              <WorktreeFields
+                value={form.worktree}
+                onChange={(worktree) => update("worktree", worktree)}
+                {...fieldError(errors, "worktree")}
+              />
+            </div>
           )}
         </Card>
 
@@ -902,7 +1090,7 @@ function TriggerForm({
                 />
               </div>
               {providerCatalog.loading ? (
-                <LoadingLine>{`Loading providers from ${form.daemon}…`}</LoadingLine>
+                <LoadingLine>{`Loading providers from ${selectedDaemon.slug}…`}</LoadingLine>
               ) : null}
               {providerCatalog.error === undefined ? null : (
                 <FailureAlert
@@ -1186,7 +1374,7 @@ const EDITOR_STEPS = {
   },
   target: {
     title: "Where it runs",
-    description: "The daemon owns compute, credentials, and sandboxing.",
+    description: "The checkout on the daemon this automation runs on.",
   },
   agent: {
     title: "What runs there",

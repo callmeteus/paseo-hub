@@ -2,7 +2,7 @@ import { EDITOR_EVENTS } from "./events.js";
 import { describe, expect, test } from "vitest";
 import { parseDocument } from "yaml";
 import { ReactionFlow } from "./reaction-form.js";
-import { singleAgentRun, TriggerDocumentSchema } from "./schema.js";
+import { isEnvReaction, singleAgentRun, TriggerDocumentSchema } from "./schema.js";
 import {
   changeTriggerEvent,
   createTriggerYaml,
@@ -537,6 +537,44 @@ run:
     expect(parsed.on["slack.mention"]?.filters?.channels).toEqual(["engineering"]);
   });
 
+  test("edits Slack events that listen to different channels", () => {
+    const yaml = `
+name: kevin-luckyops
+enabled: true
+on:
+  slack.message:
+    connection: company
+    filters:
+      from_users: ["*"]
+      channels: ["C0BA6DKUQJJ"]
+      direct_messages: true
+  slack.mention:
+    connection: company
+    filters:
+      from_users: ["*"]
+      channels: ["C0BB3ESNU9W", "C0BA6DKUQJJ"]
+run:
+  target:
+    daemon: gio-predator-phn16-71
+    cwd: /home/gio/luckymaker-workspace
+  agent:
+    provider: cursor
+    mode: agent
+  prompt: Reply.
+`;
+    const projection = projectTriggerForm(yaml);
+    if (projection.status !== "editable") throw new Error(projection.reason);
+    expect(projection.value.directMessages).toBe(true);
+    expect(projection.value.eventChannels?.["slack.message"]).toBe("C0BA6DKUQJJ");
+    expect(projection.value.eventChannels?.["slack.mention"]).toBe("C0BB3ESNU9W, C0BA6DKUQJJ");
+    const parsed = TriggerDocumentSchema.parse(
+      parseDocument(patchTriggerYaml(yaml, projection.value)).toJS(),
+    );
+    expect(parsed.on["slack.message"]?.filters?.channels).toEqual(["C0BA6DKUQJJ"]);
+    expect(parsed.on["slack.message"]?.filters?.direct_messages).toBe(true);
+    expect(parsed.on["slack.mention"]?.filters?.channels).toEqual(["C0BB3ESNU9W", "C0BA6DKUQJJ"]);
+  });
+
   test("keeps events that disagree in YAML-only mode", () => {
     const projection = projectTriggerForm(`
 name: split
@@ -999,6 +1037,111 @@ test("keeps guardrails when a reaction flow is saved from the form", () => {
     { id: "slack.same_thread", options: {} },
   ]);
 });
+
+test("edits env, HTTP, and agents that use different deadlines", () => {
+  const yaml = `
+name: pedido-deploy
+enabled: true
+max_runtime: 3h
+on:
+  slack.message:
+    connection: company
+    filters:
+      from_users: ["*"]
+      channels: ["C096XDA2478"]
+      contains_any: ["Deploy Request"]
+run:
+  target:
+    daemon: gio-predator-phn16-71
+    cwd: /home/gio/luckymaker-workspace
+  guardrails:
+    - id: slack.same_channel
+  reactions:
+    - id: secrets
+      env:
+        files: ["~/.lm.credentials"]
+    - id: lookup
+      http:
+        method: GET
+        url: https://e7bot.even7.dev/admin/api/deploys
+        number_from_prompt: true
+        headers:
+          Authorization: "Bearer token"
+    - id: assign
+      http:
+        method: POST
+        url: https://e7bot.even7.dev/admin/api/deploys
+        number_from_prompt: true
+        path: assign
+        headers:
+          Authorization: "Bearer token"
+    - id: kind
+      agent:
+        provider: cursor
+        mode: agent
+      prompt: Classify.
+      max_runtime: 10m
+      idle_timeout: 2m
+    - id: compile
+      agent:
+        provider: cursor
+        mode: agent
+      prompt: Compile.
+      max_runtime: 2h
+      idle_timeout: 1h
+`;
+  const projection = projectTriggerForm(yaml);
+  if (projection.status !== "editable") throw new Error(projection.reason);
+  const flow = projection.value.flow;
+  if (flow === undefined) throw new Error("expected a reaction flow");
+  expectProjectedDeploy(flow);
+  const saved = TriggerDocumentSchema.parse(
+    parseDocument(patchTriggerYaml(yaml, projection.value)).toJS(),
+  );
+  expectSavedDeploy(saved);
+});
+
+function expectProjectedDeploy(flow: ReactionFlow.Reaction[]): void {
+  expect(flow.map((reaction) => reaction.type)).toEqual(["env", "http", "http", "agent", "agent"]);
+  const secrets = flow[0];
+  const lookup = flow[1];
+  const assign = flow[2];
+  const kind = flow[3];
+  const compile = flow[4];
+  if (secrets?.type !== "env" || lookup?.type !== "http" || assign?.type !== "http") {
+    throw new Error("expected env and http reactions");
+  }
+  if (kind?.type !== "agent" || compile?.type !== "agent") throw new Error("expected agents");
+  expect(secrets.files).toBe("~/.lm.credentials");
+  expect(lookup.method).toBe("GET");
+  expect(assign.method).toBe("POST");
+  expect(kind.maxRuntime).toBe("10m");
+  expect(compile.maxRuntime).toBe("2h");
+  expect(compile.idleTimeout).toBe("1h");
+}
+
+function expectSavedDeploy(saved: ReturnType<typeof TriggerDocumentSchema.parse>): void {
+  expect(saved.max_runtime).toBe("3h");
+  if (!("reactions" in saved.run)) throw new Error("expected reactions");
+  const [savedSecrets, savedLookup, savedAssign, savedKind, savedCompile] = saved.run.reactions;
+  if (savedSecrets === undefined || !isEnvReaction(savedSecrets)) throw new Error("expected env");
+  if (savedLookup === undefined || !("http" in savedLookup)) throw new Error("expected GET");
+  if (savedAssign === undefined || !("http" in savedAssign)) throw new Error("expected POST");
+  if (savedKind === undefined || !("agent" in savedKind)) throw new Error("expected kind");
+  if (savedCompile === undefined || !("agent" in savedCompile)) {
+    throw new Error("expected compile");
+  }
+  expect(savedSecrets.env.files).toEqual(["~/.lm.credentials"]);
+  expect(savedLookup.http.method).toBe("GET");
+  expect(savedLookup.http.path).toBeUndefined();
+  expect(savedAssign.http.path).toBe("assign");
+  expect(savedKind.max_runtime).toBe("10m");
+  expect(savedKind.idle_timeout).toBe("2m");
+  expect(savedCompile.max_runtime).toBe("2h");
+  expect(savedCompile.idle_timeout).toBe("1h");
+  expect(saved.run.guardrails).toEqual([{ id: "slack.same_channel" }]);
+  expect(saved.on["slack.message"]?.filters?.contains_any).toEqual(["Deploy Request"]);
+}
 
 test("rejects a wait duration the form cannot store", () => {
   const projection = projectTriggerForm(reactionYaml);

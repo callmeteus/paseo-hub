@@ -17,6 +17,7 @@ const saveSchema = scopeSchema.extend({
   triggerId: z.string().uuid().optional(),
   yaml: z.string().min(1),
 });
+const deleteSchema = scopeSchema.extend({ triggerId: z.string().uuid() });
 
 export const triggerSnapshot = createServerFn({ method: "GET" })
   .validator(scopeSchema)
@@ -67,6 +68,23 @@ export const saveTrigger = createServerFn({ method: "POST" })
         forbidden: "You don't have permission to manage triggers.",
         validation: error instanceof Error ? error.message : "This trigger is invalid.",
         conflict: "A trigger with this name already exists.",
+      });
+    }
+  });
+
+export const deleteTrigger = createServerFn({ method: "POST" })
+  .validator(deleteSchema)
+  .handler(async ({ data }): Promise<Result<{ state: "complete" }>> => {
+    try {
+      const dashboard = (await getApplication()).triggerDashboard;
+      if (dashboard == null) throw new Error("trigger dashboard unavailable");
+      await dashboard.delete(getRequest(), data.organizationSlug, data.triggerId);
+      return respondOk({ state: "complete" });
+    } catch (error) {
+      return respondWithFailure(error, triggerContext("trigger.delete", data.organizationSlug), {
+        fallback: "Hub couldn't delete this automation.",
+        forbidden: "You don't have permission to manage automations.",
+        notFound: "This automation is no longer in this organization.",
       });
     }
   });

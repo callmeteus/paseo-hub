@@ -1693,6 +1693,12 @@ export interface Database {
     triggerId: string,
   ): Promise<OrganizationTriggerRevisionRecord | undefined>;
   saveOrganizationTrigger(input: SaveOrganizationTriggerInput): Promise<OrganizationTriggerRecord>;
+  /**
+   * Removes one organization trigger and stops it from receiving events.
+   *
+   * Past runs stay on the runtime project. That project is archived so it no longer matches.
+   */
+  deleteOrganizationTrigger(organizationId: string, triggerId: string): Promise<void>;
   listProjectsForOrganization(organizationId: string): Promise<ProjectRecord[]>;
   findProjectForOrganization(
     organizationId: string,

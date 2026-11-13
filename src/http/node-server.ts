@@ -249,9 +249,11 @@ function requestHeaders(incoming: IncomingMessage): Headers {
 }
 
 function requestOrigin(incoming: IncomingMessage, options: FetchServerOptions): string {
-  if (options.canonicalRequestOrigin !== undefined) return options.canonicalRequestOrigin;
   const directProtocol = Reflect.get(incoming.socket, "encrypted") === true ? "https" : "http";
   const directHost = incoming.headers.host;
+  if (options.canonicalRequestOrigin !== undefined) {
+    return loopbackPinOrDirectHost(options.canonicalRequestOrigin, directProtocol, directHost);
+  }
   if (options.trustedClientIpHeader === undefined) {
     return validatedOrigin(directProtocol, directHost);
   }
@@ -260,6 +262,27 @@ function requestOrigin(incoming: IncomingMessage, options: FetchServerOptions): 
   return forwardedProtocol === undefined || forwardedHost === undefined
     ? validatedOrigin(directProtocol, directHost)
     : validatedOrigin(forwardedProtocol, forwardedHost);
+}
+
+function loopbackPinOrDirectHost(
+  canonical: string,
+  protocol: string,
+  host: string | undefined,
+): string {
+  // The embedded Hub pins its public URL to loopback. A browser that opened it
+  // through another host, such as Tailscale, has to keep that host.
+  if (!isLoopbackHostname(new URL(canonical).hostname) || host === undefined) return canonical;
+  try {
+    const direct = validatedOrigin(protocol, host);
+    return isLoopbackHostname(new URL(direct).hostname) ? canonical : direct;
+  } catch {
+    return canonical;
+  }
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/gu, "");
+  return host === "localhost" || host === "127.0.0.1" || host === "::1";
 }
 
 function parseHttpOrigin(value: string): string {

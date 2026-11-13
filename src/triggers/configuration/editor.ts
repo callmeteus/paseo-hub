@@ -70,10 +70,14 @@ export interface TriggerFormValue {
   events: EditorEvent[];
   /** Slack messages from other apps. Written on `slack.message` only. */
   includeBots: boolean;
+  /** A one-to-one Slack direct message can run `slack.message`. Off when omitted. */
+  directMessages?: boolean;
   connection: string;
   allowedUsers: string;
   /** People each event listens to. The primary event also uses `allowedUsers`. */
   eventUsers?: Partial<Record<EditorEvent, string>>;
+  /** Channel ids each event listens to. The primary event also uses `channels`. */
+  eventChannels?: Partial<Record<EditorEvent, string>>;
   /**
    * One Slack message item per line. A line that starts with `regex:` is an expression.
    * Any other line is literal text. Every line has to match that event's message.
@@ -161,7 +165,9 @@ function projectFlowForm(
       event,
       events: projected.events,
       includeBots: projected.includeBots,
+      directMessages: projected.directMessages,
       eventUsers: projected.eventUsers,
+      eventChannels: projected.eventChannels,
       regex: projected.regex,
       ...eventFormFields(event, definition),
       daemon: trigger.run.target.daemon,
@@ -196,7 +202,9 @@ function toFormValue(
     event,
     events: projected.events,
     includeBots: projected.includeBots,
+    directMessages: projected.directMessages,
     eventUsers: projected.eventUsers,
+    eventChannels: projected.eventChannels,
     regex: projected.regex,
     ...eventFormFields(event, definition),
     ...runFormFields(run, agent),

@@ -66,7 +66,30 @@ export namespace ReactionFlow {
     else: Reaction[];
   }
 
-  export type Reaction = Agent | Wait | Condition;
+  /** Dotenv files loaded before the next reaction. One path per line. */
+  export interface Env {
+    type: "env";
+    id: string;
+    files: string;
+  }
+
+  /** One HTTPS request. POST always uses the assign path. */
+  export interface Http {
+    type: "http";
+    id: string;
+    method: "GET" | "POST";
+    url: string;
+    headers: string;
+  }
+
+  /** A note stored on the run. It does not send a message. */
+  export interface Notice {
+    type: "notice";
+    id: string;
+    text: string;
+  }
+
+  export type Reaction = Agent | Wait | Condition | Env | Http | Notice;
   export type Kind = Reaction["type"];
 
   export type Projection =
@@ -91,17 +114,6 @@ export namespace ReactionFlow {
     const flow = projected.flow;
     const agents = listAgents(flow);
     const first = agents[0];
-    if (first !== undefined) {
-      const mixed = agents.some(
-        (agent) => agent.maxRuntime !== first.maxRuntime || agent.idleTimeout !== first.idleTimeout,
-      );
-      if (mixed) {
-        return {
-          status: "yaml_only",
-          reason: "Agent reactions use different deadlines. Edit those in YAML.",
-        };
-      }
-    }
     return {
       status: "editable",
       flow,
@@ -153,7 +165,7 @@ export namespace ReactionFlow {
           visit(reaction.else);
           continue;
         }
-        Object.assign(found, agentErrors(reaction, events));
+        Object.assign(found, reactionFieldErrors(reaction, events));
       }
     };
     visit(flow);
@@ -244,7 +256,13 @@ export namespace ReactionFlow {
   export function update(
     flow: readonly Reaction[],
     id: string,
-    patch: Partial<Agent> | Partial<Wait> | Partial<Condition>,
+    patch:
+      | Partial<Agent>
+      | Partial<Wait>
+      | Partial<Condition>
+      | Partial<Env>
+      | Partial<Http>
+      | Partial<Notice>,
   ): Reaction[] {
     return flow.map((reaction) => {
       if (reaction.id === id) return applyPatch(reaction, patch);
@@ -315,6 +333,128 @@ function cursorFast(value: string | undefined): string {
   return "";
 }
 
+function projectPlainReaction(
+  reaction: TriggerReaction,
+  existing: readonly ReactionFlow.Reaction[],
+):
+  | { status: "editable"; reaction: ReactionFlow.Reaction }
+  | { status: "yaml_only"; reason: string }
+  | undefined {
+  if (isEnvReaction(reaction)) {
+    return {
+      status: "editable",
+      reaction: {
+        type: "env",
+        id: reaction.id ?? nextId("env", existing),
+        files: reaction.env.files.join("\n"),
+      },
+    };
+  }
+  if ("http" in reaction) {
+    return {
+      status: "editable",
+      reaction: {
+        type: "http",
+        id: reaction.id ?? nextId("http", existing),
+        method: reaction.http.method,
+        url: reaction.http.url,
+        headers: headerLines(reaction.http.headers),
+      },
+    };
+  }
+  if ("notice" in reaction) {
+    return {
+      status: "editable",
+      reaction: {
+        type: "notice",
+        id: reaction.id ?? nextId("notice", existing),
+        text: reaction.notice.text,
+      },
+    };
+  }
+  return undefined;
+}
+
+function reactionFieldErrors(
+  reaction: ReactionFlow.Reaction,
+  events: readonly string[],
+): Record<string, string> {
+  if (reaction.type === "env") return envErrors(reaction);
+  if (reaction.type === "http") return httpErrors(reaction);
+  if (reaction.type === "notice") return noticeErrors(reaction);
+  if (reaction.type !== "agent") return {};
+  return agentErrors(reaction, events);
+}
+
+function envErrors(reaction: ReactionFlow.Env): Record<string, string> {
+  if (lines(reaction.files).length > 0) return {};
+  return { [`flow.${reaction.id}.files`]: "Add one dotenv path per line." };
+}
+
+function httpErrors(reaction: ReactionFlow.Http): Record<string, string> {
+  const found: Record<string, string> = {};
+  if (!reaction.url.trim().startsWith("https://")) {
+    found[`flow.${reaction.id}.url`] = "The URL must start with https://.";
+  }
+  const headers = headerError(reaction.headers);
+  if (headers !== undefined) found[`flow.${reaction.id}.headers`] = headers;
+  return found;
+}
+
+function noticeErrors(reaction: ReactionFlow.Notice): Record<string, string> {
+  if (reaction.text.trim().length > 0) return {};
+  return { [`flow.${reaction.id}.text`]: "Notice text is required." };
+}
+
+function headerError(value: string): string | undefined {
+  const rows = lines(value);
+  if (rows.length === 0) return "Add one header, Name: value.";
+  const broken = rows.some((row) => {
+    const separator = row.indexOf(":");
+    return separator <= 0 || row.slice(separator + 1).trim().length === 0;
+  });
+  return broken ? "Write each header as Name: value." : undefined;
+}
+
+function lines(value: string): string[] {
+  return value
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
+function headerLines(headers: Record<string, string>): string {
+  return Object.entries(headers)
+    .map(([name, value]) => `${name}: ${value}`)
+    .join("\n");
+}
+
+function headerRecord(value: string): Record<string, string> {
+  const headers: Record<string, string> = {};
+  for (const row of lines(value)) {
+    const separator = row.indexOf(":");
+    if (separator <= 0) continue;
+    const name = row.slice(0, separator).trim();
+    const header = row.slice(separator + 1).trim();
+    if (name.length === 0 || header.length === 0) continue;
+    headers[name] = header;
+  }
+  return headers;
+}
+
+function yamlHttp(reaction: ReactionFlow.Http): unknown {
+  return {
+    id: reaction.id,
+    http: {
+      method: reaction.method,
+      url: reaction.url.trim(),
+      number_from_prompt: true,
+      ...(reaction.method === "POST" ? { path: "assign" as const } : {}),
+      headers: headerRecord(reaction.headers),
+    },
+  };
+}
+
 function projectReaction(
   reaction: TriggerReaction,
   existing: readonly ReactionFlow.Reaction[],
@@ -332,6 +472,8 @@ function projectReaction(
     };
   }
   if (isEnvReaction(reaction) || "http" in reaction || "notice" in reaction) {
+    const plain = projectPlainReaction(reaction, existing);
+    if (plain !== undefined) return plain;
     return {
       status: "yaml_only",
       reason: "Env, HTTP and notice reactions can only be edited in YAML.",
@@ -428,6 +570,11 @@ function blank(
   existing: readonly ReactionFlow.Reaction[],
 ): ReactionFlow.Reaction {
   if (kind === "wait") return { type: "wait", id: nextId("wait", existing), duration: "5m" };
+  if (kind === "env") return { type: "env", id: nextId("env", existing), files: "" };
+  if (kind === "http") {
+    return { type: "http", id: nextId("http", existing), method: "GET", url: "", headers: "" };
+  }
+  if (kind === "notice") return { type: "notice", id: nextId("notice", existing), text: "" };
   if (kind === "if") {
     const agent = blankAgent(existing);
     return {
@@ -494,6 +641,12 @@ function agentErrors(
   if (reaction.agent.trim().length === 0) found[`flow.${reaction.id}.agent`] = "Agent is required.";
   if (reaction.mode.trim().length === 0)
     found[`flow.${reaction.id}.mode`] = "Execution mode is required.";
+  if (!DURATION.test(reaction.maxRuntime.trim())) {
+    found[`flow.${reaction.id}.maxRuntime`] = "Use a duration such as 30s, 5m, or 2h.";
+  }
+  if (!DURATION.test(reaction.idleTimeout.trim())) {
+    found[`flow.${reaction.id}.idleTimeout`] = "Use a duration such as 30s, 5m, or 2h.";
+  }
   const instructions = instructionError(reaction.prompt);
   if (instructions !== undefined) found[`flow.${reaction.id}.prompt`] = instructions;
   if (reaction.continuationMode === "key" && reaction.continuationKey.trim().length === 0) {
@@ -567,6 +720,13 @@ function yamlReaction(
   if (reaction.type === "wait") {
     return { id: reaction.id, wait: { for: reaction.duration.trim() } };
   }
+  if (reaction.type === "env") {
+    return { id: reaction.id, env: { files: lines(reaction.files) } };
+  }
+  if (reaction.type === "http") return yamlHttp(reaction);
+  if (reaction.type === "notice") {
+    return { id: reaction.id, notice: { text: reaction.text } };
+  }
   if (reaction.type === "if") {
     const elseReactions = ReactionFlow.toYaml(reaction.else, shared);
     return {
@@ -600,8 +760,8 @@ function yamlReaction(
         ? { mode: "key", key: reaction.continuationKey.trim() }
         : { mode: reaction.continuationMode === "new" ? "new" : "conversation" },
     prompt: instructionsDocument(reaction.prompt),
-    max_runtime: shared.maxRuntime.trim(),
-    idle_timeout: shared.idleTimeout.trim(),
+    max_runtime: reaction.maxRuntime.trim(),
+    idle_timeout: reaction.idleTimeout.trim(),
     ...(github === undefined ? {} : { github }),
     ...slackAgentYaml(reaction, shared.events),
   };
@@ -661,10 +821,10 @@ function parseOptions(value: string): Record<string, unknown> | undefined {
   return record;
 }
 
-function applyPatch(
-  reaction: ReactionFlow.Reaction,
-  patch: Partial<ReactionFlow.Agent> | Partial<ReactionFlow.Wait> | Partial<ReactionFlow.Condition>,
-): ReactionFlow.Reaction {
+function applyPatch(reaction: ReactionFlow.Reaction, patch: object): ReactionFlow.Reaction {
+  if (reaction.type === "env" || reaction.type === "http" || reaction.type === "notice") {
+    return applyPlainPatch(reaction, patch);
+  }
   if (reaction.type === "wait") {
     const duration = readPatchString(patch, "duration");
     return duration === undefined ? reaction : { ...reaction, duration };
@@ -697,11 +857,38 @@ function applyPatch(
     "githubRepositories",
     "githubPermissions",
     "githubDuration",
+    "maxRuntime",
+    "idleTimeout",
   ] as const) {
     const value = readPatchString(patch, field);
     if (value !== undefined) next[field] = value;
   }
   return next;
+}
+
+function applyPlainPatch(reaction: ReactionFlow.Reaction, patch: object): ReactionFlow.Reaction {
+  if (reaction.type === "env") {
+    const files = readPatchString(patch, "files");
+    return files === undefined ? reaction : { ...reaction, files };
+  }
+  if (reaction.type === "http") return patchHttp(reaction, patch);
+  if (reaction.type === "notice") {
+    const text = readPatchString(patch, "text");
+    return text === undefined ? reaction : { ...reaction, text };
+  }
+  return reaction;
+}
+
+function patchHttp(reaction: ReactionFlow.Http, patch: object): ReactionFlow.Http {
+  const method = readPatchString(patch, "method");
+  const url = readPatchString(patch, "url");
+  const headers = readPatchString(patch, "headers");
+  return {
+    ...reaction,
+    ...(method === "GET" || method === "POST" ? { method } : {}),
+    ...(url === undefined ? {} : { url }),
+    ...(headers === undefined ? {} : { headers }),
+  };
 }
 
 function readInstructionPatch(patch: object): InstructionDraft[] | undefined {
@@ -752,7 +939,14 @@ function ownValue(patch: object, key: string): unknown {
 function isReaction(value: unknown): value is ReactionFlow.Reaction {
   if (typeof value !== "object" || value === null || !("type" in value)) return false;
   const kind = value.type;
-  return kind === "agent" || kind === "wait" || kind === "if";
+  return (
+    kind === "agent" ||
+    kind === "wait" ||
+    kind === "if" ||
+    kind === "env" ||
+    kind === "http" ||
+    kind === "notice"
+  );
 }
 
 function githubAuthority(reaction: ReactionFlow.Agent): Record<string, unknown> | undefined {

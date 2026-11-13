@@ -3413,6 +3413,37 @@ class PgDatabase implements Database {
     });
   }
 
+  async deleteOrganizationTrigger(organizationId: string, triggerId: string): Promise<void> {
+    await this.pool.transaction(async (client) => {
+      const current = await client.query<{ runtime_project_id: string }>(
+        `select runtime_project_id from organization_triggers
+         where id = $1 and organization_id = $2
+         for update`,
+        [triggerId, organizationId],
+      );
+      const trigger = current.rows[0];
+      if (trigger === undefined) throw new Error("organization trigger not found");
+      // The active revision points back at this row. Clear it before the cascade.
+      await client.query(
+        `update organization_triggers set active_revision_id = null where id = $1`,
+        [triggerId],
+      );
+      await client.query(`delete from organization_triggers where id = $1`, [triggerId]);
+      await client.query(`delete from project_trigger_routes where project_id = $1`, [
+        trigger.runtime_project_id,
+      ]);
+      await client.query(
+        `update projects
+         set status = 'archived',
+             archived_at = clock_timestamp(),
+             active_configuration_revision_id = null,
+             updated_at = clock_timestamp()
+         where id = $1 and organization_id = $2`,
+        [trigger.runtime_project_id, organizationId],
+      );
+    });
+  }
+
   async findProjectForOrganization(organizationId: string, projectId: string) {
     const rows = await query<ProjectRow>(
       this.pool,

@@ -1,3 +1,8 @@
+import {
+  AnyDaemonUnavailable,
+  launchDaemonTarget,
+  pickDispatchDaemon,
+} from "../triggers/configuration/any-daemon.js";
 import { outputContextForSlackAgentStep } from "../triggers/slack/agent-block.js";
 import { slackReactGrant } from "../triggers/slack/react.js";
 import { continuationKey } from "../triggers/continuation.js";
@@ -324,6 +329,25 @@ export class DurableWorkflowEngine {
     ) {
       return;
     }
+    return await this.dispatchPreparedWakeup(database, wakeup, {
+      run,
+      configuration,
+      triggerName,
+      trigger,
+      steps,
+      next,
+      step,
+      context,
+      recoverPreHandoffDispatch,
+    });
+  }
+
+  private async dispatchPreparedWakeup(
+    database: Database,
+    wakeup: WorkflowWakeupRecord,
+    prepared: PreparedWorkflowWakeup,
+  ): Promise<"deferred" | void> {
+    const { run, configuration, triggerName, trigger, steps, next, step, context } = prepared;
     const startedAt = this.now();
     const { deadlineAt, idleDeadlineAt } = stepDeadlines(run.deadlineAt, step, startedAt);
     const preparedIntent = await this.buildMaterializedStepIntentOrFail(
@@ -337,6 +361,10 @@ export class DurableWorkflowEngine {
       deadlineAt,
     );
     if (preparedIntent === undefined) return;
+    if (preparedIntent === "deferred") {
+      await this.releaseUnavailableWakeup(wakeup);
+      return "deferred";
+    }
     const { executionId, intent } = preparedIntent;
     if (await this.deferUnavailableDispatch(intent, wakeup)) return "deferred";
     if (await this.failInvalidLaunchIntent(database, run, step, intent)) return;
@@ -380,7 +408,7 @@ export class DurableWorkflowEngine {
       await this.handleExistingWorkflowExecution(
         created.execution,
         next.id,
-        recoverPreHandoffDispatch,
+        prepared.recoverPreHandoffDispatch,
       );
       await database.deleteWorkflowWakeup(run.id);
       return;
@@ -554,12 +582,56 @@ export class DurableWorkflowEngine {
     wakeup: WorkflowWakeupRecord,
   ): Promise<boolean> {
     if (this.options.canDispatchToDaemon?.(intent.environment.daemonId) !== false) return false;
+    await this.releaseUnavailableWakeup(wakeup);
+    return true;
+  }
+
+  private async pickAnyDaemon(
+    organizationId: string,
+  ): Promise<{ id: string; slug: string } | undefined> {
+    const database = this.options.database;
+    if (database === null) return undefined;
+    return pickDispatchDaemon(
+      await database.listDaemonsForOrganization(organizationId),
+      this.options.canDispatchToDaemon,
+    );
+  }
+
+  private async intentOrDefer(
+    configuration: CompiledProjectConfiguration,
+    triggerName: string,
+    trigger: CompiledProjectConfiguration["triggers"][number],
+    step: CompiledProjectConfiguration["triggers"][number]["steps"][number],
+    run: AcceptedWorkflowRun,
+    context: ExpressionContext,
+    stepRunId: string,
+    deadlineAt: Date,
+    executionId: string,
+  ): Promise<LaunchMachineIntent | "deferred" | undefined> {
+    try {
+      return await this.buildStepIntentOrFail(
+        configuration,
+        triggerName,
+        trigger,
+        step,
+        run,
+        context,
+        stepRunId,
+        deadlineAt,
+        executionId,
+      );
+    } catch (error) {
+      if (error instanceof AnyDaemonUnavailable) return "deferred";
+      throw error;
+    }
+  }
+
+  private async releaseUnavailableWakeup(wakeup: WorkflowWakeupRecord): Promise<void> {
     await this.options.database!.releaseWorkflowWakeup(
       wakeup.triggerRunId,
       this.now(),
       wakeup.leaseExpiresAt!,
     );
-    return true;
   }
 
   private async linkWorkflowStepAndNotifyStart(
@@ -721,6 +793,7 @@ export class DurableWorkflowEngine {
         deadlineAt,
         executionId,
         this.options.readPromptInstruction,
+        () => this.pickAnyDaemon(run.organizationId),
       );
     } catch (error) {
       if (
@@ -793,7 +866,7 @@ export class DurableWorkflowEngine {
     context: ExpressionContext,
     stepRunId: string,
     deadlineAt: Date,
-  ): Promise<{ executionId: string; intent: LaunchMachineIntent } | undefined> {
+  ): Promise<{ executionId: string; intent: LaunchMachineIntent } | "deferred" | undefined> {
     const existing = await this.options.database?.findAgentExecutionByWorkflowStepRunId(stepRunId);
     if (existing?.launchIntent !== null && existing?.launchIntent !== undefined) {
       return { executionId: existing.id, intent: existing.launchIntent };
@@ -806,7 +879,7 @@ export class DurableWorkflowEngine {
     });
     const materializedContext = await this.materializeStepContextOrFail(run, step, executionId);
     if (materializedContext === undefined) return undefined;
-    const intent = await this.buildStepIntentOrFail(
+    const intent = await this.intentOrDefer(
       configuration,
       triggerName,
       trigger,
@@ -818,6 +891,7 @@ export class DurableWorkflowEngine {
       executionId,
     );
     if (intent === undefined) return undefined;
+    if (intent === "deferred") return "deferred";
     if (durableExecutionId(intent) !== executionId) {
       throw new Error("workflow execution identity changed during context materialization");
     }
@@ -1117,6 +1191,7 @@ async function buildStepIntent(
   deadlineAt: Date,
   executionId: string,
   readPromptInstruction: PromptInstructionReader | undefined,
+  pickAnyDaemon: (() => Promise<{ id: string; slug: string } | undefined>) | undefined,
 ): Promise<LaunchMachineIntent> {
   if (isCompiledStaticStep(step)) {
     throw new Error(`step ${step.id} does not launch an agent`);
@@ -1135,6 +1210,7 @@ async function buildStepIntent(
   ) {
     throw new Error(`workflow environment ${environmentName} is unavailable`);
   }
+  const target = await launchDaemonTarget(environment, pickAnyDaemon);
   const agent = materializeAgent(step.agent, context);
   const composed = await composeLaunchPrompt({
     blocks: step.prompt,
@@ -1151,8 +1227,8 @@ async function buildStepIntent(
       environmentName,
       environment: {
         kind: "daemon",
-        daemonId: environment.daemonId,
-        authoredSlug: environment.daemon,
+        daemonId: target.daemonId,
+        authoredSlug: target.authoredSlug,
         cwd: environment.cwd,
         ...(environment.worktree === undefined
           ? {}
