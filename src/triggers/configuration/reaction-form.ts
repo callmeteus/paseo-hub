@@ -786,9 +786,24 @@ function isSlackAgentDraft(value: unknown): value is SlackAgentDraft {
   if (!("promptsTitle" in value) || typeof value.promptsTitle !== "string") return false;
   if (!("prompts" in value) || !Array.isArray(value.prompts)) return false;
   if (!value.prompts.every((item) => isPromptDraft(item))) return false;
+  return isOptionalSlackAgentFields(value);
+}
+
+/**
+ * The two optional fields, filled in so a draft saved before them still validates.
+ *
+ * @param value - Candidate draft
+ * @returns Whether both fields hold a value the form can render
+ */
+function isOptionalSlackAgentFields(value: object): boolean {
   if ("feedback" in value && typeof value.feedback !== "boolean") return false;
   if (!("feedback" in value)) Object.assign(value, { feedback: false });
-  return true;
+  if (!("assistantText" in value)) {
+    Object.assign(value, { assistantText: "" });
+    return true;
+  }
+  const mode = value["assistantText"];
+  return mode === "" || mode === "none" || mode === "final" || mode === "all";
 }
 
 function isPromptDraft(value: unknown): value is { id: string; title: string; message: string } {

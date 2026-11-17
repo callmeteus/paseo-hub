@@ -1249,7 +1249,11 @@ async function buildStepIntent(
       autoArchive: step.autoArchive,
       background: step.background,
       triggerContext: run.triggerContext,
-      outputContext: outputContextForSlackAgentStep(run.outputContext, step.slackAgent),
+      outputContext: outputContextForSlackAgentStep(
+        run.outputContext,
+        step.slackAgent,
+        step.allowOutputs,
+      ),
       ...(trigger.guardrails === undefined ? {} : { guardrails: trigger.guardrails }),
       configurationRevisionId: run.configurationRevisionId,
       hubConfig: configuration,
