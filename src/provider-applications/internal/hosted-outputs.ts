@@ -73,7 +73,7 @@ function hostedOutput<Active extends HostedActive>(
       const output = slot.active?.registration.outputs.find((candidate) => candidate.type === type);
       return output !== undefined && (output.available?.(context) ?? true);
     },
-    execute: (input) => {
+    execute: async (input) => {
       const active = slot.active;
       const output = active?.registration.outputs.find((candidate) => candidate.type === type);
 
@@ -82,7 +82,12 @@ function hostedOutput<Active extends HostedActive>(
         throw unavailable(`${provider}_output_unavailable`);
       }
 
-      return withLease(active, () => output.execute(input));
+      // A read-only output answers with text the model reads; the lease only owns the call.
+      let result: string | void = undefined;
+      await withLease(active, async () => {
+        result = await output.execute(input);
+      });
+      return result;
     },
   };
 }

@@ -29,6 +29,12 @@ import { createSlackTriggerProvider } from "../../triggers/slack/provider.js";
 import { organizationBillingUrl } from "../../triggers/failure-notice.js";
 import { createSlackAttachmentResolver } from "../../triggers/slack/attachments.js";
 import { createSlackReactExecutor, reactOutputTool } from "../../triggers/slack/react.js";
+import {
+  createSlackReadMessagesExecutor,
+  readSlackMessagesTool,
+  SlackReadMessagesError,
+  type SlackMessageReader,
+} from "../../triggers/slack/read-messages.js";
 import { createSlackReplyExecutor } from "../../triggers/slack/reply.js";
 import { outputContextProvider, replyOutputTool } from "../../execution-capabilities/outputs.js";
 import {
@@ -49,7 +55,12 @@ import {
   type SlackInstallation,
   SlackBotVerificationError,
 } from "./client.js";
+import { listSlackMemberChannels } from "./channels.js";
+import { readSlackChannelHistory } from "./history.js";
 import { readSlackBotGrant } from "./installation.js";
+
+/** Output type of the read-only Slack tool. Validated by `OUTPUT_TYPE` in the config compiler. */
+export const SLACK_READ_MESSAGES_OUTPUT_TYPE = "slack.read_messages";
 
 export type SlackRegistrationConfiguration =
   | {
@@ -231,6 +242,14 @@ export function createSlackRegistration(
         available: outputContextProvider("slack"),
         execute: createSlackReactExecutor({ client: bot }),
       },
+      {
+        type: SLACK_READ_MESSAGES_OUTPUT_TYPE,
+        tool: readSlackMessagesTool,
+        available: outputContextProvider("slack"),
+        execute: createSlackReadMessagesExecutor({
+          reader: createSlackMessageReader(database, options.fetch),
+        }),
+      },
       ...SLACK_AGENT_OUTPUT_TYPES.map((type) => ({
         type,
         tool: slackAgentTool(type),
@@ -242,6 +261,49 @@ export function createSlackRegistration(
     attachment: { provider: "slack", resolve: createSlackAttachmentResolver(bot) },
     slackDelivery: { status: () => events.status(), retry: () => events.retry() },
     slackNames: bot,
+  };
+}
+
+/**
+ * Reads Slack with the bot token of the workspace that owns the execution.
+ *
+ * The token stays on Hub's side: only parsed channels and messages come back.
+ *
+ * @param database - Slack connection lookup
+ * @param fetch - HTTP client. Tests pass a fake; the server uses `fetch`
+ * @returns Channel list and history calls
+ */
+function createSlackMessageReader(
+  database: Database,
+  request: typeof fetch | undefined,
+): SlackMessageReader {
+  const calls = request === undefined ? {} : { request };
+
+  async function tokenForWorkspace(organizationId: string, teamId: string): Promise<string> {
+    const binding = await database.findSlackConnectionForOrganization(organizationId, teamId);
+    if (binding?.organizationId !== organizationId || binding.botAccessToken === undefined) {
+      throw new SlackReadMessagesError(
+        "Não consegui ler o canal porque o workspace do Slack não está conectado.",
+      );
+    }
+    return binding.botAccessToken;
+  }
+
+  return {
+    async listChannels({ organizationId, teamId }) {
+      return listSlackMemberChannels(
+        await tokenForWorkspace(organizationId, teamId),
+        calls.request,
+      );
+    },
+    async readHistory({ organizationId, teamId, channelId, limit }) {
+      return readSlackChannelHistory(
+        await tokenForWorkspace(organizationId, teamId),
+        channelId,
+        limit,
+        calls.request,
+      );
+    },
   };
 }
 

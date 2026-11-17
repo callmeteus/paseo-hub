@@ -41,7 +41,14 @@ export interface OutputExecutionInput {
   triggerContext?: unknown;
 }
 
-export type OutputExecutor = (input: OutputExecutionInput) => Promise<void>;
+/**
+ * Runs one output tool.
+ *
+ * A read-only tool returns the text the model should read. A tool that only
+ * delivers something to the provider resolves to `undefined` and the capability
+ * server answers with its own acknowledgement.
+ */
+export type OutputExecutor = (input: OutputExecutionInput) => Promise<string | void>;
 
 export interface OutputCapability {
   readonly type: string;
@@ -58,6 +65,7 @@ export interface MaterializedOutputCapability {
 export const finishExecutionToolName = "finish_execution" as const;
 export const clearHardDeadlineToolName = "clear_hard_deadline" as const;
 export const loadInstructionToolName = "load_instruction" as const;
+export const readSlackMessagesToolName = "read_slack_messages" as const;
 export const memorySaveToolName = "memory_save" as const;
 export const memorySearchToolName = "memory_search" as const;
 export const feedbackSearchToolName = "feedback_search" as const;
@@ -234,7 +242,13 @@ export class OutputExecutorRegistry {
     return capability !== undefined && (capability.available?.(outputContext) ?? true);
   }
 
-  async execute(input: OutputExecutionInput): Promise<void> {
+  /**
+   * Runs one output tool.
+   *
+   * @param input - Execution, arguments, and contexts for this call
+   * @returns What a read-only tool read, or undefined when it only delivered
+   */
+  async execute(input: OutputExecutionInput): Promise<string | void> {
     const capability = this.capabilities.get(input.toolType);
     if (capability === undefined) {
       throw new Error(`no output executor registered for ${input.toolType}`);
@@ -249,7 +263,7 @@ export class OutputExecutorRegistry {
         outputContext: input.outputContext,
       }),
     );
-    await capability.execute(input);
+    return capability.execute(input);
   }
 }
 
