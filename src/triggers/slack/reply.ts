@@ -11,6 +11,8 @@ const SlackReplyOutputContextSchema = z.object({
   teamId: z.string().min(1),
   channelId: z.string().min(1),
   threadTs: z.string().min(1),
+  /** Locale of the trigger's system messages. Absent keeps only the always-on checks. */
+  locale: z.string().min(1).optional(),
 });
 
 /**
@@ -19,17 +21,27 @@ const SlackReplyOutputContextSchema = z.object({
  * The text is checked before anything reaches the workspace: a reply the model has to
  * rewrite becomes a tool error and nothing is posted. Local attachment links are uploaded
  * to the same channel and thread, then taken out of the text.
+ *
+ * The checks follow the trigger locale carried on the output context. With no locale the
+ * reply is only checked for a link outside the attachment directory, an invalid mention,
+ * and a raw Slack id.
  */
 export function createSlackReplyExecutor(options: { client: SlackBotClient }): OutputExecutor {
   return async function executeSlackReply(input) {
     const args = SlackReplyArgsSchema.parse(input.args);
     const context = SlackReplyOutputContextSchema.parse(input.outputContext);
-    const checked = checkOutboundText(args.content);
+    const checked = checkOutboundText(args.content, context.locale);
     if (!checked.ok) throw new SlackOutboundTextError(checked.reason);
     const { text, files } = extractLocalAttachments(args.content);
     await uploadAttachments(options.client, context, files);
     if (text.length === 0) return;
-    await options.client.sendMessage({ ...context, content: text });
+    await options.client.sendMessage({
+      organizationId: context.organizationId,
+      teamId: context.teamId,
+      channelId: context.channelId,
+      threadTs: context.threadTs,
+      content: text,
+    });
   };
 }
 

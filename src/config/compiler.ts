@@ -38,6 +38,7 @@ import {
 } from "../triggers/slack/text-filter.js";
 import { GuardrailsSchema, type Guardrail } from "../workflows/guardrails.js";
 import { SlackAgentBlockSchema, type SlackAgentBlock } from "../triggers/slack/agent-block.js";
+import { LocaleSchema, type Locale } from "../i18n/messages.js";
 
 const IDENTIFIER = /^[a-z][a-z0-9_-]*$/u;
 const EVENT_NAME = /^[a-z][a-z0-9_-]*\.[a-z][a-z0-9_-]*$/u;
@@ -309,6 +310,8 @@ const AuthoredTriggerSchema = z
     inputs: z.record(z.string(), AuthoredInputSchema).optional(),
     values: z.record(z.string(), z.string().min(1)).optional(),
     filters: AuthoredTriggerFilterSchema.optional(),
+    /** Locale of the system messages this trigger posts. Absent reads as English. */
+    locale: LocaleSchema.optional(),
   })
   .strict();
 
@@ -474,6 +477,8 @@ export interface CompiledTrigger {
   sourceFile?: string | undefined;
   on: string;
   maxRuntimeMs: number;
+  /** Locale of the system messages this trigger posts. Absent reads as English. */
+  locale?: Locale | undefined;
   steps: CompiledSteps;
   inputs: Readonly<Record<string, CompiledInput>>;
   values: Readonly<Record<string, Expression>>;
@@ -647,6 +652,7 @@ const CompiledTriggerSchema: z.ZodType<CompiledTrigger> = z
     sourceFile: z.string().min(1).optional(),
     on: z.string().regex(EVENT_NAME),
     maxRuntimeMs: z.number().int().positive().max(MAX_DURATION_MS),
+    locale: LocaleSchema.optional(),
     steps: z.array(CompiledStepSchema),
     inputs: z.record(z.string(), CompiledInputSchema),
     values: z.record(z.string(), z.custom<Expression>(isExpression)),
@@ -778,6 +784,7 @@ function compileTrigger(
     maxRuntimeMs: compileAt([...triggerPath, "max_runtime"], () =>
       parseDurationMs(trigger.max_runtime, `trigger ${trigger.name} max_runtime`),
     ),
+    ...(trigger.locale === undefined ? {} : { locale: trigger.locale }),
     steps,
     inputs,
     values,

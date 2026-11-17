@@ -6,6 +6,7 @@ import { AuthoredGitHubAuthoritySchema } from "../../config/github-authority.js"
 import { SlackMessageRegexSchema, SlackMessageTextSchema } from "../slack/text-filter.js";
 import { GuardrailsSchema } from "../../workflows/guardrails.js";
 import { eventsAllowSlackAgent, SlackAgentBlockSchema } from "../slack/agent-block.js";
+import { LocaleSchema } from "../../i18n/messages.js";
 
 type JsonPrimitive = string | number | boolean | null;
 type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
@@ -231,6 +232,8 @@ export const TriggerRunSchema = z
   .object({
     target: TriggerTargetSchema,
     ...AgentReactionFields,
+    /** Locale of the system messages this trigger posts. Absent reads as English. */
+    locale: LocaleSchema.optional(),
     guardrails: optionalGuardrails,
   })
   .strict();
@@ -399,6 +402,8 @@ export const FlowRunSchema = z
   .object({
     target: TriggerTargetSchema,
     reactions: z.array(TriggerReactionSchema).min(1),
+    /** Locale of the system messages this trigger posts. Absent reads as English. */
+    locale: LocaleSchema.optional(),
     guardrails: optionalGuardrails,
   })
   .strict();

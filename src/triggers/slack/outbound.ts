@@ -1,11 +1,15 @@
 /**
  * Checks the text of a Slack reply before it reaches the workspace.
  *
- * A Portuguese-speaking workspace reads the answer, so narration in English, a summary of
- * the execution the model just ran, a wall of text, a `file://` link to a machine path
- * that is not the local attachment directory, and a mention that is not a Slack id all
- * have to be rewritten by the model instead of being posted.
+ * Some rules always hold: a `file://` link to a machine path that is not the local
+ * attachment directory, a mention that is not a Slack id, and a raw Slack id name nobody.
+ * The rest depend on the trigger locale. When the trigger sets one, narration, a summary
+ * of the execution the model just ran, a wall of text, and the wrong language have to be
+ * rewritten by the model instead of being posted. With no locale, only the always-on
+ * rules apply.
  */
+
+import { localeOf, message, type Locale } from "../../i18n/messages.js";
 
 /** Directory a local attachment lives in. Only files below it can be uploaded. */
 export const LOCAL_ATTACHMENT_DIR_PREFIX = "/tmp/paseo-attachments-" as const;
@@ -235,26 +239,25 @@ const MIN_ENGLISH_FUNCTION_WORDS = 3;
  * Narration that describes the execution instead of answering the person.
  *
  * It is read lowercased at the start of any line or paragraph, so a summary the model
- * puts after the first answer is caught too.
+ * puts after the first answer is caught too. Each locale reads its own markers, and a
+ * reply in another language also reads the English ones.
  */
-const META_MARKERS: readonly string[] = [
-  "respondi na thread",
-  "respondi no thread",
-  "respondi no canal",
-  "o que fiz",
-  "expliquei na thread",
-  "enviei duas respostas",
-  "nesta execução",
-  "thread fechada",
-  "deixei o eyes",
-  "encerrei a execução",
-  "a execução foi encerrada",
-  "now i'll",
-  "now let me",
-  "i'll",
-  "i will",
-  "let me",
-];
+const META_MARKERS: Readonly<Record<Locale, readonly string[]>> = {
+  en: ["now i'll", "now let me", "i'll", "i will", "let me"],
+  "pt-BR": [
+    "respondi na thread",
+    "respondi no thread",
+    "respondi no canal",
+    "o que fiz",
+    "expliquei na thread",
+    "enviei duas respostas",
+    "nesta execução",
+    "thread fechada",
+    "deixei o eyes",
+    "encerrei a execução",
+    "a execução foi encerrada",
+  ],
+};
 
 /** A Slack user or workspace-app id. `<@U094VQCSK53>` and `<@W094VQCSK53>` are mentions. */
 const SLACK_MENTION_ID = /^[UW][A-Z0-9]{6,}$/u;
@@ -271,57 +274,65 @@ const MARKDOWN_FILE_LINK = /!\[[^\]]*\]\(file:\/\/(\/tmp\/paseo-attachments-[^)\
  * Decides whether a reply can be posted as it is.
  *
  * Code spans, code blocks, links, and mentions are left out of the language read, so a
- * Portuguese reply that quotes an English error keeps its own language.
+ * reply that quotes an error keeps its own language.
  *
  * @param text - The reply the model wrote
+ * @param locale - Trigger locale. Absent keeps only the always-on rules.
  * @returns `ok`, or the reason the model has to rewrite the reply
  */
-export function checkOutboundText(text: string): OutboundTextCheck {
+export function checkOutboundText(text: string, locale?: string): OutboundTextCheck {
   const prose = proseText(text);
+  const active = locale === undefined ? undefined : localeOf(locale);
 
-  if (text.length > MAX_OUTBOUND_CHARS) {
-    return rejection(
-      `Resposta longa demais (${String(text.length)} caracteres). Reescreva em português, direto, com no máximo ${String(MAX_OUTBOUND_CHARS)} caracteres.`,
-    );
-  }
+  if (active !== undefined) {
+    if (text.length > MAX_OUTBOUND_CHARS) {
+      return rejection(
+        message(active, "outbound.tooLong", {
+          chars: text.length,
+          max: MAX_OUTBOUND_CHARS,
+        }),
+      );
+    }
 
-  const paragraphs = countParagraphs(text);
-  if (paragraphs > MAX_OUTBOUND_PARAGRAPHS) {
-    return rejection(
-      `Resposta com ${String(paragraphs)} parágrafos. Reescreva em no máximo ${String(MAX_OUTBOUND_PARAGRAPHS)} parágrafos curtos, em português.`,
-    );
-  }
+    const paragraphs = countParagraphs(text);
+    if (paragraphs > MAX_OUTBOUND_PARAGRAPHS) {
+      return rejection(
+        message(active, "outbound.tooManyParagraphs", {
+          paragraphs,
+          max: MAX_OUTBOUND_PARAGRAPHS,
+        }),
+      );
+    }
 
-  const marker = metaMarker(text);
-  if (marker !== undefined) {
-    return rejection(
-      `Não narre a execução com "${marker}". Escreva em português só a resposta para a pessoa.`,
-    );
-  }
+    const marker = metaMarker(text, active);
+    if (marker !== undefined) {
+      return rejection(message(active, "outbound.narration", { marker }));
+    }
 
-  if (isMostlyEnglish(prose)) {
-    return rejection("Resposta em inglês. Reescreva em português, sem narrar passos da execução.");
+    // An English reply has no other language to be checked against.
+    if (active !== "en" && isMostlyEnglish(prose)) {
+      return rejection(message(active, "outbound.wrongLanguage"));
+    }
   }
 
   const outsideLink = fileLinkOutsideAttachments(text);
   if (outsideLink !== undefined) {
     return rejection(
-      `O link ${outsideLink} não é um anexo local. Use só arquivos de ${LOCAL_ATTACHMENT_DIR_PREFIX}… ou remova o link.`,
+      message(active, "outbound.fileLinkOutside", {
+        link: outsideLink,
+        dir: LOCAL_ATTACHMENT_DIR_PREFIX,
+      }),
     );
   }
 
   const mention = invalidMention(text);
   if (mention !== undefined) {
-    return rejection(
-      `A menção ${mention} não é um id do Slack. Use <@U123456789> com o id real, ou só o nome da pessoa.`,
-    );
+    return rejection(message(active, "outbound.invalidMention", { mention }));
   }
 
   const rawId = rawSlackId(prose);
   if (rawId !== undefined) {
-    return rejection(
-      `O id ${rawId} está solto no texto. Use o nome da pessoa ou a menção <@${rawId}>.`,
-    );
+    return rejection(message(active, "outbound.rawUserId", { id: rawId }));
   }
 
   return { ok: true };
@@ -399,16 +410,18 @@ function countParagraphs(text: string): number {
  * The narration marker the reply carries, lowercased.
  *
  * Checked at the start of any line or paragraph, after bullets like `•`, `-`, or `*`:
- * the model also narrates after the answer it already gave.
+ * the model also narrates after the answer it already gave. A reply in a locale other
+ * than English also reads the English markers, because the model narrates in English.
  */
-function metaMarker(text: string): string | undefined {
+function metaMarker(text: string, locale: Locale): string | undefined {
+  const markers = locale === "en" ? META_MARKERS.en : [...META_MARKERS[locale], ...META_MARKERS.en];
   for (const paragraph of text.split(/\n/u)) {
     const line = paragraph
       .trim()
       .replace(/^[•\-*–—\s]+/u, "")
       .trim()
       .toLowerCase();
-    for (const marker of META_MARKERS) {
+    for (const marker of markers) {
       if (line.startsWith(marker)) return marker;
     }
   }

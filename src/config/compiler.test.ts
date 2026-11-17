@@ -80,6 +80,25 @@ describe("workflow compiler", () => {
     assert.deepEqual(parseCompiledHubConfig(compiled), compiled);
   });
 
+  it("carries the trigger locale and leaves it off when unset", () => {
+    const unset = compileHubConfig(configuration());
+    assert.equal(unset.triggers[0]?.locale, undefined);
+
+    for (const locale of ["en", "pt-BR"]) {
+      const authored = configuration();
+      Reflect.set(authored.triggers[0]!, "locale", locale);
+      const compiled = compileHubConfig(authored);
+      assert.equal(compiled.triggers[0]?.locale, locale);
+      assert.deepEqual(parseCompiledHubConfig(compiled), compiled);
+    }
+  });
+
+  it("refuses a locale the catalog does not ship", () => {
+    const authored = configuration();
+    Reflect.set(authored.triggers[0]!, "locale", "xx-YY");
+    assert.throws(() => compileHubConfig(authored), /locale must be en or pt-BR/u);
+  });
+
   it.each([
     "paseo.event.github.delivery_id",
     "paseo.prompt",

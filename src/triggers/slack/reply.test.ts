@@ -101,7 +101,7 @@ describe("Slack reply output", () => {
           args: {
             content: "I'll start by reacting to the message and reading the thread context.",
           },
-          outputContext: slackContext(),
+          outputContext: slackContext("pt-BR"),
         }),
       (error: unknown) => {
         assert.ok(error instanceof SlackOutboundTextError);
@@ -111,6 +111,23 @@ describe("Slack reply output", () => {
     );
     assert.deepEqual(client.messages, []);
     assert.deepEqual(client.uploads, []);
+  });
+
+  it("posts an English reply when the trigger sets no locale", async () => {
+    const client = new RecordingSlackClient();
+    const execute = createSlackReplyExecutor({ client });
+
+    await execute({
+      agentExecutionId: "execution-1",
+      toolType: "slack.reply",
+      args: { content: "I'll start by reading the thread.\n\nDone." },
+      outputContext: slackContext(),
+    });
+
+    assert.deepEqual(
+      client.messages.map((message) => message.content),
+      ["I'll start by reading the thread.\n\nDone."],
+    );
   });
 
   it("refuses a reply that narrates the execution in Portuguese", async () => {
@@ -123,7 +140,7 @@ describe("Slack reply output", () => {
           agentExecutionId: "execution-1",
           toolType: "slack.reply",
           args: { content: "Respondi na thread: o aviso é da cobrança." },
-          outputContext: slackContext(),
+          outputContext: slackContext("pt-BR"),
         }),
       SlackOutboundTextError,
     );
@@ -263,7 +280,7 @@ describe("Slack reply output", () => {
   });
 });
 
-function slackContext() {
+function slackContext(locale?: string) {
   return {
     provider: "slack",
     organizationId: "org-1",
@@ -271,6 +288,7 @@ function slackContext() {
     channelId: "C1",
     threadTs: "1700000000.000001",
     messageTs: "1700000000.000001",
+    ...(locale === undefined ? {} : { locale }),
   };
 }
 

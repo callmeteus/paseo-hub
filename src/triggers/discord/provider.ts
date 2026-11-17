@@ -78,6 +78,8 @@ export interface DiscordTriggerContext {
   organizationId: string;
   target: DiscordOutputContext;
   event: DiscordMergeData;
+  /** Locale of the trigger's system messages. Absent reads as English. */
+  locale?: string;
 }
 
 export interface DiscordOutputContext {
@@ -140,6 +142,7 @@ export function createDiscordTriggerProvider(options: {
           organizationId: externalTrigger.organizationId,
           target: outputContext,
           event: buildDiscordMergeData(event, botClientId, externalTrigger.connectionId),
+          ...(compiledTrigger.locale === undefined ? {} : { locale: compiledTrigger.locale }),
         };
         const invocation = parseInvocation(
           event.content,
@@ -247,6 +250,7 @@ export function createDiscordTriggerProvider(options: {
           reason,
           triggerContext.organizationId,
           options.billingUrlForOrganization ?? missingBillingUrl,
+          { locale: triggerContext.locale },
         ),
       );
       return null;
@@ -258,7 +262,12 @@ export function createDiscordTriggerProvider(options: {
         await postThreadNotice(
           options.bot,
           triggerContext.target,
-          `Paseo machine terminated before the agent could complete: ${reason}`,
+          await agentFailureNotice(
+            reason,
+            triggerContext.organizationId,
+            options.billingUrlForOrganization ?? missingBillingUrl,
+            { locale: triggerContext.locale },
+          ),
         );
         return null;
       }

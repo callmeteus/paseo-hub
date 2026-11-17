@@ -115,6 +115,8 @@ export interface SlackOutputContext {
   channelId: string;
   threadTs: string;
   messageTs: string;
+  /** Locale of the trigger's system messages. Absent reads as English. */
+  locale?: string;
   /** Copied from the first agent step that opted in. Absent when the run keeps the legacy status. */
   slackAgent?: SlackAgentBlock;
 }
@@ -233,6 +235,7 @@ export function createSlackTriggerProvider(options: {
           channelId: rawEvent.channelId,
           threadTs: rawEvent.threadTs ?? rawEvent.messageTs,
           messageTs: rawEvent.messageTs,
+          ...(compiledTrigger.locale === undefined ? {} : { locale: compiledTrigger.locale }),
           ...(slackAgent === undefined ? {} : { slackAgent }),
         };
         const triggerContext: SlackTriggerContext = {
@@ -420,6 +423,7 @@ export function createSlackTriggerProvider(options: {
           reason,
           context.target.organizationId,
           options.billingUrlForOrganization ?? missingBillingUrl,
+          { locale: context.target.locale },
         ),
       );
       return null;
@@ -434,6 +438,7 @@ export function createSlackTriggerProvider(options: {
             reason,
             context.target.organizationId,
             options.billingUrlForOrganization ?? missingBillingUrl,
+            { locale: context.target.locale },
           ),
         );
         return null;

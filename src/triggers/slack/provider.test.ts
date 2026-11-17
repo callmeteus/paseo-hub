@@ -362,7 +362,7 @@ describe("Slack Phase 1 trigger provider", () => {
     assert.equal(client.messages[0]?.channelId, "D1");
     assert.equal(
       client.messages[0]?.content,
-      "Tive um problema e parei antes de terminar. Me marque de novo para tentar outra vez.",
+      "I hit a problem and stopped before finishing. Mention me again to retry.",
     );
   });
 
@@ -596,8 +596,7 @@ describe("Slack Phase 1 trigger provider", () => {
         teamId: "T1",
         channelId: "C1",
         threadTs: "1700000000.000001",
-        content:
-          "Tive um problema e parei antes de terminar. Me marque de novo para tentar outra vez.",
+        content: "I hit a problem and stopped before finishing. Mention me again to retry.",
       },
     ]);
 
@@ -1164,7 +1163,7 @@ describe("Slack Phase 1 trigger provider", () => {
     assert.equal(context.slack.direct_message, undefined);
   });
 
-  it("posts the Portuguese machine termination notice without the raw reason", async () => {
+  it("posts the machine termination notice without the raw reason", async () => {
     const database = createMemoryDatabase();
     const { project, revision, store } = await createActiveProjectConfiguration(
       database,
@@ -1192,7 +1191,7 @@ describe("Slack Phase 1 trigger provider", () => {
         teamId: "T1",
         channelId: "C1",
         threadTs: "1700000000.000001",
-        content: "Não consegui começar agora porque a máquina que me roda está fora. Avise a Gio.",
+        content: "I could not start because the machine that runs me is offline.",
       },
     ]);
 
@@ -1217,6 +1216,37 @@ describe("Slack Phase 1 trigger provider", () => {
       undefined,
     );
     assert.equal(completed, undefined);
+  });
+
+  it("posts the notice in the trigger locale", async () => {
+    const database = createMemoryDatabase();
+    const base = configuration();
+    const { project, revision, store } = await createActiveProjectConfiguration(
+      database,
+      { ...base, triggers: [{ ...base.triggers[0]!, locale: "pt-BR" }] },
+      { organizationId: "org-1" },
+    );
+    const client = new RecordingSlackClient();
+    const provider = createSlackTriggerProvider({
+      configurationStoreForProject: () => store,
+      botUserIdForWorkspace: () => Promise.resolve("UBOT"),
+      client,
+    });
+    const match = (await provider.match(external(project.id, revision.id)))[0];
+    if (!isAcceptedTriggerProviderMatch(match)) throw new Error("expected accepted match");
+    assert.equal(match.outputContext.locale, "pt-BR");
+
+    await provider.onAgentExecutionFailed?.(match.triggerContext, match.outputContext, "boom");
+    assert.deepEqual(client.messages, [
+      {
+        organizationId: "org-1",
+        teamId: "T1",
+        channelId: "C1",
+        threadTs: "1700000000.000001",
+        content:
+          "Tive um problema e parei antes de terminar. Me marque de novo para tentar outra vez.",
+      },
+    ]);
   });
 });
 

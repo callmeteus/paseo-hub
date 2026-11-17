@@ -131,6 +131,26 @@ describe("self-contained trigger documents", () => {
     );
   });
 
+  it("compiles a trigger locale and preserves it through canonical YAML", () => {
+    const yaml = trigger.replace("  max_runtime: 90m", "  max_runtime: 90m\n  locale: pt-BR");
+    const compiled = compileTriggerDocument(yaml);
+    assert.equal(compiled.events[0]?.locale, "pt-BR");
+    assert.equal(
+      singleAgentRun(parseTriggerDocument(serializeTriggerDocument(compiled.authored)).run).locale,
+      "pt-BR",
+    );
+  });
+
+  it("refuses a locale the catalog does not ship", () => {
+    assert.throws(
+      () =>
+        parseTriggerDocument(
+          trigger.replace("  max_runtime: 90m", "  max_runtime: 90m\n  locale: xx-YY"),
+        ),
+      /locale must be en or pt-BR/u,
+    );
+  });
+
   it("compiles an authored title template and preserves it through canonical YAML", () => {
     const title = "Intake · ${{ paseo.execution.id }}";
     const yaml = trigger.replace("  max_runtime: 90m", `  max_runtime: 90m\n  title: "${title}"`);

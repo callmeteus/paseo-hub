@@ -85,6 +85,9 @@ export function compileTriggerDocument(yaml: string): CompiledTriggerDocument {
       steps: flattened === undefined ? [legacyAgentStep(authored, allowOutputs)] : flattened.steps,
     };
     if (authored.inputs !== undefined) compiledTrigger.inputs = authored.inputs;
+    if (authored.run.locale !== undefined) {
+      compiledTrigger.locale = authored.run.locale;
+    }
     triggers.push(compiledTrigger);
   }
   let compiled: ReturnType<typeof compileHubConfig>;

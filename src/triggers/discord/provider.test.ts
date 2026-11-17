@@ -512,13 +512,12 @@ describe("Discord Phase 1 trigger provider", () => {
         {
           channelId: "200",
           threadId: "207",
-          content:
-            "Tive um problema e parei antes de terminar. Me marque de novo para tentar outra vez.",
+          content: "I hit a problem and stopped before finishing. Mention me again to retry.",
         },
         {
           channelId: "200",
           threadId: "207",
-          content: "Paseo machine terminated before the agent could complete: launch_failed",
+          content: "I could not start because the machine that runs me is offline.",
         },
       ],
     );

@@ -158,6 +158,7 @@ function singleRunDocument(
         cwd: environment.cwd,
         ...(environment.worktree === undefined ? {} : { worktree: environment.worktree }),
       },
+      ...(trigger.locale === undefined ? {} : { locale: trigger.locale }),
       agent: authoredAgent(step.agent),
       ...(step.title === undefined ? {} : { title: step.title }),
       prompt: step.prompt.map((block) => staticPromptText(block)).join("\n"),

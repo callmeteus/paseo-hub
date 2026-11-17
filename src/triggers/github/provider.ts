@@ -155,6 +155,8 @@ export interface GitHubTriggerContext {
   target: { installationId: number; repository: string };
   event: GitHubMergeData;
   reactionSubject: GitHubReactionSubject | null;
+  /** Locale of the trigger's system messages. Absent reads as English. */
+  locale?: string;
 }
 
 interface GitHubReactionState {
@@ -201,6 +203,7 @@ export function createGitHubTriggerProvider(options: {
           target: { installationId: event.installationId, repository: event.repo },
           event: buildGitHubMergeData(event),
           reactionSubject: reactionSubjectForEvent(event),
+          ...(compiledTrigger.locale === undefined ? {} : { locale: compiledTrigger.locale }),
         };
         const invocation = parseInvocation(
           readGitHubInvocationMessage(event),
@@ -271,6 +274,7 @@ export function createGitHubTriggerProvider(options: {
             reason,
             triggerContext.organizationId,
             options.billingUrlForOrganization ?? missingBillingUrl,
+            { locale: triggerContext.locale },
           ),
         });
         return null;
