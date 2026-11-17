@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { basename } from "node:path";
 import { z } from "zod";
 import { reportFailure } from "../../failures/index.js";
 import { logger } from "../../logger.js";
@@ -50,6 +52,10 @@ const SlackUserInfoSchema = SlackApiResponseSchema.extend({
 });
 const SlackChannelInfoSchema = SlackApiResponseSchema.extend({
   channel: z.object({ name: z.string().min(1).max(255).optional() }).optional(),
+});
+const SlackUploadUrlSchema = SlackApiResponseSchema.extend({
+  upload_url: z.string().min(1).optional(),
+  file_id: z.string().min(1).optional(),
 });
 const SlackUserGroupListSchema = SlackApiResponseSchema.extend({
   usergroups: z
@@ -301,6 +307,21 @@ export interface SlackBotClient {
     teamId: string;
     fileId: string;
   }): Promise<Response>;
+  /**
+   * Uploads a file from the Hub host into a channel or thread.
+   *
+   * Slack receives the bytes in two steps: the upload URL this call posts them to, then a
+   * completion call that shares the file in the conversation. A throw means the caller
+   * drops the link; the reply it belonged to is still posted.
+   */
+  uploadFile?(input: {
+    organizationId: string;
+    teamId: string;
+    channelId: string;
+    threadTs: string;
+    path: string;
+    title?: string;
+  }): Promise<void>;
 }
 
 export function createSlackBotClient(options: {
@@ -572,6 +593,48 @@ export function createSlackBotClient(options: {
       headers: { authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(options.requestTimeoutMs ?? SLACK_API_TIMEOUT_MS),
     });
+  }
+
+  /**
+   * Uploads a local file and shares it in the conversation.
+   *
+   * `files.getUploadURLExternal` gives a one-off URL, the bytes go to that URL, and
+   * `files.completeUploadExternal` shares the file. `channel_id` and `thread_ts` on the
+   * last call are what put the upload inside the thread the reply belongs to.
+   */
+  async function uploadFile(input: {
+    organizationId: string;
+    teamId: string;
+    channelId: string;
+    threadTs: string;
+    path: string;
+    title?: string;
+  }): Promise<void> {
+    const bytes = await readFile(input.path);
+    const filename = basename(input.path);
+    const granted = SlackUploadUrlSchema.parse(
+      await callForm(input.organizationId, input.teamId, "files.getUploadURLExternal", {
+        filename,
+        length: String(bytes.byteLength),
+      }),
+    );
+    if (!granted.ok || granted.upload_url === undefined || granted.file_id === undefined) {
+      throw new Error(`Slack API ${granted.error ?? "upload_url_unavailable"}`);
+    }
+    const sent = await request(granted.upload_url, {
+      method: "POST",
+      body: bytes,
+      signal: AbortSignal.timeout(options.requestTimeoutMs ?? SLACK_API_TIMEOUT_MS),
+    });
+    if (!sent.ok) throw new Error(`Slack upload HTTP ${sent.status}`);
+    const completed = SlackApiResponseSchema.parse(
+      await callForm(input.organizationId, input.teamId, "files.completeUploadExternal", {
+        files: JSON.stringify([{ id: granted.file_id, title: input.title ?? filename }]),
+        channel_id: input.channelId,
+        thread_ts: input.threadTs,
+      }),
+    );
+    if (!completed.ok) throw new Error(`Slack API ${completed.error ?? "unknown_error"}`);
   }
 
   async function lookupUserName(input: {
@@ -884,6 +947,7 @@ export function createSlackBotClient(options: {
     lookupChannelName,
     listUserGroupNames,
     downloadAttachment,
+    uploadFile,
   };
 }
 
