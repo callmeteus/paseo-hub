@@ -949,7 +949,12 @@ class PgDatabase implements Database {
           throw new Error(`agent execution not found: ${input.executionId}`);
         const observedAt = input.observedAt ?? new Date();
         if (execution.status === "spawning" || execution.status === "running") {
-          const deadlineKind = workflowDeadlineKind(execution, step, run, observedAt);
+          const deadlineKind = deliveredAnswerDeadlineKind(
+            workflowDeadlineKind(execution, step, run, observedAt),
+            input.acceptDeliveredAnswer === true,
+            execution.deadline_at ?? step.deadline_at,
+            observedAt,
+          );
           if (deadlineKind === "whole_run") {
             const recovery = await timeoutWorkflowRunOnClient(client, run, observedAt);
             const terminalRun = await findTriggerRunOnClient(client, run.id);
@@ -2483,8 +2488,14 @@ class PgDatabase implements Database {
       const state = `coalesce(hub_action_acknowledgements, '{"terminal_at":null,"idle_at":null,"finish_execution_call":null}'::jsonb)`;
       let statement: string;
       let parameters: unknown[];
-      if (acknowledgement.kind === "terminal" || acknowledgement.kind === "idle") {
-        const field = acknowledgement.kind === "terminal" ? "terminal_at" : "idle_at";
+      if (
+        acknowledgement.kind === "terminal" ||
+        acknowledgement.kind === "idle" ||
+        acknowledgement.kind === "answered"
+      ) {
+        let field: "terminal_at" | "idle_at" | "answered_at" = "answered_at";
+        if (acknowledgement.kind === "terminal") field = "terminal_at";
+        else if (acknowledgement.kind === "idle") field = "idle_at";
         statement = `
           update agent_executions
           set hub_action_acknowledgements = jsonb_set(
@@ -5774,6 +5785,17 @@ function deadlineConditionAllows(
     current.getTime() === condition.deadlineAt.getTime() &&
     current.getTime() <= condition.observedAt.getTime()
   );
+}
+
+function deliveredAnswerDeadlineKind(
+  deadlineKind: WorkflowDeadlineKind | undefined,
+  acceptDeliveredAnswer: boolean,
+  hardDeadline: Date | null,
+  observedAt: Date,
+): WorkflowDeadlineKind | undefined {
+  if (!acceptDeliveredAnswer || deadlineKind !== "step_idle") return deadlineKind;
+  if (hardDeadline !== null && hardDeadline <= observedAt) return "step_hard";
+  return undefined;
 }
 
 function workflowDeadlineKind(

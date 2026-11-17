@@ -7,11 +7,12 @@ import type {
 import { reportFailure } from "../../failures/index.js";
 import { agentFailureNotice, missingBillingUrl } from "../failure-notice.js";
 import { type TriggerProvider, type TriggerProviderMatch } from "../index.js";
-import { firstSlackAgentBlock, type SlackAgentBlock } from "./agent-block.js";
+import { openingSlackAgentBlock, type SlackAgentBlock } from "./agent-block.js";
 import {
   beginSlackAgentRun,
   finishSlackAgentRun,
   slackAgentRunFellBack,
+  slackAgentTargetFromOpenBook,
   type SlackAgentRunTarget,
 } from "./agent-surface.js";
 import type { SlackBotClient, SlackThreadMessage } from "./client.js";
@@ -214,7 +215,7 @@ export function createSlackTriggerProvider(options: {
         );
         if (compiledTrigger === undefined)
           throw new Error(`compiled trigger not found: ${match.trigger.name}`);
-        const slackAgent = firstSlackAgentBlock(compiledTrigger.steps);
+        const slackAgent = openingSlackAgentBlock(compiledTrigger.steps);
         const outputContext: SlackOutputContext = {
           provider: "slack",
           organizationId: trigger.organizationId,
@@ -383,7 +384,12 @@ export function createSlackTriggerProvider(options: {
     },
     async onAgentExecutionFailed(context, outputContext, reason) {
       await finishSlackAgentLifecycle(options.client, context, outputContext, "failure");
-      if (reason === "stopped_by_user") return null;
+      if (
+        reason === "stopped_by_user" ||
+        reason === "agent_interrupted" ||
+        missingAgentSession(reason)
+      )
+        return null;
       await failWithNotice(
         options.client,
         context.target,
@@ -592,7 +598,14 @@ async function finishSlackAgentLifecycle(
   outputContext: SlackOutputContext | undefined,
   kind: "success" | "failure",
 ): Promise<void> {
-  const target = slackAgentTarget(context, outputContext);
+  const target =
+    slackAgentTarget(context, outputContext) ??
+    slackAgentTargetFromOpenBook({
+      organizationId: context.target.organizationId,
+      teamId: context.target.teamId,
+      channelId: context.target.channelId,
+      threadTs: context.target.threadTs,
+    });
   if (target === undefined || slackAgentRunFellBack(target)) {
     await publishAssistantStatus(client, context, "");
     return;
@@ -607,6 +620,10 @@ async function finishSlackAgentLifecycle(
     );
     if (kind === "failure") await publishAssistantStatus(client, context, "");
   }
+}
+
+function missingAgentSession(reason: string): boolean {
+  return /session/i.test(reason) && /not found/i.test(reason);
 }
 
 async function publishAssistantStatus(

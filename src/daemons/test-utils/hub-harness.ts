@@ -890,6 +890,14 @@ export class HubHarness {
       async () => (await this.execution(executionId)).hubActionAcknowledgements.terminalAt !== null,
     );
   }
+  async answer(agentId: string, text: string): Promise<void> {
+    await this.requireDaemon().outputs(agentId, text);
+  }
+  async waitForAnswerAcknowledgement(executionId: string): Promise<void> {
+    await waitFor(
+      async () => (await this.execution(executionId)).hubActionAcknowledgements.answeredAt !== null,
+    );
+  }
   async completeCurrentTurnWithoutFinishTimeline(agentId: string): Promise<void> {
     await this.requireDaemon().completesTurnWithoutFinishTimeline(agentId);
   }

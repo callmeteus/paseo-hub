@@ -696,6 +696,21 @@ export class DaemonDispatchLifecycle {
     }
   }
 
+  private async recordAssistantAnswer(
+    executionId: string,
+    event: DaemonEvent,
+    observedAt: Date,
+  ): Promise<void> {
+    if (event.type !== "agent_stream") return;
+    if (event.event.type !== "timeline" || event.event.item.type !== "assistant_message") return;
+    const text = event.event.item.text;
+    if (typeof text !== "string" || text.trim().length === 0) return;
+    await this.options.database.recordAgentExecutionHubAcknowledgement(executionId, {
+      kind: "answered",
+      observedAt,
+    });
+  }
+
   private async handleDaemonEvent(
     executionId: string,
     daemonId: string,
@@ -704,6 +719,7 @@ export class DaemonDispatchLifecycle {
   ): Promise<void> {
     if (event.type === "agent_stream") {
       const observedAt = new Date(event.timestamp);
+      await this.recordAssistantAnswer(executionId, event, observedAt);
       if (event.event.type === "timeline" && event.event.item.type === "tool_call") {
         const item = event.event.item;
         if (
@@ -1178,7 +1194,12 @@ export class DaemonDispatchLifecycle {
 
   private async completeAgentExecution(
     executionId: string,
-    options: { completedByAgent?: boolean; output?: unknown; deferHubAction?: boolean } = {},
+    options: {
+      completedByAgent?: boolean;
+      output?: unknown;
+      deferHubAction?: boolean;
+      acceptDeliveredAnswer?: boolean;
+    } = {},
   ): Promise<AgentExecutionRecord> {
     const existing = await this.options.database.findAgentExecutionById(executionId);
     if (existing === undefined) throw new Error(`agent execution not found: ${executionId}`);
@@ -1199,6 +1220,7 @@ export class DaemonDispatchLifecycle {
       {
         stepStatus: "succeeded",
         stepOutput: structuredOutput,
+        ...(options.acceptDeliveredAnswer === true ? { acceptDeliveredAnswer: true } : {}),
       },
     );
     if (!transition.transitioned) {
@@ -1300,7 +1322,10 @@ export class DaemonDispatchLifecycle {
     executionId: string,
     status: "succeeded" | "failed",
     fields: TransitionAgentExecutionFields,
-    workflow: Pick<WorkflowAgentCompletionInput, "stepStatus" | "stepOutput" | "failureReason">,
+    workflow: Pick<
+      WorkflowAgentCompletionInput,
+      "stepStatus" | "stepOutput" | "failureReason" | "acceptDeliveredAnswer"
+    >,
   ): Promise<TransitionAgentExecutionResult> {
     const execution = await this.options.database.findAgentExecutionById(executionId);
     if (execution === undefined) throw new Error(`agent execution not found: ${executionId}`);
@@ -1312,6 +1337,9 @@ export class DaemonDispatchLifecycle {
         result: fields.result,
         stepOutput: workflow.stepOutput,
         ...(workflow.failureReason === undefined ? {} : { failureReason: workflow.failureReason }),
+        ...(workflow.acceptDeliveredAnswer === undefined
+          ? {}
+          : { acceptDeliveredAnswer: workflow.acceptDeliveredAnswer }),
         ...(fields.completedByAgent === undefined
           ? {}
           : { completedByAgent: fields.completedByAgent }),
@@ -1437,7 +1465,7 @@ export class DaemonDispatchLifecycle {
   ): Promise<void> {
     const provider = this.findProviderForTriggerContext(execution.triggerContext);
     if (provider === undefined) return;
-    if (execution.workflowStepRunId !== null) {
+    if (execution.workflowStepRunId !== null && !workflowStepOwnsSlackSession(execution)) {
       return;
     }
     const reactionState = await notifyIndividualExecution(provider, execution, failureReason);
@@ -1754,6 +1782,38 @@ export class DaemonDispatchLifecycle {
     this.executionSubscriptions.delete(executionId);
   }
 
+  /**
+   * Idle after a finished answer completes the step. An elapsed hard deadline still fails it.
+   */
+  private async deliveredAnswerShouldFinish(execution: AgentExecutionRecord): Promise<boolean> {
+    const acknowledgements = execution.hubActionAcknowledgements;
+    if (acknowledgements.terminalAt === null || acknowledgements.answeredAt === null) return false;
+    if (execution.deadlineAt != null && execution.deadlineAt.getTime() <= this.now()) return false;
+    if (acknowledgements.finishExecutionCall?.status === "failed") return false;
+    if (execution.launchIntent?.outputSchema !== undefined) return false;
+    const outputs = execution.launchIntent?.allowOutputs ?? [];
+    return !outputs.some(
+      (output) => output.required === true && (execution.outputEmissions[output.type] ?? 0) < 1,
+    );
+  }
+
+  private async finishDeliveredAnswer(executionId: string): Promise<boolean> {
+    const current = await this.options.database.findAgentExecutionById(executionId);
+    if (current === undefined || isTerminalExecutionStatus(current.status)) return false;
+    if (current.hubActionAcknowledgements.finishExecutionCall?.status !== "completed") {
+      await this.options.database.recordAgentExecutionHubAcknowledgement(executionId, {
+        kind: "finish_execution",
+        status: "completed",
+        observedAt: new Date(this.now()),
+      });
+    }
+    const execution = await this.completeAgentExecution(executionId, {
+      completedByAgent: true,
+      acceptDeliveredAnswer: true,
+    });
+    return execution.status === "succeeded";
+  }
+
   private async expireExecutionAtCurrentDeadline(
     executionId: string,
     waitForPendingStreamHandlers = true,
@@ -1770,6 +1830,14 @@ export class DaemonDispatchLifecycle {
     }
 
     const wholeRunExpired = await this.isWholeRunDeadlineExpired(execution);
+    if (
+      deadline.kind === "idle" &&
+      !wholeRunExpired &&
+      (await this.deliveredAnswerShouldFinish(execution))
+    ) {
+      const finished = await this.finishDeliveredAnswer(executionId);
+      return finished;
+    }
     const failure = deadlineFailure(execution, deadline, wholeRunExpired);
     const failed = await this.failAgentExecution(executionId, failure.reason, {
       deadlineCondition: {
@@ -1878,6 +1946,29 @@ export function durableExecutionId(
   bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
   const hex = bytes.toString("hex");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+/**
+ * A workflow step opens the Slack session only when the run itself did not.
+ *
+ * The run carries the block of an unconditional agent step, and that session
+ * opens when the run is accepted. A step behind a condition, such as a compile
+ * after a wait, is absent from the run. Its execution carries the block, and
+ * the session opens when that execution starts.
+ */
+function workflowStepOwnsSlackSession(execution: AgentExecutionRecord): boolean {
+  if (!hasSlackAgent(execution.outputContext)) return false;
+  if (!isRecord(execution.triggerContext)) return true;
+  const target = execution.triggerContext["target"];
+  return !hasSlackAgent(target);
+}
+
+function hasSlackAgent(value: unknown): boolean {
+  return isRecord(value) && value["slackAgent"] !== undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 async function notifyIndividualExecution(

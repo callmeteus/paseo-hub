@@ -642,26 +642,8 @@ class MemoryDatabase implements Database {
     if (run.outcome !== "accepted") throw new Error("rejected trigger run has no workflow step");
 
     const observedAt = input.observedAt ?? this.now();
-    if (execution.status === "spawning" || execution.status === "running") {
-      const deadlineKind = workflowDeadlineKind(execution, step, run, observedAt);
-      if (deadlineKind === "whole_run") {
-        this.timeoutWorkflowRun(run.id, observedAt);
-        const terminalRun = this.triggerRuns.get(run.id);
-        return transitionWithTerminalRun(
-          {
-            execution: this.readAgentExecution(execution.id),
-            transitioned: true,
-            deadlineKind,
-          },
-          terminalRun,
-        );
-      }
-      if (deadlineKind !== undefined) {
-        const timedOut = this.timeoutWorkflowStep(execution.id, deadlineKind, observedAt);
-        const terminalRun = this.triggerRuns.get(run.id);
-        return transitionWithTerminalRun(timedOut, terminalRun);
-      }
-    }
+    const timedOut = this.elapsedWorkflowCompletion(execution, step, run, input, observedAt);
+    if (timedOut !== undefined) return timedOut;
 
     const transitioned =
       execution.status === "spawning" || execution.status === "running"
@@ -681,6 +663,38 @@ class MemoryDatabase implements Database {
     }
     const terminalRun = this.triggerRuns.get(run.id);
     return transitionWithTerminalRun(transitioned, terminalRun);
+  }
+
+  private elapsedWorkflowCompletion(
+    execution: AgentExecutionRecord,
+    step: WorkflowStepRunRecord,
+    run: AcceptedTriggerRunRecord,
+    input: WorkflowAgentCompletionInput,
+    observedAt: Date,
+  ) {
+    if (execution.status !== "spawning" && execution.status !== "running") return undefined;
+    const deadlineKind = deliveredAnswerDeadlineKind(
+      workflowDeadlineKind(execution, step, run, observedAt),
+      input.acceptDeliveredAnswer === true,
+      execution.deadlineAt ?? step.deadlineAt,
+      observedAt,
+    );
+    if (deadlineKind === undefined) return undefined;
+    if (deadlineKind === "whole_run") {
+      this.timeoutWorkflowRun(run.id, observedAt);
+      return transitionWithTerminalRun(
+        {
+          execution: this.readAgentExecution(execution.id),
+          transitioned: true,
+          deadlineKind,
+        },
+        this.triggerRuns.get(run.id),
+      );
+    }
+    return transitionWithTerminalRun(
+      this.timeoutWorkflowStep(execution.id, deadlineKind, observedAt),
+      this.triggerRuns.get(run.id),
+    );
   }
 
   private finishWorkflowStep(
@@ -2147,14 +2161,14 @@ class MemoryDatabase implements Database {
     const updatedAcknowledgements: AgentExecutionHubAcknowledgements = {
       terminalAt: current.terminalAt,
       idleAt: current.idleAt,
+      answeredAt: current.answeredAt,
       finishExecutionCall: current.finishExecutionCall,
     };
-    if (acknowledgement.kind === "terminal") {
-      if (
-        updatedAcknowledgements.terminalAt === null ||
-        acknowledgement.observedAt.getTime() > updatedAcknowledgements.terminalAt.getTime()
-      ) {
-        updatedAcknowledgements.terminalAt = acknowledgement.observedAt;
+    if (acknowledgement.kind === "terminal" || acknowledgement.kind === "answered") {
+      const field = acknowledgement.kind === "terminal" ? "terminalAt" : "answeredAt";
+      const currentAt = updatedAcknowledgements[field];
+      if (currentAt === null || acknowledgement.observedAt.getTime() > currentAt.getTime()) {
+        updatedAcknowledgements[field] = acknowledgement.observedAt;
       }
     } else if (acknowledgement.kind === "idle") {
       if (
@@ -3833,7 +3847,7 @@ class MemoryDatabase implements Database {
 }
 
 function emptyHubActionAcknowledgements(): AgentExecutionHubAcknowledgements {
-  return { terminalAt: null, idleAt: null, finishExecutionCall: null };
+  return { terminalAt: null, idleAt: null, answeredAt: null, finishExecutionCall: null };
 }
 
 function connectionPersistenceUnavailable(): never {
@@ -3898,6 +3912,17 @@ interface MemoryCliAuthorization extends CliAuthorizationRecord {
   fingerprintVerifier: string;
   nextPollAt: Date;
   credential: { id: string; prefix: string; verifier: string } | null;
+}
+
+function deliveredAnswerDeadlineKind(
+  deadlineKind: WorkflowDeadlineKind | undefined,
+  acceptDeliveredAnswer: boolean,
+  hardDeadline: Date | null,
+  observedAt: Date,
+): WorkflowDeadlineKind | undefined {
+  if (!acceptDeliveredAnswer || deadlineKind !== "step_idle") return deadlineKind;
+  if (hardDeadline !== null && hardDeadline <= observedAt) return "step_hard";
+  return undefined;
 }
 
 function workflowDeadlineKind(

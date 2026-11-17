@@ -1524,6 +1524,33 @@ function threadKey(input: { teamId: string; channelId: string; threadTs: string 
   return `${input.teamId}\0${input.channelId}\0${input.threadTs}`;
 }
 
+/**
+ * A session a later step opened, found by the thread when the run itself has no block.
+ *
+ * The run finishes after that step. Closing the book here is what takes the stop
+ * button off the thread.
+ *
+ * @param input - Team, channel, and thread of the trigger
+ * @returns A target for `finishSlackAgentRun`, or undefined when this thread has no open session
+ */
+export function slackAgentTargetFromOpenBook(input: {
+  organizationId: string;
+  teamId: string;
+  channelId: string;
+  threadTs: string;
+}): SlackAgentRunTarget | undefined {
+  const book = threads.get(threadKey(input));
+  if (book === undefined || book.agentClosed) return undefined;
+  return {
+    organizationId: book.organizationId,
+    teamId: book.teamId,
+    channelId: book.channelId,
+    threadTs: book.threadTs,
+    authorId: book.authorId,
+    block: { display: "timeline" },
+  };
+}
+
 function requireApi(client: SlackBotClient): SlackAgentApi {
   const api = agentApi(client);
   if (api === undefined) {

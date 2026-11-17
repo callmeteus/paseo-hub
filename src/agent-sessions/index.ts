@@ -6,7 +6,7 @@ import {
   type LaunchMachineIntent,
 } from "../dispatcher/launch-machine-intent.js";
 import type { DaemonCreateAgentOptions } from "../daemons/protocol.js";
-import type { AgentConnection, AgentEvent } from "../daemons/agents/index.js";
+import type { AgentConnection, AgentEvent, AgentSnapshot } from "../daemons/agents/index.js";
 import {
   executionToolDefinitions,
   type OutputExecutorRegistry,
@@ -19,6 +19,26 @@ import type { AgentSessionRecord } from "./types.js";
 export type { AgentSessionRecord, AgentSessionAction } from "./types.js";
 
 export class AgentSessionError extends Error {}
+
+function missingAgentSession(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : "";
+  return /session/i.test(message) && /not found/i.test(message);
+}
+
+/**
+ * Whether a dead session may be forgotten and retried.
+ *
+ * Only a named continuation can be replaced by a new agent. A session pinned to
+ * one execution is that execution's agent; recreating it would duplicate the run.
+ */
+function canReleaseDeadSession(session: AgentSessionRecord, attempt: number): boolean {
+  return attempt < 1 && session.continuationKey !== null;
+}
+
+/** An agent that ended without being archived. Resuming it only reports `agent_interrupted`. */
+function isDeadAgent(agent: AgentSnapshot): boolean {
+  return !agent.archivedAt && (agent.status === "closed" || agent.status === "error");
+}
 
 /** Owns session selection, delivery, and cleanup under the same existing database lock. */
 export class AgentSessions {
@@ -155,7 +175,11 @@ export class AgentSessions {
         session.agentId,
       );
       const agent = await input.connection.get(session.agentId);
-      if (!agent.archivedAt && (agent.status === "closed" || agent.status === "error")) {
+      if (isDeadAgent(agent)) {
+        if (canReleaseDeadSession(session, attempt)) {
+          await this.releaseDeadContinuation(session);
+          return undefined;
+        }
         throw new AgentSessionError("agent_interrupted");
       }
       if (agent.archivedAt) {
@@ -163,8 +187,16 @@ export class AgentSessions {
         action = "restored";
       }
       await this.database.attachExecutionToSession(input.executionId, id, action);
-      const unsubscribe = await this.deliver(input, session.agentId, startupTimeoutMs);
-      return { agentId: session.agentId, unsubscribe, action };
+      try {
+        const unsubscribe = await this.deliver(input, session.agentId, startupTimeoutMs);
+        return { agentId: session.agentId, unsubscribe, action };
+      } catch (error) {
+        if (canReleaseDeadSession(session, attempt) && missingAgentSession(error)) {
+          await this.releaseDeadContinuation(session);
+          return undefined;
+        }
+        throw error;
+      }
     });
     return dispatched ?? this.dispatch(input, attempt + 1);
   }
@@ -222,6 +254,21 @@ export class AgentSessions {
     }
     await this.database.saveAgentSession({ ...session, continuationKey: null });
     return undefined;
+  }
+
+  /**
+   * Forgets a continuation whose Cursor session is already gone.
+   *
+   * The next attempt creates another agent. Resuming the dead one only posts
+   * `agent_interrupted` into the thread.
+   */
+  private async releaseDeadContinuation(session: AgentSessionRecord): Promise<void> {
+    await this.database.saveAgentSession({
+      ...session,
+      continuationKey: null,
+      agentId: null,
+      workspaceId: null,
+    });
   }
 
   private async deliver(

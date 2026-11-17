@@ -224,6 +224,7 @@ function toAgentExecutionHubAcknowledgements(value: unknown): AgentExecutionHubA
   if (!isRecord(value)) return emptyAgentExecutionHubAcknowledgements();
   const terminalAt = toDateOrNull(value["terminal_at"]);
   const idleAt = toDateOrNull(value["idle_at"]);
+  const answeredAt = toDateOrNull(value["answered_at"]);
   const rawFinishExecutionCall = value["finish_execution_call"];
   let finishExecutionCall: AgentExecutionHubAcknowledgements["finishExecutionCall"] = null;
   if (isRecord(rawFinishExecutionCall)) {
@@ -241,11 +242,11 @@ function toAgentExecutionHubAcknowledgements(value: unknown): AgentExecutionHubA
       finishExecutionCall = { callId: callId ?? null, status, observedAt };
     }
   }
-  return { terminalAt, idleAt, finishExecutionCall };
+  return { terminalAt, idleAt, answeredAt, finishExecutionCall };
 }
 
 function emptyAgentExecutionHubAcknowledgements(): AgentExecutionHubAcknowledgements {
-  return { terminalAt: null, idleAt: null, finishExecutionCall: null };
+  return { terminalAt: null, idleAt: null, answeredAt: null, finishExecutionCall: null };
 }
 
 function toDateOrNull(value: unknown): Date | null {

@@ -251,6 +251,25 @@ export function firstSlackAgentBlock(
   return undefined;
 }
 
+/**
+ * The block that may open the Slack session when the run is accepted.
+ *
+ * A step behind a condition runs later, often after a wait. Opening its session
+ * at acceptance leaves "stop" on the thread while no agent is running. That step
+ * opens the session itself when its execution starts.
+ *
+ * @param steps - Compiled steps, in run order
+ * @returns The block of the first unconditional step that opted in
+ */
+export function openingSlackAgentBlock(
+  steps: readonly {
+    slackAgent?: SlackAgentBlock | undefined;
+    condition?: unknown;
+  }[],
+): SlackAgentBlock | undefined {
+  return firstSlackAgentBlock(steps.filter((step) => step.condition === undefined));
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

@@ -1515,6 +1515,75 @@ describe("daemon enrollment and execution", () => {
     assert.equal(await hub.completeExecution(result.execution.id), 409);
   });
 
+  it("completes an execution that already answered instead of failing it for going idle", async () => {
+    await hub.connectDaemon();
+    const result = await hub.dispatch({
+      timeoutMs: 60 * 60_000,
+      idleTimeoutMs: 5 * 60_000,
+    });
+
+    await hub.answer(result.agentId, "Crédito lançado e confirmado.");
+    await hub.waitForAnswerAcknowledgement(result.execution.id);
+    await hub.completeCurrentTurnWithoutFinishTimeline(result.agentId);
+    await hub.waitForTurnAcknowledgement(result.execution.id);
+    await hub.advanceDispatchTime(5 * 60_000);
+
+    const execution = await hub.execution(result.execution.id);
+    assert.equal(execution.status, "succeeded");
+    assert.equal(hub.failureHookCount(), 0);
+  });
+
+  it("completes a workflow step that already answered instead of step_idle_timeout", async () => {
+    await hub.connectDaemon();
+    const daemonSlug = hub.connectedDaemonSlug();
+    await hub.installConfiguration({
+      yaml: [
+        "environments:",
+        "  - name: production",
+        "    kind: daemon",
+        `    daemon: ${daemonSlug}`,
+        "    cwd: /workspace/manual",
+        "triggers:",
+        "  - name: answered",
+        "    on: manual.run",
+        "    max_runtime: 1h",
+        "    filters:",
+        "      from_users: [alice]",
+        "    steps:",
+        "      - id: work",
+        "        environment: production",
+        "        max_runtime: 1h",
+        "        idle_timeout: 5s",
+        "        agent:",
+        "          provider: opencode",
+        "          mode: full-access",
+        '        prompt: [{ text: "Answer" }]',
+      ].join("\n"),
+    });
+    hub.holdSpawnAcknowledgement();
+    const dispatch = hub.beginManual({ trigger: "answered", deliveryKey: "answered-idle" });
+    await hub.spawnBegins();
+    const pending = await hub.pendingExecution();
+    hub.acceptSpawn();
+    const started = await dispatch;
+    assert.equal(started.status, 200);
+    await hub.waitForExecutionStatus(pending.id, "running");
+    const agentId = (await hub.execution(pending.id)).daemonAgentId ?? `agent-${pending.id}`;
+
+    await hub.answer(agentId, "Crédito lançado e confirmado.");
+    await hub.waitForAnswerAcknowledgement(pending.id);
+    await hub.completeCurrentTurnWithoutFinishTimeline(agentId);
+    await hub.waitForTurnAcknowledgement(pending.id);
+    await hub.advanceDispatchTime(5_000);
+    await hub.drainWorkflowOutbox();
+
+    const state = await hub.workflowExecutionState(pending.id);
+    assert.equal(state.executionStatus, "succeeded");
+    assert.equal(state.stepStatus, "succeeded");
+    assert.equal(state.runStatus, "succeeded");
+    assert.equal(hub.failureHookCount(), 0);
+  });
+
   it("expires an execution after five idle minutes", async () => {
     await hub.connectDaemon();
     const result = await hub.dispatch({

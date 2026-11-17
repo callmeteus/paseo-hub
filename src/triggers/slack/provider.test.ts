@@ -411,6 +411,59 @@ describe("Slack Phase 1 trigger provider", () => {
     );
   });
 
+  it("does not open the Slack session at acceptance when the agent step is behind a condition", async () => {
+    resetSlackAgentSurfaceForTests();
+    const database = createMemoryDatabase();
+    const base = configuration();
+    const trigger = base.triggers[0]!;
+    const step = trigger.steps[0]!;
+    const { project, revision, store } = await createActiveProjectConfiguration(
+      database,
+      {
+        ...base,
+        triggers: [
+          {
+            ...trigger,
+            steps: [
+              {
+                ...step,
+                output: {
+                  schema: {
+                    type: "object",
+                    additionalProperties: false,
+                    required: ["kind"],
+                    properties: { kind: { type: "string" } },
+                  },
+                },
+              },
+              {
+                ...step,
+                id: "compile",
+                if: "${{ steps.slack-step.outputs.kind == 'deploy' }}",
+                slack_agent: { display: "timeline", session_title: "Deploy" },
+              },
+            ],
+          },
+        ],
+      },
+      { organizationId: "org-1" },
+    );
+    const client = new RecordingSlackClient();
+    const provider = createSlackTriggerProvider({
+      configurationStoreForProject: () => store,
+      botUserIdForWorkspace: () => Promise.resolve("UBOT"),
+      client,
+    });
+    const match = (await provider.match(external(project.id, revision.id)))[0];
+    if (!isAcceptedTriggerProviderMatch(match)) throw new Error("expected accepted match");
+    assert.equal(match.outputContext.slackAgent, undefined);
+
+    await provider.onAgentExecutionStarted?.(match.triggerContext, match.outputContext);
+
+    assert.deepEqual(client.agentSessions, []);
+    assert.deepEqual(client.statuses, []);
+  });
+
   it("keeps the legacy status when the agent session API refuses the token", async () => {
     resetSlackAgentSurfaceForTests();
     const database = createMemoryDatabase();
@@ -556,6 +609,19 @@ describe("Slack Phase 1 trigger provider", () => {
       "stopped_by_user",
     );
     assert.deepEqual(stopped.messages, []);
+
+    const interrupted = new RecordingSlackClient();
+    const interruptedProvider = createSlackTriggerProvider({
+      configurationStoreForProject: () => store,
+      botUserIdForWorkspace: () => Promise.resolve("UBOT"),
+      client: interrupted,
+    });
+    await interruptedProvider.onAgentExecutionFailed?.(
+      match.triggerContext,
+      match.outputContext,
+      "agent_interrupted",
+    );
+    assert.deepEqual(interrupted.messages, []);
   });
 
   it("propagates a Slack failure notice without adding a reaction", async () => {

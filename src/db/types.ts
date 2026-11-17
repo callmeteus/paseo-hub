@@ -200,12 +200,15 @@ export interface AgentExecutionHubFinishExecutionAcknowledgement {
 export interface AgentExecutionHubAcknowledgements {
   terminalAt: Date | null;
   idleAt: Date | null;
+  /** When the agent first produced assistant text. An idle timeout after this is not a failure. */
+  answeredAt: Date | null;
   finishExecutionCall: AgentExecutionHubFinishExecutionAcknowledgement | null;
 }
 
 export type AgentExecutionHubAcknowledgementInput =
   | { kind: "terminal"; observedAt: Date }
   | { kind: "idle"; observedAt: Date }
+  | { kind: "answered"; observedAt: Date }
   | {
       kind: "finish_execution";
       callId?: string | null;
@@ -1007,6 +1010,8 @@ export interface WorkflowAgentCompletionInput {
   completedByAgent?: boolean;
   deadlineCondition?: TransitionAgentExecutionFields["deadlineCondition"];
   hubAction?: HubAction | null;
+  /** The agent already answered and finished the turn. An elapsed idle deadline does not fail the step. */
+  acceptDeliveredAnswer?: boolean;
 }
 
 export interface EnrollDaemonInput {
