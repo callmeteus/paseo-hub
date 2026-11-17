@@ -360,7 +360,10 @@ describe("Slack Phase 1 trigger provider", () => {
     ]);
     assert.equal(client.messages[0]?.threadTs, "1729999327.187299");
     assert.equal(client.messages[0]?.channelId, "D1");
-    assert.match(client.messages[0]?.content ?? "", /boom/u);
+    assert.equal(
+      client.messages[0]?.content,
+      "Tive um problema e parei antes de terminar. Me marque de novo para tentar outra vez.",
+    );
   });
 
   it("opens an agent session when the step opts in and leaves the legacy status alone", async () => {
@@ -593,7 +596,8 @@ describe("Slack Phase 1 trigger provider", () => {
         teamId: "T1",
         channelId: "C1",
         threadTs: "1700000000.000001",
-        content: "Paseo agent failed: boom",
+        content:
+          "Tive um problema e parei antes de terminar. Me marque de novo para tentar outra vez.",
       },
     ]);
 
@@ -862,31 +866,35 @@ describe("Slack Phase 1 trigger provider", () => {
     );
     assert.ok(attachment);
 
-    assert.deepEqual(context, {
-      slack: {
-        thread: {
-          status: "available",
-          messages: [
+    assert.deepEqual(context.slack.thread, {
+      status: "available",
+      messages: [
+        {
+          ts: "1700000000.000000",
+          content: "earlier screenshot",
+          author: { id: "U2" },
+          channel: { id: "C1" },
+          created_at: "2023-11-14T22:13:19.000Z",
+          attachments: [
             {
-              ts: "1700000000.000000",
-              content: "earlier screenshot",
-              author: { id: "U2" },
-              channel: { id: "C1" },
-              created_at: "2023-11-14T22:13:19.000Z",
-              attachments: [
-                {
-                  id: attachment.id,
-                  filename: "screen.png",
-                  content_type: "image/png",
-                  size: 42,
-                  url: attachments.urlFor(attachment.id, "execution-slack-context"),
-                },
-              ],
+              id: attachment.id,
+              filename: "screen.png",
+              content_type: "image/png",
+              size: 42,
+              url: attachments.urlFor(attachment.id, "execution-slack-context"),
             },
           ],
         },
-      },
+      ],
     });
+    assert.deepEqual(context.slack.trigger_message, {
+      ts: "1700000000.000001",
+      thread: { ts: "1700000000.000001" },
+      text: "<@UBOT> deploy now",
+      author: { id: "U1" },
+    });
+    assert.equal(context.slack.event_type, "app_mention");
+    assert.equal(context.slack.direct_message, undefined);
     const secondContext = await provider.materializeContext!({
       executionId: "execution-slack-context-2",
       organizationId: "org-1",
@@ -928,9 +936,14 @@ describe("Slack Phase 1 trigger provider", () => {
       providerEventReceiptId: "11111111-1111-4111-8111-111111111119",
       triggerContext: emptyMatch.triggerContext,
     });
-    assert.deepEqual(emptyContext, {
-      slack: { thread: { status: "available", messages: [] } },
+    assert.deepEqual(emptyContext.slack.thread, { status: "available", messages: [] });
+    assert.deepEqual(emptyContext.slack.trigger_message, {
+      ts: "1700000000.000001",
+      thread: { ts: "1700000000.000001" },
+      text: "<@UBOT> deploy now",
+      author: { id: "U1" },
     });
+    assert.equal(emptyContext.slack.event_type, "app_mention");
 
     const match = (await provider.match(external(project.id, revision.id)))[0];
     if (!isAcceptedTriggerProviderMatch(match)) throw new Error("expected accepted match");
@@ -947,9 +960,14 @@ describe("Slack Phase 1 trigger provider", () => {
       providerEventReceiptId: "11111111-1111-4111-8111-111111111119",
       triggerContext: match.triggerContext,
     });
-    assert.deepEqual(context, {
-      slack: { thread: { status: "unavailable", messages: [] } },
+    assert.deepEqual(context.slack.thread, { status: "unavailable", messages: [] });
+    assert.deepEqual(context.slack.trigger_message, {
+      ts: "1700000000.000001",
+      thread: { ts: "1700000000.000001" },
+      text: "<@UBOT> deploy now",
+      author: { id: "U1" },
     });
+    assert.equal(context.slack.event_type, "app_mention");
   });
 
   it("marks partially traversed Slack history incomplete", async () => {
@@ -1102,6 +1120,103 @@ describe("Slack Phase 1 trigger provider", () => {
     const matches = await provider.match(external(project.id, revision.id, { authorId: "U2" }));
     assert.equal(matches, "trigger_filters_rejected");
     assert.deepEqual(client.threadReads, []);
+  });
+
+  it("names the person who triggered the run in the materialized context", async () => {
+    const database = createMemoryDatabase();
+    const base = configuration();
+    const { project, revision, store } = await createActiveProjectConfiguration(
+      database,
+      {
+        ...base,
+        triggers: [
+          {
+            ...base.triggers[0]!,
+            filters: { ...base.triggers[0]!.filters, from_users: ["U0BK255SFKL"] },
+          },
+        ],
+      },
+      { organizationId: "org-1" },
+    );
+    const client = new RecordingSlackClient();
+    const provider = createSlackTriggerProvider({
+      configurationStoreForProject: () => store,
+      botUserIdForWorkspace: () => Promise.resolve("UBOT"),
+      client,
+    });
+    const match = (
+      await provider.match(external(project.id, revision.id, { authorId: "U0BK255SFKL" }))
+    )[0];
+    if (!isAcceptedTriggerProviderMatch(match)) throw new Error("expected accepted match");
+    const context = await provider.materializeContext!({
+      executionId: "execution-slack-author",
+      organizationId: "org-1",
+      projectId: project.id,
+      providerEventReceiptId: "11111111-1111-4111-8111-111111111119",
+      triggerContext: match.triggerContext,
+    });
+
+    assert.equal(context.slack.trigger_message.author.id, "U0BK255SFKL");
+    assert.equal(context.slack.trigger_message.ts, "1700000000.000001");
+    assert.deepEqual(context.slack.trigger_message.thread, { ts: "1700000000.000001" });
+    assert.equal(context.slack.trigger_message.text, "<@UBOT> deploy now");
+    assert.equal(context.slack.event_type, "app_mention");
+    assert.equal(context.slack.direct_message, undefined);
+  });
+
+  it("posts the Portuguese machine termination notice without the raw reason", async () => {
+    const database = createMemoryDatabase();
+    const { project, revision, store } = await createActiveProjectConfiguration(
+      database,
+      configuration(),
+      { organizationId: "org-1" },
+    );
+    const client = new RecordingSlackClient();
+    const provider = createSlackTriggerProvider({
+      configurationStoreForProject: () => store,
+      botUserIdForWorkspace: () => Promise.resolve("UBOT"),
+      client,
+    });
+    const match = (await provider.match(external(project.id, revision.id)))[0];
+    if (!isAcceptedTriggerProviderMatch(match)) throw new Error("expected accepted match");
+
+    const terminated = await provider.onMachineTerminated?.(
+      match.triggerContext,
+      "launch_failed",
+      undefined,
+    );
+    assert.equal(terminated, null);
+    assert.deepEqual(client.messages, [
+      {
+        organizationId: "org-1",
+        teamId: "T1",
+        channelId: "C1",
+        threadTs: "1700000000.000001",
+        content: "Não consegui começar agora porque a máquina que me roda está fora. Avise a Gio.",
+      },
+    ]);
+
+    const disconnectedProvider = createSlackTriggerProvider({
+      configurationStoreForProject: () => store,
+      botUserIdForWorkspace: () => Promise.resolve("UBOT"),
+      client: new RecordingSlackClient(),
+    });
+    await disconnectedProvider.onMachineTerminated?.(
+      match.triggerContext,
+      "daemon_disconnected",
+      undefined,
+    );
+    const completedProvider = createSlackTriggerProvider({
+      configurationStoreForProject: () => store,
+      botUserIdForWorkspace: () => Promise.resolve("UBOT"),
+      client: new RecordingSlackClient(),
+    });
+    const completed = await completedProvider.onMachineTerminated?.(
+      match.triggerContext,
+      "completed",
+      undefined,
+    );
+    assert.equal(completed, undefined);
   });
 });
 

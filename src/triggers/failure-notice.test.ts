@@ -54,6 +54,67 @@ it("keeps other entitlement denials on the existing error path", async () => {
     await agentFailureNotice(reason, "org-1", async () => {
       throw new Error("should not need a billing URL");
     }),
-    `Paseo agent failed: ${reason}`,
+    "Tive um problema e parei antes de terminar. Me marque de novo para tentar outra vez.",
   );
+});
+
+it("explains a deadline the agent did not beat", async () => {
+  const timeoutNotice =
+    "Não terminei a tempo e parei por aqui. O caso continua aberto nesta thread.";
+  for (const reason of ["whole_run_timeout", "step_hard_timeout", "timeout"]) {
+    assert.equal(
+      await agentFailureNotice(reason, "org-1", async () => {
+        throw new Error("should not need a billing URL");
+      }),
+      timeoutNotice,
+    );
+  }
+});
+
+it("explains an idle wait that ended the run", async () => {
+  const idleNotice =
+    "Fiquei sem resposta por muito tempo e parei. Me marque de novo para continuar.";
+  for (const reason of ["idle_timeout", "step_idle_timeout"]) {
+    assert.equal(
+      await agentFailureNotice(reason, "org-1", async () => {
+        throw new Error("should not need a billing URL");
+      }),
+      idleNotice,
+    );
+  }
+});
+
+it("explains a machine that never came up", async () => {
+  const machineNotice =
+    "Não consegui começar agora porque a máquina que me roda está fora. Avise a Gio.";
+  for (const reason of ["launch_failed", "daemon_disconnected"]) {
+    assert.equal(
+      await agentFailureNotice(reason, "org-1", async () => {
+        throw new Error("should not need a billing URL");
+      }),
+      machineNotice,
+    );
+  }
+});
+
+it("never leaks the raw failure reason into the notice", async () => {
+  const reasons = [
+    "whole_run_timeout",
+    "idle_timeout",
+    "timeout",
+    "step_idle_timeout",
+    "step_hard_timeout",
+    "launch_failed",
+    "daemon_disconnected",
+    "session not found",
+    "boom",
+    "SIGKILL after 90m",
+  ];
+  for (const reason of reasons) {
+    const notice = await agentFailureNotice(reason, "org-1", async () => {
+      throw new Error("should not need a billing URL");
+    });
+    assert.equal(notice.includes(reason), false, `leaked: ${reason}`);
+    assert.equal(notice.startsWith("Paseo agent failed:"), false);
+  }
 });
