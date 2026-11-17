@@ -16,6 +16,7 @@ import {
   parseCompiledHubConfig,
   staticPromptText,
 } from "../../config/compiler.js";
+import { eventsAllowSlackAgent } from "../slack/agent-block.js";
 import type { TriggerDocument } from "./schema.js";
 import { compileTriggerDocument, serializeTriggerDocument } from "./index.js";
 
@@ -108,6 +109,8 @@ function convertSingleRun(
     return { success: false, blockers };
   }
   if (step.condition !== undefined) blockers.push("run is conditional");
+  if (step.slackAgent !== undefined && !eventsAllowSlackAgent([trigger.on]))
+    blockers.push(`slack_agent cannot run on ${trigger.on}`);
   if (hasNullableInputs(trigger.inputs)) blockers.push("trigger inputs allow null values");
   const environment = configuration.environments.find(
     (candidate) => candidate.name === step.environment,
@@ -183,6 +186,7 @@ function singleRunDocument(
       ...(step.output === undefined
         ? {}
         : { output: { schema: structuredClone(asJsonObject(step.output.schema)) } }),
+      ...(step.slackAgent === undefined ? {} : { slack_agent: structuredClone(step.slackAgent) }),
       ...(Object.keys(outputs).length === 0 ? {} : { outputs }),
       auto_archive: step.autoArchive,
       background: step.background,

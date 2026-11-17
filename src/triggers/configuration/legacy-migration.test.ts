@@ -58,6 +58,132 @@ steps:
     assert.doesNotMatch(trigger.yaml, /include:|partials|steps:/u);
   });
 
+  it("keeps the Slack agent surface when a one-step workflow opts in", () => {
+    const migrated = migrateLegacyBundle({
+      files: [
+        { path: ".paseo/hub.yml", content: hub },
+        {
+          path: ".paseo/workflows/luckyops.yml",
+          content: `
+name: kevin-luckyops
+on: slack.message
+max_runtime: 2h
+filters:
+  from_users: ["*"]
+steps:
+  - id: run
+    environment: runner
+    max_runtime: 2h
+    idle_timeout: 1h
+    agent: codex
+    prompt: [{ text: Handle it }]
+    slack_agent:
+      display: timeline
+      session_title: LuckyOps
+      feedback: true
+    allow_outputs:
+      - { type: slack.reply, max: 10 }
+`,
+        },
+      ],
+    });
+
+    const trigger = migrated[0];
+    assert.equal(trigger?.format, "single_run");
+    if (trigger?.format !== "single_run") return;
+    assert.match(trigger.yaml, /slack_agent:/u);
+    assert.doesNotMatch(trigger.yaml, /steps:/u);
+    const step = trigger.compiled.events[0]?.steps[0];
+    assert.equal(step?.slackAgent?.display, "timeline");
+    assert.equal(step?.slackAgent?.session_title, "LuckyOps");
+    assert.equal(step?.slackAgent?.feedback, true);
+    assert.deepEqual(
+      step?.allowOutputs
+        .map((output) => output.type)
+        .filter((type) => type.startsWith("slack.agent.")),
+      [
+        "slack.agent.stage",
+        "slack.agent.tool",
+        "slack.agent.say",
+        "slack.agent.finish",
+        "slack.agent.fail",
+        "slack.agent.title",
+        "slack.agent.prompts",
+      ],
+    );
+  });
+
+  it("keeps the Slack agent surface on a workflow it cannot inline", () => {
+    const migrated = migrateLegacyBundle({
+      files: [
+        { path: ".paseo/hub.yml", content: hub },
+        {
+          path: ".paseo/workflows/luckyops.yml",
+          content: `
+name: kevin-luckyops
+on: slack.message
+max_runtime: 2h
+filters:
+  from_users: ["*"]
+steps:
+  - id: classify
+    environment: runner
+    max_runtime: 2m
+    idle_timeout: 30s
+    agent: codex
+    prompt: [{ text: classify }]
+  - id: run
+    environment: runner
+    max_runtime: 2h
+    idle_timeout: 1h
+    agent: codex
+    prompt: [{ text: Handle it }]
+    slack_agent:
+      display: timeline
+`,
+        },
+      ],
+    });
+
+    const trigger = migrated[0];
+    assert.equal(trigger?.format, "legacy_multistep");
+    if (trigger?.format !== "legacy_multistep") return;
+    assert.equal(trigger.normalized.trigger.steps[1]?.slackAgent?.display, "timeline");
+  });
+
+  it("keeps a Slack agent surface off a non-Slack event in the legacy lane", () => {
+    const migrated = migrateLegacyBundle({
+      files: [
+        { path: ".paseo/hub.yml", content: hub },
+        {
+          path: ".paseo/workflows/issue.yml",
+          content: `
+name: issue-answer
+on: github.issue
+max_runtime: 2h
+filters:
+  from_users: ["*"]
+steps:
+  - id: run
+    environment: runner
+    max_runtime: 2h
+    idle_timeout: 10m
+    agent: codex
+    prompt: [{ text: Handle it }]
+    slack_agent:
+      display: timeline
+`,
+        },
+      ],
+    });
+
+    const trigger = migrated[0];
+    assert.equal(trigger?.format, "legacy_multistep");
+    if (trigger?.format !== "legacy_multistep") return;
+    assert.ok(trigger.conversionBlockers.includes("slack_agent cannot run on github.issue"));
+    assert.equal(trigger.normalized.trigger.steps[0]?.slackAgent?.display, "timeline");
+  });
+
   it("preserves a multi-step workflow as one self-contained normalized legacy trigger", () => {
     const migrated = migrateLegacyBundle({
       files: [

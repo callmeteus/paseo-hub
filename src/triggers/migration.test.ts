@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "vitest";
 import { compileHubBundle, type HubBundleFile } from "../config/bundle.js";
+import { isCompiledStaticStep, parseCompiledHubConfig } from "../config/compiler.js";
 import { createMemoryDatabase } from "../db/memory.js";
 import type { Database, ProjectRecord } from "../db/types.js";
 import { migrateLegacyProjectTriggers } from "./migration.js";
@@ -80,6 +81,54 @@ describe("startup project trigger migration", () => {
     assert.deepEqual(
       (await database.listOrganizationTriggers("org")).map(({ name }) => name).sort(),
       ["paseo-request", "request"],
+    );
+  });
+
+  it("stores the Slack agent surface on the migrated revision and its runtime configuration", async () => {
+    const database = createMemoryDatabase({ organizationIds: ["org"] });
+    await activeProject(database, "luckyops", [
+      {
+        path: ".paseo/workflows/kevin.yml",
+        content: `name: kevin
+on: slack.message
+max_runtime: 2h
+filters: { from_users: ["*"] }
+steps:
+  - id: run
+    environment: runner
+    max_runtime: 2h
+    idle_timeout: 1h
+    agent: codex
+    prompt: [{ text: Handle it }]
+    slack_agent:
+      display: timeline
+      session_title: LuckyOps
+      feedback: true
+    allow_outputs: [{ type: slack.reply, max: 10 }]
+`,
+      },
+    ]);
+
+    await migrateLegacyProjectTriggers(database);
+    const trigger = (await database.listOrganizationTriggers("org"))[0]!;
+    assert.equal(trigger.format, "single_run");
+    const revision = await database.findOrganizationTriggerRevision(
+      trigger.id,
+      trigger.activeRevisionId,
+    );
+    assert.match(revision?.yaml ?? "", /slack_agent:/u);
+    assert.match(revision?.yaml ?? "", /session_title: LuckyOps/u);
+    const runtime = await database.findActiveProjectConfiguration(trigger.runtimeProjectId);
+    const runtimeStep = runtime?.normalizedConfiguration
+      ? parseCompiledHubConfig(runtime.normalizedConfiguration).triggers[0]?.steps[0]
+      : undefined;
+    if (runtimeStep === undefined || isCompiledStaticStep(runtimeStep)) {
+      assert.fail("runtime configuration lost its agent step");
+    }
+    assert.equal(runtimeStep.slackAgent?.display, "timeline");
+    assert.equal(
+      runtimeStep.allowOutputs.some((output) => output.type === "slack.agent.stage"),
+      true,
     );
   });
 
