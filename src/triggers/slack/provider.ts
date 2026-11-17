@@ -54,7 +54,7 @@ export interface SlackMergeData {
       ts: string;
       content: string;
       body: string;
-      author: { id: string };
+      author: { id: string; username?: string | undefined };
       channel: { id: string };
       thread: { ts: string } | null;
       created_at: string;
@@ -89,6 +89,16 @@ interface SlackContextPayload {
 export interface SlackMaterializedContext {
   slack: {
     thread: SlackContextPayload;
+    /** The message that opened this run, so a prompt can name who asked. */
+    trigger_message: {
+      ts: string;
+      thread: { ts: string } | null;
+      text: string;
+      author: { id: string; name?: string | undefined };
+    };
+    event_type: SlackMergeData["slack"]["event_type"];
+    /** Present when the person wrote in a one-to-one direct message. */
+    direct_message?: true;
   };
 }
 
@@ -271,12 +281,13 @@ export function createSlackTriggerProvider(options: {
       return matches.length === 0 ? "trigger_filters_rejected" : matches;
     },
     async materializeContext(launch): Promise<SlackMaterializedContext> {
-      const locator = launch.triggerContext.event.slack.trigger_thread_context;
+      const event = launch.triggerContext.event.slack;
+      const locator = event.trigger_thread_context;
       if (locator.status === "not_applicable") {
         // A channel message has no earlier thread. Show the message that started it,
         // plus replies that arrived after it. A later step, such as one that waits
         // before acting, has to see those replies.
-        const message = launch.triggerContext.event.slack.trigger_message;
+        const message = event.trigger_message;
         const root = {
           ts: message.ts,
           content: message.content,
@@ -292,8 +303,8 @@ export function createSlackTriggerProvider(options: {
             })),
             launch.providerEventReceiptId,
             launch.organizationId,
-            launch.triggerContext.event.slack.team.id,
-            launch.triggerContext.event.slack.connection_id,
+            event.team.id,
+            event.connection_id,
             launch.executionId,
             options.attachments,
           ),
@@ -305,11 +316,17 @@ export function createSlackTriggerProvider(options: {
               status: later.status,
               messages: [root, ...later.messages],
             },
+            ...triggerMessageContext(event),
           },
         };
       }
       if (options.client.readThreadMessages === undefined) {
-        return { slack: { thread: { status: "unavailable", messages: [] } } };
+        return {
+          slack: {
+            thread: { status: "unavailable", messages: [] },
+            ...triggerMessageContext(event),
+          },
+        };
       }
       let history;
       try {
@@ -331,7 +348,12 @@ export function createSlackTriggerProvider(options: {
             },
           },
         );
-        return { slack: { thread: { status: "unavailable", messages: [] } } };
+        return {
+          slack: {
+            thread: { status: "unavailable", messages: [] },
+            ...triggerMessageContext(event),
+          },
+        };
       }
       const messages = await Promise.all(
         history.messages.map(async (message) => ({
@@ -344,8 +366,8 @@ export function createSlackTriggerProvider(options: {
             message.attachments,
             launch.providerEventReceiptId,
             launch.organizationId,
-            launch.triggerContext.event.slack.team.id,
-            launch.triggerContext.event.slack.connection_id,
+            event.team.id,
+            event.connection_id,
             launch.executionId,
             options.attachments,
           ),
@@ -357,6 +379,7 @@ export function createSlackTriggerProvider(options: {
             status: history.complete ? "available" : "incomplete",
             messages,
           },
+          ...triggerMessageContext(event),
         },
       };
     },
@@ -404,11 +427,48 @@ export function createSlackTriggerProvider(options: {
     async onMachineTerminated(context, reason, reactionState) {
       await finishSlackAgentLifecycle(options.client, context, context.target, "failure");
       if (reason === "launch_failed" || reason === "daemon_disconnected") {
-        await failWithNotice(options.client, context.target, `Paseo agent failed: ${reason}`);
+        await failWithNotice(
+          options.client,
+          context.target,
+          await agentFailureNotice(
+            reason,
+            context.target.organizationId,
+            options.billingUrlForOrganization ?? missingBillingUrl,
+          ),
+        );
         return null;
       }
       return reactionState;
     },
+  };
+}
+
+/**
+ * The part of the context that describes the message that opened this run.
+ *
+ * The hydrated thread stops before that message, so a prompt reading only the thread
+ * cannot tell who asked. Everything here comes from the stored event: no Slack call.
+ *
+ * @param event - Slack merge data stored on the run
+ * @returns The trigger message, the event type, and the direct-message flag
+ */
+function triggerMessageContext(
+  event: SlackMergeData["slack"],
+): Omit<SlackMaterializedContext["slack"], "thread"> {
+  return {
+    trigger_message: {
+      ts: event.trigger_message.ts,
+      thread: event.trigger_message.thread,
+      text: event.trigger_message.content,
+      author: {
+        id: event.trigger_message.author.id,
+        ...(event.trigger_message.author.username === undefined
+          ? {}
+          : { name: event.trigger_message.author.username }),
+      },
+    },
+    event_type: event.event_type,
+    ...(event.direct_message === true ? { direct_message: true as const } : {}),
   };
 }
 

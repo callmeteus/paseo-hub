@@ -512,7 +512,8 @@ describe("Discord Phase 1 trigger provider", () => {
         {
           channelId: "200",
           threadId: "207",
-          content: "Paseo agent failed: boom",
+          content:
+            "Tive um problema e parei antes de terminar. Me marque de novo para tentar outra vez.",
         },
         {
           channelId: "200",
