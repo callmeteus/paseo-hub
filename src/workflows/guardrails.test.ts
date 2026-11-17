@@ -252,7 +252,7 @@ function send(input: {
   outputContext: unknown;
   triggerContext: unknown;
   guardrails: readonly Guardrail[];
-}): { done: Promise<void>; sent: () => boolean } {
+}): { done: Promise<string | void>; sent: () => boolean } {
   let posted = false;
   const registry = new OutputExecutorRegistry();
   registry.register({

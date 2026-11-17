@@ -35,6 +35,7 @@ import {
   splitInstructionDocument,
 } from "../workflows/prompt-instructions.js";
 import { SlackAgentSurfaceError } from "../triggers/slack/agent-surface.js";
+import { SlackReadMessagesError } from "../triggers/slack/read-messages.js";
 import { GuardrailRefusal } from "../workflows/guardrails.js";
 
 type JsonSchema = OutputToolSchema;
@@ -483,7 +484,7 @@ async function executeOutputCall(
     return toolFailure(`Output limit reached for ${output.declaration.type}`);
   }
   try {
-    await options.outputs.execute({
+    const result = await options.outputs.execute({
       agentExecutionId: execution.id,
       attemptId: attempt.id,
       toolType: output.declaration.type,
@@ -500,9 +501,14 @@ async function executeOutputCall(
       options.now?.() ?? new Date(),
     );
     if (recorded === undefined) throw new Error("output emission could not be recorded");
-    return toolSuccess("Output sent");
+    // A read-only output answers with what it read; anything else only delivered.
+    return typeof result === "string" ? toolSuccess(result) : toolSuccess("Output sent");
   } catch (error) {
-    if (error instanceof GuardrailRefusal || error instanceof SlackAgentSurfaceError) {
+    if (
+      error instanceof GuardrailRefusal ||
+      error instanceof SlackAgentSurfaceError ||
+      error instanceof SlackReadMessagesError
+    ) {
       try {
         await options.database.failAgentExecutionOutput(
           execution.id,

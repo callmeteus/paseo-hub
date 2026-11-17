@@ -56,6 +56,7 @@ describe("Slack registration", () => {
       [
         "slack.reply",
         "slack.react",
+        "slack.read_messages",
         "slack.agent.stage",
         "slack.agent.tool",
         "slack.agent.say",
