@@ -1636,8 +1636,9 @@ export function slackAgentTargetFromOpenBook(input: {
     channelId: book.channelId,
     threadTs: book.threadTs,
     authorId: book.authorId,
-    // The outputs of the step that opened this session are not reachable here, so the
-    // conservative mode wins. The step's own stream keeps the mode it was created with.
+    // Close-only target: the run already ended, so nothing is streamed through this block.
+    // `none` keeps the closing path from ever mirroring text for a stream it did not open.
+    // The step's own stream keeps the mode it was created with.
     block: { display: "timeline", assistant_text: "none" },
   };
 }

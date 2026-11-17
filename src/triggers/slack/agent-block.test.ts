@@ -2,13 +2,11 @@ import assert from "node:assert/strict";
 import { describe, it } from "vitest";
 import {
   blankSlackAgentDraft,
-  defaultSlackAgentAssistantText,
   openingSlackAgentBlock,
   outputContextForSlackAgentStep,
   projectSlackAgentDraft,
   SlackAgentBlockSchema,
   slackAgentBlockFromDraft,
-  withSlackAgentAssistantText,
   type SlackAgentBlock,
 } from "./agent-block.js";
 
@@ -41,55 +39,40 @@ describe("Slack agent block", () => {
     assert.deepEqual(omitted, { display: "plan" });
   });
 
-  it("defaults to none when the step can reply and all when it cannot", () => {
-    assert.equal(defaultSlackAgentAssistantText([{ type: "slack.reply" }]), "none");
-    assert.equal(defaultSlackAgentAssistantText([{ type: "slack.react" }]), "all");
-    assert.equal(defaultSlackAgentAssistantText([]), "all");
-
-    const block: SlackAgentBlock = { display: "plan" };
-    assert.deepEqual(withSlackAgentAssistantText(block, [{ type: "slack.reply" }]), {
-      display: "plan",
-      assistant_text: "none",
-    });
-    assert.deepEqual(withSlackAgentAssistantText(block, [{ type: "slack.react" }]), {
-      display: "plan",
-      assistant_text: "all",
-    });
-    const chosen: SlackAgentBlock = { display: "plan", assistant_text: "final" };
-    assert.equal(withSlackAgentAssistantText(chosen, [{ type: "slack.reply" }]), chosen);
-  });
-
-  it("fills the opening block from the outputs that step was granted", () => {
+  it("leaves the mode unset so the surface keeps mirroring every message", () => {
     const block: SlackAgentBlock = { display: "timeline" };
-    assert.deepEqual(openingSlackAgentBlock([{ slackAgent: block, allowOutputs: [] }]), {
-      display: "timeline",
-      assistant_text: "all",
-    });
+    assert.equal(openingSlackAgentBlock([{ slackAgent: block }]), block);
+    // Only an unconditional step may open the session.
     assert.equal(
-      openingSlackAgentBlock([
-        { slackAgent: block, condition: { kind: "literal", value: true } },
-        { slackAgent: block, allowOutputs: [{ type: "slack.reply" }] },
-      ])?.assistant_text,
-      "none",
+      openingSlackAgentBlock([{ slackAgent: block, condition: { kind: "literal", value: true } }]),
+      undefined,
     );
-  });
 
-  it("resolves the same default when the step builds its own output context", () => {
     const run = {
       provider: "slack",
       organizationId: "org-1",
       slackAgent: { display: "plan" as const },
     };
-    assert.deepEqual(
-      outputContextForSlackAgentStep(run, { display: "plan" }, [{ type: "slack.reply" }]),
-      {
-        ...run,
-        slackAgent: { display: "plan", assistant_text: "none" },
-      },
-    );
     assert.deepEqual(outputContextForSlackAgentStep(run, { display: "plan" }), {
       ...run,
       slackAgent: { display: "plan" },
     });
+    assert.deepEqual(outputContextForSlackAgentStep(run, { display: "timeline" }), {
+      ...run,
+      slackAgent: { display: "timeline" },
+    });
+  });
+
+  it("keeps an explicit mode through the compiler helpers", () => {
+    const chosen: SlackAgentBlock = { display: "plan", assistant_text: "none" };
+    assert.equal(openingSlackAgentBlock([{ slackAgent: chosen }]), chosen);
+    const run = { provider: "slack", organizationId: "org-1" };
+    assert.deepEqual(
+      outputContextForSlackAgentStep(run, { display: "plan", assistant_text: "all" }),
+      {
+        ...run,
+        slackAgent: { display: "plan", assistant_text: "all" },
+      },
+    );
   });
 });

@@ -522,31 +522,36 @@ describe("Slack agent surface", () => {
     );
   });
 
-  it("separates two assistant messages with a blank line in all mode", async () => {
-    const { client, calls } = surfaceClient();
-    bindSlackAgentClient(client);
-    const block = { display: "timeline" as const, assistant_text: "all" as const };
-    const launch = context(block);
-    await projectSlackAgentTimeline({
-      executionId: "exec-1",
-      outputContext: launch.outputContext,
-      triggerContext: launch.triggerContext,
-      item: { type: "assistant_message", text: "Primeiro.", messageId: "m1" },
-    });
-    await projectSlackAgentTimeline({
-      executionId: "exec-1",
-      outputContext: launch.outputContext,
-      triggerContext: launch.triggerContext,
-      item: { type: "assistant_message", text: "Segundo.", messageId: "m2" },
-    });
-    assert.deepEqual(
-      calls
-        .filter((call) => call.method === "start" || call.method === "append")
-        .flatMap((call) => call.input.chunks ?? [])
-        .filter((chunk) => chunk.type === "markdown_text")
-        .map((chunk) => chunk.text),
-      ["Primeiro.", "\n\nSegundo."],
-    );
+  it("separates two assistant messages with a blank line when unset or all", async () => {
+    for (const block of [
+      { display: "timeline" as const },
+      { display: "timeline" as const, assistant_text: "all" as const },
+    ]) {
+      resetSlackAgentSurfaceForTests();
+      const { client, calls } = surfaceClient();
+      bindSlackAgentClient(client);
+      const launch = context(block);
+      await projectSlackAgentTimeline({
+        executionId: "exec-1",
+        outputContext: launch.outputContext,
+        triggerContext: launch.triggerContext,
+        item: { type: "assistant_message", text: "Primeiro.", messageId: "m1" },
+      });
+      await projectSlackAgentTimeline({
+        executionId: "exec-1",
+        outputContext: launch.outputContext,
+        triggerContext: launch.triggerContext,
+        item: { type: "assistant_message", text: "Segundo.", messageId: "m2" },
+      });
+      assert.deepEqual(
+        calls
+          .filter((call) => call.method === "start" || call.method === "append")
+          .flatMap((call) => call.input.chunks ?? [])
+          .filter((chunk) => chunk.type === "markdown_text")
+          .map((chunk) => chunk.text),
+        ["Primeiro.", "\n\nSegundo."],
+      );
+    }
   });
 });
 

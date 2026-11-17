@@ -11,7 +11,8 @@ const SlackAgentPromptItemSchema = z
  * What the surface does with the model's free assistant text.
  *
  * `none` keeps narration out of the thread, `final` sends only the last message when the
- * stream finishes, and `all` mirrors every delta as it arrives.
+ * stream finishes, and `all` mirrors every delta as it arrives. Unset keeps `all`, which
+ * is what the surface did before the field existed.
  */
 export const SlackAgentAssistantTextSchema = z.enum(["none", "final", "all"]);
 
@@ -22,7 +23,7 @@ export type SlackAgentAssistantText = z.infer<typeof SlackAgentAssistantTextSche
  *
  * Absent means the run keeps the legacy assistant status. `feedback: true` lets the
  * agent put its own choices on the card when it finishes active or suspended.
- * `assistant_text` is filled in from the step's outputs when the author leaves it out.
+ * `assistant_text` is opt-in: leaving it out mirrors every assistant message.
  */
 export const SlackAgentBlockSchema = z
   .object({
@@ -82,7 +83,7 @@ export interface SlackAgentDraft {
   prompts: SlackAgentPromptDraft[];
   /** Lets the agent send choice buttons. Off omits `feedback` from the YAML. */
   feedback: boolean;
-  /** Empty leaves `assistant_text` out, so the step's outputs decide the default. */
+  /** Empty leaves `assistant_text` out, so the surface keeps mirroring every message. */
   assistantText: SlackAgentAssistantText | "";
 }
 
@@ -181,36 +182,6 @@ export function slackAgentBlockFromDraft(
 }
 
 /**
- * What to do with free assistant text when the author did not say.
- *
- * A step that can call `slack.reply` already speaks through a tool, so its narration stays
- * out of the thread. Every other step keeps the text, which is what the surface always did.
- *
- * @param allowOutputs - Outputs granted on the step
- * @returns `none` when the step can reply, otherwise `all`
- */
-export function defaultSlackAgentAssistantText(
-  allowOutputs: readonly { readonly type: string }[],
-): SlackAgentAssistantText {
-  return allowOutputs.some((output) => output.type === "slack.reply") ? "none" : "all";
-}
-
-/**
- * The block with `assistant_text` filled in from the step's outputs.
- *
- * @param block - The authored block
- * @param allowOutputs - Outputs granted on the step
- * @returns The same block when the author chose a mode
- */
-export function withSlackAgentAssistantText(
-  block: SlackAgentBlock,
-  allowOutputs: readonly { readonly type: string }[],
-): SlackAgentBlock {
-  if (block.assistant_text !== undefined) return block;
-  return { ...block, assistant_text: defaultSlackAgentAssistantText(allowOutputs) };
-}
-
-/**
  * Field errors for one Slack agent draft.
  *
  * @param draft - Form state
@@ -263,18 +234,13 @@ export function withSlackAgentOutputs<Output extends { readonly type: string }>(
  * The run keeps the first step that opted in, so the opening "Working..." follows that step.
  * A step that did not opt in does not see that block, so its tools stay hidden.
  *
- * When the step's block does not choose an assistant-text mode, the outputs granted to that
- * step decide it: a step that can call `slack.reply` does not mirror its narration.
- *
  * @param outputContext - Output context stored on the run
  * @param stepAgent - The block compiled onto this step, when it has one
- * @param allowOutputs - Outputs granted to this step, when the caller knows them
  * @returns The context the step's tools should see
  */
 export function outputContextForSlackAgentStep(
   outputContext: unknown,
   stepAgent: SlackAgentBlock | undefined,
-  allowOutputs?: readonly { readonly type: string }[],
 ): unknown {
   if (!isRecord(outputContext)) return outputContext;
   if (stepAgent === undefined) {
@@ -285,9 +251,7 @@ export function outputContextForSlackAgentStep(
     }
     return rest;
   }
-  const block =
-    allowOutputs === undefined ? stepAgent : withSlackAgentAssistantText(stepAgent, allowOutputs);
-  return { ...outputContext, slackAgent: block };
+  return { ...outputContext, slackAgent: stepAgent };
 }
 
 /**
@@ -312,9 +276,6 @@ export function firstSlackAgentBlock(
  * at acceptance leaves "stop" on the thread while no agent is running. That step
  * opens the session itself when its execution starts.
  *
- * The assistant-text mode is filled in from the step's outputs, so a step that can
- * call `slack.reply` does not mirror its narration.
- *
  * @param steps - Compiled steps, in run order
  * @returns The block of the first unconditional step that opted in
  */
@@ -322,14 +283,9 @@ export function openingSlackAgentBlock(
   steps: readonly {
     slackAgent?: SlackAgentBlock | undefined;
     condition?: unknown;
-    allowOutputs?: readonly { readonly type: string }[] | undefined;
   }[],
 ): SlackAgentBlock | undefined {
-  const opening = steps.find(
-    (step) => step.condition === undefined && step.slackAgent !== undefined,
-  );
-  if (opening?.slackAgent === undefined) return undefined;
-  return withSlackAgentAssistantText(opening.slackAgent, opening.allowOutputs ?? []);
+  return firstSlackAgentBlock(steps.filter((step) => step.condition === undefined));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
