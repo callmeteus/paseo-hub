@@ -151,6 +151,24 @@ describe("self-contained trigger documents", () => {
     );
   });
 
+  it("carries a flow run locale into every compiled event", () => {
+    const compiled = compileTriggerDocument(`
+name: flow
+on:
+  slack.mention:
+    connection: acme-slack
+    filters: { from_users: ["*"] }
+run:
+  locale: pt-BR
+  target: { daemon: devbox, cwd: /workspace }
+  reactions:
+    - agent: { provider: codex, mode: full-access }
+      prompt: Handle it
+`);
+
+    assert.equal(compiled.events[0]?.locale, "pt-BR");
+  });
+
   it("compiles an authored title template and preserves it through canonical YAML", () => {
     const title = "Intake · ${{ paseo.execution.id }}";
     const yaml = trigger.replace("  max_runtime: 90m", `  max_runtime: 90m\n  title: "${title}"`);

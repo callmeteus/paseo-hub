@@ -459,6 +459,25 @@ async function finishExecutionCall(
   }
 }
 
+/**
+ * Refusals the agent is meant to read and act on. They answer with their own message instead of
+ * a reference and a retry hint.
+ */
+function isAgentFacingRefusal(
+  error: unknown,
+): error is
+  | GuardrailRefusal
+  | SlackAgentSurfaceError
+  | SlackOutboundTextError
+  | SlackReadMessagesError {
+  return (
+    error instanceof GuardrailRefusal ||
+    error instanceof SlackAgentSurfaceError ||
+    error instanceof SlackOutboundTextError ||
+    error instanceof SlackReadMessagesError
+  );
+}
+
 async function executeOutputCall(
   options: ExecutionCapabilityOptions,
   execution: AgentExecutionRecord,
@@ -505,12 +524,7 @@ async function executeOutputCall(
     // A read-only output answers with what it read; anything else only delivered.
     return typeof result === "string" ? toolSuccess(result) : toolSuccess("Output sent");
   } catch (error) {
-    if (
-      error instanceof GuardrailRefusal ||
-      error instanceof SlackAgentSurfaceError ||
-      error instanceof SlackOutboundTextError ||
-      error instanceof SlackReadMessagesError
-    ) {
+    if (isAgentFacingRefusal(error)) {
       try {
         await options.database.failAgentExecutionOutput(
           execution.id,
