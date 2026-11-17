@@ -8,10 +8,22 @@ const SlackAgentPromptItemSchema = z
   .strict();
 
 /**
+ * What the surface does with the model's free assistant text.
+ *
+ * `none` keeps narration out of the thread, `final` sends only the last message when the
+ * stream finishes, and `all` mirrors every delta as it arrives. Unset keeps `all`, which
+ * is what the surface did before the field existed.
+ */
+export const SlackAgentAssistantTextSchema = z.enum(["none", "final", "all"]);
+
+export type SlackAgentAssistantText = z.infer<typeof SlackAgentAssistantTextSchema>;
+
+/**
  * The opt-in block on one agent reaction.
  *
  * Absent means the run keeps the legacy assistant status. `feedback: true` lets the
  * agent put its own choices on the card when it finishes active or suspended.
+ * `assistant_text` is opt-in: leaving it out mirrors every assistant message.
  */
 export const SlackAgentBlockSchema = z
   .object({
@@ -26,6 +38,7 @@ export const SlackAgentBlockSchema = z
       .strict()
       .optional(),
     feedback: z.boolean().optional(),
+    assistant_text: SlackAgentAssistantTextSchema.optional(),
   })
   .strict()
   .superRefine((block, context) => {
@@ -70,6 +83,8 @@ export interface SlackAgentDraft {
   prompts: SlackAgentPromptDraft[];
   /** Lets the agent send choice buttons. Off omits `feedback` from the YAML. */
   feedback: boolean;
+  /** Empty leaves `assistant_text` out, so the surface keeps mirroring every message. */
+  assistantText: SlackAgentAssistantText | "";
 }
 
 /**
@@ -99,6 +114,7 @@ export function blankSlackAgentDraft(): SlackAgentDraft {
     promptsTitle: "",
     prompts: [],
     feedback: false,
+    assistantText: "",
   };
 }
 
@@ -122,6 +138,7 @@ export function projectSlackAgentDraft(block: SlackAgentBlock | undefined): Slac
       message: item.message,
     })),
     feedback: block.feedback === true,
+    assistantText: block.assistant_text ?? "",
   };
 }
 
@@ -160,6 +177,7 @@ export function slackAgentBlockFromDraft(
           },
         }),
     ...(draft.feedback ? { feedback: true as const } : {}),
+    ...(draft.assistantText === "" ? {} : { assistant_text: draft.assistantText }),
   };
 }
 

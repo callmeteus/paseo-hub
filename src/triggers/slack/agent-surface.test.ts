@@ -396,6 +396,163 @@ describe("Slack agent surface", () => {
     });
     assert.equal(calls.length, before);
   });
+
+  it("drops assistant text in none mode and keeps the todo row", async () => {
+    const { client, calls } = surfaceClient();
+    bindSlackAgentClient(client);
+    const block = { display: "plan" as const, assistant_text: "none" as const };
+    const launch = context(block);
+    await beginSlackAgentRun(client, runTarget(block));
+    await projectSlackAgentTimeline({
+      executionId: "exec-1",
+      outputContext: launch.outputContext,
+      triggerContext: launch.triggerContext,
+      item: {
+        type: "todo",
+        items: [{ id: "1", text: "Ler o pedido", status: "pending", completed: false }],
+      },
+    });
+    await projectSlackAgentTimeline({
+      executionId: "exec-1",
+      outputContext: launch.outputContext,
+      triggerContext: launch.triggerContext,
+      item: { type: "assistant_message", text: "Vou ler o pedido.", messageId: "m1" },
+    });
+    await projectSlackAgentTimeline({
+      executionId: "exec-1",
+      outputContext: launch.outputContext,
+      triggerContext: launch.triggerContext,
+      item: { type: "assistant_message", text: "Agora vou corrigir.", messageId: "m2" },
+    });
+    await runTool(client, "slack.agent.finish", { session: "active" }, launch);
+    const texts = calls
+      .flatMap((call) => call.input.chunks ?? [])
+      .flatMap((chunk) =>
+        chunk.type === "markdown_text" && typeof chunk.text === "string" ? [chunk.text] : [],
+      );
+    assert.deepEqual(texts, []);
+    const opened = calls.find((call) => call.method === "start");
+    assert.equal(
+      opened?.input.chunks?.some((chunk) => chunk.id === "1"),
+      true,
+    );
+  });
+
+  it("sends only the last assistant message in final mode", async () => {
+    const { client, calls } = surfaceClient();
+    bindSlackAgentClient(client);
+    const block = { display: "plan" as const, assistant_text: "final" as const };
+    const launch = context(block);
+    await beginSlackAgentRun(client, runTarget(block));
+    await projectSlackAgentTimeline({
+      executionId: "exec-1",
+      outputContext: launch.outputContext,
+      triggerContext: launch.triggerContext,
+      item: {
+        type: "todo",
+        items: [{ id: "1", text: "Ler o pedido", status: "pending", completed: false }],
+      },
+    });
+    await projectSlackAgentTimeline({
+      executionId: "exec-1",
+      outputContext: launch.outputContext,
+      triggerContext: launch.triggerContext,
+      item: { type: "assistant_message", text: "Vou ler", messageId: "m1" },
+    });
+    await projectSlackAgentTimeline({
+      executionId: "exec-1",
+      outputContext: launch.outputContext,
+      triggerContext: launch.triggerContext,
+      item: { type: "assistant_message", text: "Vou ler o pedido.", messageId: "m1" },
+    });
+    await projectSlackAgentTimeline({
+      executionId: "exec-1",
+      outputContext: launch.outputContext,
+      triggerContext: launch.triggerContext,
+      item: { type: "assistant_message", text: "Pronto.", messageId: "m2" },
+    });
+    await runTool(client, "slack.agent.finish", { session: "active" }, launch);
+    const appended = calls
+      .filter((call) => call.method === "start" || call.method === "append")
+      .flatMap((call) => call.input.chunks ?? []);
+    assert.deepEqual(
+      appended.filter((chunk) => chunk.type === "markdown_text").map((chunk) => chunk.text),
+      [],
+    );
+    assert.deepEqual(
+      lastCall(calls, "stop")?.input.chunks?.map((chunk) => chunk.text),
+      ["Pronto."],
+    );
+
+    // A rotated stream keeps the text until the run closes it.
+    resetSlackAgentSurfaceForTests();
+    let now = 1_000_000;
+    setSlackAgentClockForTests(() => now);
+    const rotated = surfaceClient();
+    bindSlackAgentClient(rotated.client);
+    await beginSlackAgentRun(rotated.client, runTarget(block));
+    await projectSlackAgentTimeline({
+      executionId: "exec-1",
+      outputContext: launch.outputContext,
+      triggerContext: launch.triggerContext,
+      item: {
+        type: "todo",
+        items: [{ id: "1", text: "Ler o pedido", status: "pending", completed: false }],
+      },
+    });
+    await projectSlackAgentTimeline({
+      executionId: "exec-1",
+      outputContext: launch.outputContext,
+      triggerContext: launch.triggerContext,
+      item: { type: "assistant_message", text: "Pronto.", messageId: "m2" },
+    });
+    now += 9 * MINUTE;
+    await runTool(rotated.client, "slack.agent.say", { text: "Ainda aqui." }, launch);
+    assert.deepEqual(
+      rotated.calls
+        .filter((call) => call.method === "stop" && call.input.sessionStatus === "processing")
+        .flatMap((call) => call.input.chunks ?? []),
+      [],
+    );
+    await finishSlackAgentRun(rotated.client, runTarget(block), "success");
+    const closed = lastCall(rotated.calls, "stop");
+    assert.deepEqual(
+      closed?.input.chunks?.map((chunk) => chunk.text),
+      ["Pronto."],
+    );
+  });
+
+  it("separates two assistant messages with a blank line when unset or all", async () => {
+    for (const block of [
+      { display: "timeline" as const },
+      { display: "timeline" as const, assistant_text: "all" as const },
+    ]) {
+      resetSlackAgentSurfaceForTests();
+      const { client, calls } = surfaceClient();
+      bindSlackAgentClient(client);
+      const launch = context(block);
+      await projectSlackAgentTimeline({
+        executionId: "exec-1",
+        outputContext: launch.outputContext,
+        triggerContext: launch.triggerContext,
+        item: { type: "assistant_message", text: "Primeiro.", messageId: "m1" },
+      });
+      await projectSlackAgentTimeline({
+        executionId: "exec-1",
+        outputContext: launch.outputContext,
+        triggerContext: launch.triggerContext,
+        item: { type: "assistant_message", text: "Segundo.", messageId: "m2" },
+      });
+      assert.deepEqual(
+        calls
+          .filter((call) => call.method === "start" || call.method === "append")
+          .flatMap((call) => call.input.chunks ?? [])
+          .filter((chunk) => chunk.type === "markdown_text")
+          .map((chunk) => chunk.text),
+        ["Primeiro.", "\n\nSegundo."],
+      );
+    }
+  });
 });
 
 function runTarget(block: SlackAgentRunTarget["block"]): SlackAgentRunTarget {

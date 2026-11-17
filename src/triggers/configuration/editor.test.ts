@@ -1379,6 +1379,34 @@ test("drops slack_agent when the trigger event is no longer Slack", () => {
   expect(parsed.run).not.toHaveProperty("slack_agent");
 });
 
+test("round-trips the assistant text mode and leaves it out when unset", () => {
+  const projection = projectTriggerForm(ADVANCED);
+  if (projection.status !== "editable") throw new Error(projection.reason);
+  const selected = patchTriggerYaml(ADVANCED, {
+    ...projection.value,
+    slackAgent: {
+      ...blankSlackAgentDraft(),
+      enabled: true,
+      display: "timeline",
+      assistantText: "final",
+    },
+  });
+  expect(selected).toContain("assistant_text: final");
+  const selectedForm = projectTriggerForm(selected);
+  if (selectedForm.status !== "editable") throw new Error(selectedForm.reason);
+  expect(selectedForm.value.slackAgent.assistantText).toBe("final");
+  expect(patchTriggerYaml(selected, selectedForm.value)).toBe(selected);
+
+  const unset = patchTriggerYaml(ADVANCED, {
+    ...projection.value,
+    slackAgent: { ...blankSlackAgentDraft(), enabled: true, display: "timeline" },
+  });
+  expect(unset).not.toContain("assistant_text");
+  const unsetForm = projectTriggerForm(unset);
+  if (unsetForm.status !== "editable") throw new Error(unsetForm.reason);
+  expect(unsetForm.value.slackAgent.assistantText).toBe("");
+});
+
 test("round-trips feedback buttons and leaves an unknown display in YAML", () => {
   const feedback = ADVANCED.replace(
     "  auto_archive: false\n",

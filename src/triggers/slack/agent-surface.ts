@@ -4,6 +4,7 @@ import { reportFailure } from "../../failures/index.js";
 import { logger } from "../../logger.js";
 import {
   SlackAgentBlockSchema,
+  type SlackAgentAssistantText,
   type SlackAgentBlock,
   type SlackAgentOutputType,
 } from "./agent-block.js";
@@ -180,8 +181,14 @@ interface ExecutionStream {
   tasks: Map<string, TaskState>;
   /** Task ids the model set with slack.agent.stage. The mirror does not overwrite them. */
   explicitTaskIds: Set<string>;
+  /** What this execution does with free assistant text, fixed when the stream is created. */
+  assistantTextMode: SlackAgentAssistantText;
   /** Full assistant text already streamed, keyed by message id. */
   assistantText: Map<string, string>;
+  /** Last message id that produced text. `all` uses it to separate two messages. */
+  lastAssistantMessageId: string | undefined;
+  /** Set once `final` streamed its message, so a later close does not repeat it. */
+  finalAssistantSent: boolean;
 }
 
 const threads = new Map<string, ThreadBook>();
@@ -378,6 +385,9 @@ async function finishFailedSession(
 /**
  * Closes every open stream with the given session, or sets the session when none is streaming.
  *
+ * A stream that never opened only buffered a `final` message. That text is sent as a plain
+ * message, so the run's last answer is not lost when the model did not call `slack_finish`.
+ *
  * @returns Nothing
  */
 async function closeOpenStreams(
@@ -387,10 +397,24 @@ async function closeOpenStreams(
   session: SlackAgentSessionStatus,
 ): Promise<void> {
   let closed = false;
+  let owed: string | undefined;
   for (const stream of open) {
-    if (stream.ts === undefined) continue;
+    if (stream.ts === undefined) {
+      // Nothing was ever streamed for this execution. Its answer still belongs in the thread.
+      if (session !== "processing") owed = takeFinalAssistantText(stream) ?? owed;
+      continue;
+    }
     await closeStream(api, target, stream, session);
     closed = true;
+  }
+  if (owed !== undefined) {
+    await api.sendMessage({
+      organizationId: target.organizationId,
+      teamId: target.teamId,
+      channelId: target.channelId,
+      threadTs: target.threadTs,
+      content: owed,
+    });
   }
   if (!closed) await setSession(api, target, session);
 }
@@ -891,11 +915,41 @@ async function projectAssistantText(
   if (text.length === 0) return;
   const messageId = typeof item["messageId"] === "string" ? item["messageId"] : "assistant";
   const stream = executionStream(executionId, target);
+  const mode = stream.assistantTextMode;
+  if (mode === "none") return;
   const previous = stream.assistantText.get(messageId) ?? "";
   const next = text.startsWith(previous) ? text.slice(previous.length) : text;
   stream.assistantText.set(messageId, previous + next);
   if (next.length === 0) return;
-  await deliver(api, book, target, stream, [{ type: "markdown_text", text: next }]);
+  // `final` keeps the text in the buffer. The last message is sent when the stream closes.
+  if (mode === "final") {
+    stream.lastAssistantMessageId = messageId;
+    return;
+  }
+  const separate =
+    stream.lastAssistantMessageId !== undefined && stream.lastAssistantMessageId !== messageId;
+  stream.lastAssistantMessageId = messageId;
+  await deliver(api, book, target, stream, [
+    { type: "markdown_text", text: separate ? `\n\n${next}` : next },
+  ]);
+}
+
+/**
+ * Takes the last assistant message when the mode is `final`.
+ *
+ * The flag makes sure the text is sent once, whichever finish closes the stream first.
+ *
+ * @param stream - The execution's stream, when one exists
+ * @returns The text owed to the thread, or undefined when nothing is owed
+ */
+function takeFinalAssistantText(stream: ExecutionStream | undefined): string | undefined {
+  if (stream === undefined || stream.assistantTextMode !== "final") return undefined;
+  if (stream.finalAssistantSent) return undefined;
+  stream.finalAssistantSent = true;
+  const messageId = stream.lastAssistantMessageId;
+  if (messageId === undefined) return undefined;
+  const text = stream.assistantText.get(messageId) ?? "";
+  return text.length === 0 ? undefined : text;
 }
 
 async function projectDiff(
@@ -1144,31 +1198,18 @@ async function closeModelStream(
     (stream?.ts !== undefined && feedback.length > 0) || choiceBlocks.length > 0
       ? [...choiceBlocks, ...feedback]
       : undefined;
+  const owed = takeFinalAssistantText(stream);
   if (stream?.ts !== undefined) {
-    const chunks: SlackStreamChunk[] = text === undefined ? [] : [{ type: "markdown_text", text }];
-    const stopped = await api.stopAgentStream({
-      organizationId: target.organizationId,
-      teamId: target.teamId,
-      channelId: target.channelId,
-      streamTs: stream.ts,
-      ...(chunks.length === 0 ? {} : { chunks }),
-      sessionStatus: session,
-      ...(blocks === undefined ? {} : { blocks }),
-    });
-    stream.ts = undefined;
-    if (!stopped.ok && stopped.error === "stopped_by_user") {
-      stoppedThreads.add(book.key);
-      throw new SlackAgentSurfaceError("The person stopped this Slack session.");
-    }
-    if (!stopped.ok && stopped.error !== "message_not_in_streaming_state") refuseOrThrow(stopped);
-  } else if (blocks !== undefined) {
+    await stopWithAssistantText(api, book, target, stream, session, blocks, owed, text);
+  } else if (blocks !== undefined || owed !== undefined) {
+    const fallback = text ?? choices?.map((choice) => choice.label).join(" · ") ?? "";
     await api.sendMessage({
       organizationId: target.organizationId,
       teamId: target.teamId,
       channelId: target.channelId,
       threadTs: target.threadTs,
-      content: text ?? choices?.map((choice) => choice.label).join(" · ") ?? "",
-      blocks,
+      content: joinAssistantText(owed, fallback),
+      ...(blocks === undefined ? {} : { blocks }),
     });
     await setSession(api, target, session);
   } else {
@@ -1176,6 +1217,48 @@ async function closeModelStream(
   }
   book.heldSession = session;
   book.agentClosed = true;
+}
+
+/**
+ * Puts the last answer, and any text the finish carries, on the closing stream.
+ *
+ * @returns Nothing
+ */
+async function stopWithAssistantText(
+  api: SlackAgentApi,
+  book: ThreadBook,
+  target: SlackAgentRunTarget,
+  stream: ExecutionStream,
+  session: SlackAgentSessionStatus,
+  blocks: readonly Record<string, unknown>[] | undefined,
+  owed: string | undefined,
+  text: string | undefined,
+): Promise<void> {
+  const chunks: SlackStreamChunk[] = [
+    ...(owed === undefined ? [] : [{ type: "markdown_text" as const, text: owed }]),
+    ...(text === undefined ? [] : [{ type: "markdown_text" as const, text }]),
+  ];
+  if (stream.ts === undefined) return;
+  const stopped = await api.stopAgentStream({
+    organizationId: target.organizationId,
+    teamId: target.teamId,
+    channelId: target.channelId,
+    streamTs: stream.ts,
+    ...(chunks.length === 0 ? {} : { chunks }),
+    sessionStatus: session,
+    ...(blocks === undefined ? {} : { blocks }),
+  });
+  stream.ts = undefined;
+  if (!stopped.ok && stopped.error === "stopped_by_user") {
+    stoppedThreads.add(book.key);
+    throw new SlackAgentSurfaceError("The person stopped this Slack session.");
+  }
+  if (!stopped.ok && stopped.error !== "message_not_in_streaming_state") refuseOrThrow(stopped);
+}
+
+function joinAssistantText(owed: string | undefined, fallback: string): string {
+  if (owed === undefined) return fallback;
+  return fallback.length === 0 ? owed : `${owed}\n\n${fallback}`;
 }
 
 async function deliver(
@@ -1269,11 +1352,14 @@ async function closeStream(
 ): Promise<void> {
   if (stream.ts === undefined) return;
   const blocks = session === "processing" ? undefined : slackFeedbackBlocks();
+  // A rotation keeps the buffered text for the next stream. Only the final close sends it.
+  const owed = session === "processing" ? undefined : takeFinalAssistantText(stream);
   const stopped = await api.stopAgentStream({
     organizationId: target.organizationId,
     teamId: target.teamId,
     channelId: target.channelId,
     streamTs: stream.ts,
+    ...(owed === undefined ? {} : { chunks: [{ type: "markdown_text" as const, text: owed }] }),
     sessionStatus: session,
     ...(blocks === undefined ? {} : { blocks }),
   });
@@ -1419,7 +1505,10 @@ function executionStream(executionId: string, target: SlackAgentRunTarget): Exec
     openedAt: undefined,
     tasks: new Map(),
     explicitTaskIds: new Set(),
+    assistantTextMode: target.block.assistant_text ?? "all",
     assistantText: new Map(),
+    lastAssistantMessageId: undefined,
+    finalAssistantSent: false,
   };
   streams.set(executionId, created);
   return created;
@@ -1547,7 +1636,10 @@ export function slackAgentTargetFromOpenBook(input: {
     channelId: book.channelId,
     threadTs: book.threadTs,
     authorId: book.authorId,
-    block: { display: "timeline" },
+    // Close-only target: the run already ended, so nothing is streamed through this block.
+    // `none` keeps the closing path from ever mirroring text for a stream it did not open.
+    // The step's own stream keeps the mode it was created with.
+    block: { display: "timeline", assistant_text: "none" },
   };
 }
 
