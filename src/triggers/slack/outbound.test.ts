@@ -14,12 +14,54 @@ describe("Slack outbound text check", () => {
   it("rejects a Portuguese summary of the execution", () => {
     const result = checkOutboundText("Respondi na thread: o aviso é da cobrança, não do envio.");
     assert.equal(result.ok, false);
-    assert.match(reason(result), /não abra com "respondi na thread"/iu);
+    assert.match(reason(result), /não narre a execução com "respondi na thread"/iu);
   });
 
   it("rejects what the execution did instead of answering", () => {
     const result = checkOutboundText("O que fiz nesta execução: rodei os testes.");
     assert.equal(result.ok, false);
+  });
+
+  it("rejects a summary of the execution in the middle of the reply", () => {
+    const result = checkOutboundText(
+      "Ajuste lançado e thread fechada.\n\n" +
+        "O que fiz nesta execução:\n" +
+        "• Confirmei no banco do E7 que o Gio (U094VQCSK53) está no time ativo SRE/DevOps.\n" +
+        "• Reli o saldo.\n\n" +
+        "Uma observação técnica: LAST_INSERT_ID() via CLI voltou 0.",
+    );
+    assert.equal(result.ok, false);
+    assert.match(reason(result), /o que fiz/iu);
+  });
+
+  it("rejects a bullet line that narrates the execution", () => {
+    const result = checkOutboundText(
+      "O ajuste já está no ar.\n\n• Nesta execução eu rodei os testes e conferi o saldo.",
+    );
+    assert.equal(result.ok, false);
+  });
+
+  it("accepts a Portuguese reply that only talks about a closed thread", () => {
+    const result = checkOutboundText(
+      "A cobrança foi gerada de novo e o aviso saiu certo.\n\nPode conferir na fatura.",
+    );
+    assert.deepEqual(result, { ok: true });
+  });
+
+  it("rejects a raw Slack user id written as plain text", () => {
+    const result = checkOutboundText(
+      "Confirmei no banco do E7 que o Gio (U094VQCSK53) está no time ativo SRE/DevOps.",
+    );
+    assert.equal(result.ok, false);
+    assert.match(reason(result), /U094VQCSK53/u);
+    assert.match(reason(result), /<@U094VQCSK53>/u);
+  });
+
+  it("accepts a real Slack mention inside a Portuguese sentence", () => {
+    const result = checkOutboundText(
+      "Confirmei no banco do E7 que o Gio <@U094VQCSK53> está no time ativo SRE/DevOps.",
+    );
+    assert.deepEqual(result, { ok: true });
   });
 
   it("accepts Portuguese with a few English tech words", () => {

@@ -231,13 +231,24 @@ const ENGLISH_FUNCTION_WORDS: ReadonlySet<string> = new Set([
 /** How many English function words mark the text as English. Below it the text is left alone. */
 const MIN_ENGLISH_FUNCTION_WORDS = 3;
 
-/** Openings that describe the execution instead of answering the person. Compared lowercased. */
-const META_OPENINGS: readonly string[] = [
+/**
+ * Narration that describes the execution instead of answering the person.
+ *
+ * It is read lowercased at the start of any line or paragraph, so a summary the model
+ * puts after the first answer is caught too.
+ */
+const META_MARKERS: readonly string[] = [
   "respondi na thread",
   "respondi no thread",
+  "respondi no canal",
   "o que fiz",
   "expliquei na thread",
   "enviei duas respostas",
+  "nesta execução",
+  "thread fechada",
+  "deixei o eyes",
+  "encerrei a execução",
+  "a execução foi encerrada",
   "now i'll",
   "now let me",
   "i'll",
@@ -247,6 +258,9 @@ const META_OPENINGS: readonly string[] = [
 
 /** A Slack user or workspace-app id. `<@U094VQCSK53>` and `<@W094VQCSK53>` are mentions. */
 const SLACK_MENTION_ID = /^[UW][A-Z0-9]{6,}$/u;
+
+/** A Slack id written as plain text, where it names nobody. */
+const RAW_SLACK_ID = /\b[UW][A-Z0-9]{8,}\b/u;
 
 const MENTION = /<@([^>|]+)(?:\|([^>]*))?>/gu;
 const FILE_LINK = /file:\/\/([^\s>|)]+)/giu;
@@ -278,10 +292,10 @@ export function checkOutboundText(text: string): OutboundTextCheck {
     );
   }
 
-  const opening = metaOpening(text);
-  if (opening !== undefined) {
+  const marker = metaMarker(text);
+  if (marker !== undefined) {
     return rejection(
-      `Não abra com "${opening}" nem narre a execução. Escreva em português só a resposta para a pessoa.`,
+      `Não narre a execução com "${marker}". Escreva em português só a resposta para a pessoa.`,
     );
   }
 
@@ -300,6 +314,13 @@ export function checkOutboundText(text: string): OutboundTextCheck {
   if (mention !== undefined) {
     return rejection(
       `A menção ${mention} não é um id do Slack. Use <@U123456789> com o id real, ou só o nome da pessoa.`,
+    );
+  }
+
+  const rawId = rawSlackId(prose);
+  if (rawId !== undefined) {
+    return rejection(
+      `O id ${rawId} está solto no texto. Use o nome da pessoa ou a menção <@${rawId}>.`,
     );
   }
 
@@ -374,10 +395,24 @@ function countParagraphs(text: string): number {
     .filter((paragraph) => paragraph.trim().length > 0).length;
 }
 
-/** The narration opening the text starts with, lowercased. */
-function metaOpening(text: string): string | undefined {
-  const start = text.trim().toLowerCase();
-  return META_OPENINGS.find((opening) => start.startsWith(opening));
+/**
+ * The narration marker the reply carries, lowercased.
+ *
+ * Checked at the start of any line or paragraph, after bullets like `•`, `-`, or `*`:
+ * the model also narrates after the answer it already gave.
+ */
+function metaMarker(text: string): string | undefined {
+  for (const paragraph of text.split(/\n/u)) {
+    const line = paragraph
+      .trim()
+      .replace(/^[•\-*–—\s]+/u, "")
+      .trim()
+      .toLowerCase();
+    for (const marker of META_MARKERS) {
+      if (line.startsWith(marker)) return marker;
+    }
+  }
+  return undefined;
 }
 
 function isMostlyEnglish(prose: string): boolean {
@@ -399,6 +434,15 @@ function fileLinkOutsideAttachments(text: string): string | undefined {
     return `file://${path}`;
   }
   return undefined;
+}
+
+/**
+ * A Slack id written as plain text instead of as a mention, which names nobody.
+ *
+ * Read from prose, so an id inside a mention or a URL is left alone.
+ */
+function rawSlackId(prose: string): string | undefined {
+  return prose.match(RAW_SLACK_ID)?.[0];
 }
 
 /** The first mention whose id is not a Slack user or app id. */
