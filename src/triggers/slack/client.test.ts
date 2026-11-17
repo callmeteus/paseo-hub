@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it, vi } from "vitest";
 import { logger } from "../../logger.js";
 import { createSlackBotClient } from "./client.js";
@@ -793,6 +796,104 @@ describe("Slack Web API client", () => {
         { channel_id: "CCODE", status: "processing" },
       ],
     );
+  });
+
+  it("uploads a local file and shares it in the thread it belongs to", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hub-slack-upload-"));
+    try {
+      const path = join(root, "grafico.png");
+      await writeFile(path, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+      const requests: Array<{
+        url: string;
+        method: string | undefined;
+        contentType: string | null;
+        body: unknown;
+      }> = [];
+      const client = createSlackBotClient({
+        tokenForWorkspace: () => Promise.resolve("xoxb-secret"),
+        fetch: async (input, init) => {
+          requests.push({
+            url: requestUrl(input),
+            method: init?.method,
+            contentType: new Headers(init?.headers).get("content-type"),
+            body: requestBody(init?.body),
+          });
+          if (requestUrl(input).includes("getUploadURLExternal")) {
+            return Response.json({
+              ok: true,
+              file_id: "F1",
+              upload_url: "https://files.slack.com/upload/v1/abc",
+            });
+          }
+          return Response.json({ ok: true });
+        },
+      });
+
+      await client.uploadFile?.({
+        organizationId: "org-1",
+        teamId: "T1",
+        channelId: "C1",
+        threadTs: "1.1",
+        path,
+        title: "Gráfico",
+      });
+
+      assert.deepEqual(requests, [
+        {
+          url: "https://slack.com/api/files.getUploadURLExternal",
+          method: "POST",
+          contentType: "application/x-www-form-urlencoded",
+          body: "filename=grafico.png&length=4",
+        },
+        {
+          url: "https://files.slack.com/upload/v1/abc",
+          method: "POST",
+          contentType: null,
+          body: undefined,
+        },
+        {
+          url: "https://slack.com/api/files.completeUploadExternal",
+          method: "POST",
+          contentType: "application/x-www-form-urlencoded",
+          body:
+            `files=${encodeURIComponent(JSON.stringify([{ id: "F1", title: "Gráfico" }]))}` +
+            "&channel_id=C1&thread_ts=1.1",
+        },
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves the upload unshared when Slack refuses the upload URL", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hub-slack-upload-"));
+    try {
+      const path = join(root, "grafico.png");
+      await writeFile(path, Buffer.from([0x00]));
+      let uploads = 0;
+      const client = createSlackBotClient({
+        tokenForWorkspace: () => Promise.resolve("xoxb-secret"),
+        fetch: async (input) => {
+          if (requestUrl(input).includes("files.slack.com")) uploads += 1;
+          return Response.json({ ok: false, error: "file_uploads_disabled" });
+        },
+      });
+
+      await assert.rejects(
+        () =>
+          client.uploadFile?.({
+            organizationId: "org-1",
+            teamId: "T1",
+            channelId: "C1",
+            threadTs: "1.1",
+            path,
+          }) ?? Promise.reject(new Error("upload is missing")),
+        /file_uploads_disabled/u,
+      );
+      assert.equal(uploads, 0);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
 

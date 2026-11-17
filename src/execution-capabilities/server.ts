@@ -35,6 +35,7 @@ import {
   splitInstructionDocument,
 } from "../workflows/prompt-instructions.js";
 import { SlackAgentSurfaceError } from "../triggers/slack/agent-surface.js";
+import { SlackOutboundTextError } from "../triggers/slack/outbound.js";
 import { GuardrailRefusal } from "../workflows/guardrails.js";
 
 type JsonSchema = OutputToolSchema;
@@ -502,7 +503,11 @@ async function executeOutputCall(
     if (recorded === undefined) throw new Error("output emission could not be recorded");
     return toolSuccess("Output sent");
   } catch (error) {
-    if (error instanceof GuardrailRefusal || error instanceof SlackAgentSurfaceError) {
+    if (
+      error instanceof GuardrailRefusal ||
+      error instanceof SlackAgentSurfaceError ||
+      error instanceof SlackOutboundTextError
+    ) {
       try {
         await options.database.failAgentExecutionOutput(
           execution.id,
