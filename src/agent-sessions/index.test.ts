@@ -295,16 +295,18 @@ test("re-dispatch of an attached execution replaces an incompatible session once
   expect(f.connection.creates).toHaveLength(2);
 });
 
-test("new-agent policy isolates arrivals and incompatible targets fail without replacement", async () => {
+test("new-agent policy isolates arrivals and incompatible targets are replaced", async () => {
   const f = await fixture();
   const a = await f.arrival(null);
   const b = await f.arrival(null);
   expect((await a.dispatch()).agentId).not.toBe((await b.dispatch()).agentId);
   const first = await f.arrival();
-  await first.dispatch();
+  const original = await first.dispatch();
   const changed = await f.arrival("conversation", "different-daemon");
-  await expect(changed.dispatch()).rejects.toThrow("Continuation settings differ");
-  expect(f.connection.creates).toHaveLength(3);
+  const replacement = await changed.dispatch();
+  expect(replacement.agentId).not.toBe(original.agentId);
+  expect(replacement.action).toBe("created");
+  expect(f.connection.creates).toHaveLength(4);
 });
 
 test("ordinary launches use agent sessions and preserve long prompts without enabling continuation", async () => {
