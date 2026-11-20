@@ -48,11 +48,17 @@ const linearConfigurationSchema = z.object({
   clientSecret: z.string().min(1),
   webhookSecret: z.string().min(1),
 });
+const telegramConfigurationSchema = z.object({
+  provider: z.literal("telegram"),
+  botToken: z.string().min(1),
+  secretToken: z.string().min(1).optional(),
+});
 const configurationSchema = z.discriminatedUnion("provider", [
   githubConfigurationSchema,
   slackConfigurationSchema,
   discordConfigurationSchema,
   linearConfigurationSchema,
+  telegramConfigurationSchema,
 ]);
 
 /** @package */
@@ -76,6 +82,7 @@ const identitySchema = z.discriminatedUnion("provider", [
   z.object({ provider: z.literal("slack"), id: z.string().min(1), name: z.string().min(1) }),
   z.object({ provider: z.literal("discord"), id: z.string().min(1), name: z.string().min(1) }),
   z.object({ provider: z.literal("linear"), id: z.string().min(1), name: z.string().min(1) }),
+  z.object({ provider: z.literal("telegram"), id: z.string().min(1), name: z.string().min(1) }),
 ]);
 
 interface ProviderConfigurationRow extends QueryRow {

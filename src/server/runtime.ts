@@ -221,6 +221,9 @@ export async function handleConnections(
     | "linearStart"
     | "linearDisconnect"
     | "linearCallback"
+    | "telegramStart"
+    | "telegramDisconnect"
+    | "telegramCallback"
     | "handoff",
 ): Promise<Response> {
   const runtime = await getApplication();
@@ -245,6 +248,9 @@ const CONNECTION_ACTIONS = {
   linearStart: { provider: "linear", name: "start" },
   linearDisconnect: { provider: "linear", name: "disconnect" },
   linearCallback: { provider: "linear", name: "callback" },
+  telegramStart: { provider: "telegram", name: "start" },
+  telegramDisconnect: { provider: "telegram", name: "disconnect" },
+  telegramCallback: { provider: "telegram", name: "callback" },
 } as const;
 
 export async function resolveOrganizationResources(

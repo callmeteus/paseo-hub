@@ -154,6 +154,8 @@ const AuthoredTriggerFilterSchema = z
     /** Linear user IDs which may be assigned to the issue. */
     assignees: z.array(z.string().min(1)).min(1).optional(),
     channels: z.array(z.string().min(1)).optional(),
+    /** Telegram group / supergroup chat ids which may run this trigger. */
+    groups: z.array(z.string().min(1)).optional(),
     from_users: z.array(z.string().min(1)).optional(),
     /**
      * When true, a one-to-one Slack direct message can run this trigger.

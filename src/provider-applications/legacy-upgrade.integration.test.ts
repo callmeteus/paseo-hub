@@ -174,6 +174,10 @@ const ENVIRONMENT_APPLICATIONS = {
     clientSecret: "linear-secret",
     webhookSecret: "linear-webhook-secret",
   },
+  telegram: {
+    provider: "telegram",
+    botToken: "telegram-token",
+  },
 } satisfies Record<Provider, ProviderApplicationConfiguration>;
 
 async function legacyDatabase(engine: "PGlite" | "PostgreSQL"): Promise<{
@@ -327,6 +331,9 @@ function identity(configuration: ProviderApplicationConfiguration): ProviderAppl
   }
   if (configuration.provider === "linear") {
     return { provider: "linear", id: configuration.clientId, name: "Linear app" };
+  }
+  if (configuration.provider === "telegram") {
+    return { provider: "telegram", id: configuration.botToken, name: "Telegram bot" };
   }
   return { provider: "discord", id: configuration.applicationId, name: "Discord app" };
 }

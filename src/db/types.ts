@@ -14,7 +14,7 @@ export type WorkflowDeadlineKind = "step_hard" | "step_idle" | "whole_run";
 export interface ProviderEventReceiptRecord {
   id: string;
   organizationId: string;
-  provider: "github" | "slack" | "discord" | "linear" | "manual" | "schedule";
+  provider: "github" | "slack" | "discord" | "linear" | "telegram" | "manual" | "schedule";
   connectionId: string | null;
   resourceId: string | null;
   deliveryId: string;
@@ -313,6 +313,7 @@ export interface OrganizationConnectionUsage {
   discord: DiscordConnectionRecord[];
   slack: SlackConnectionRecord[];
   linear: LinearConnectionRecord[];
+  telegram?: TelegramConnectionRecord[];
 }
 
 export interface GitHubRepositoryRecord {
@@ -569,6 +570,15 @@ export interface DiscordConnectionRecord {
   providerApplicationId: string | null;
 }
 
+export interface TelegramConnectionRecord {
+  id: string;
+  organizationId: string;
+  slug: string;
+  chatId: string;
+  chatName: string;
+  providerApplicationId: string | null;
+}
+
 export interface SlackConnectionRecord {
   id: string;
   organizationId: string;
@@ -639,6 +649,13 @@ export interface BindDiscordConnectionInput extends ReadConnectionAttemptInput {
   providerApplicationId: string;
   guildId: string;
   guildName: string;
+}
+
+export interface BindTelegramConnectionInput {
+  organizationId: string;
+  membershipId: string;
+  chatId: string;
+  chatName: string;
 }
 
 export interface BindSlackConnectionInput extends ReadConnectionAttemptInput {
@@ -780,6 +797,10 @@ export interface AcceptGitHubEventInput extends ProviderEventEvidence {
 
 export interface AcceptDiscordEventInput extends ProviderEventEvidence {
   guildId: string;
+}
+
+export interface AcceptTelegramEventInput extends ProviderEventEvidence {
+  chatId: string;
 }
 
 export interface AcceptSlackEventInput extends ProviderEventEvidence {
@@ -1462,6 +1483,7 @@ export interface Database {
   ): Promise<void>;
   acceptGitHubEvent(input: AcceptGitHubEventInput): Promise<ProviderEventAcceptance>;
   acceptDiscordEvent(input: AcceptDiscordEventInput): Promise<ProviderEventAcceptance>;
+  acceptTelegramEvent(input: AcceptTelegramEventInput): Promise<ProviderEventAcceptance>;
   acceptSlackEvent(input: AcceptSlackEventInput): Promise<ProviderEventAcceptance>;
   acceptLinearEvent(input: AcceptLinearEventInput): Promise<ProviderEventAcceptance>;
   persistManualEvent(input: PersistManualEventInput): Promise<ManualEventPersistence>;
@@ -1810,6 +1832,12 @@ export interface Database {
   advanceGitHubConnectionAttempt(input: AdvanceGitHubConnectionAttemptInput): Promise<void>;
   bindGitHubConnection(input: BindGitHubConnectionInput): Promise<void>;
   bindDiscordConnection(input: BindDiscordConnectionInput): Promise<void>;
+  bindTelegramConnection(input: BindTelegramConnectionInput): Promise<void>;
+  disconnectTelegramConnection(
+    connectionId: string,
+    access: ConnectionStartAuthority,
+  ): Promise<void>;
+  findTelegramConnection(chatId: string): Promise<TelegramConnectionRecord | undefined>;
   bindSlackConnection(input: BindSlackConnectionInput): Promise<void>;
   completeSlackProviderApplication(input: CompleteSlackProviderApplicationInput): Promise<void>;
   bindLinearConnection(input: BindLinearConnectionInput): Promise<void>;

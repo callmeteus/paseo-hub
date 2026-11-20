@@ -29,6 +29,7 @@ import type {
   StartCliAuthorizationInput,
   AdvanceGitHubConnectionAttemptInput,
   BindDiscordConnectionInput,
+  BindTelegramConnectionInput,
   BindGitHubConnectionInput,
   BindLinearConnectionInput,
   BindSlackConnectionInput,
@@ -43,6 +44,7 @@ import type {
   RecordConfigurationSyncAttemptInput,
   ConfigurationSyncAttemptRecord,
   AcceptDiscordEventInput,
+  AcceptTelegramEventInput,
   AcceptGitHubEventInput,
   AcceptLinearEventInput,
   AcceptSlackEventInput,
@@ -71,6 +73,7 @@ import type {
   GitHubConnectionRecord,
   GitHubConfigurationTarget,
   DiscordConnectionRecord,
+  TelegramConnectionRecord,
   SlackConnectionRecord,
   LinearConnectionRecord,
   GitHubRepositoryRecord,
@@ -244,6 +247,7 @@ class MemoryDatabase implements Database {
   private readonly organizationResponseFeedback: OrganizationResponseFeedbackRecord[] = [];
   private readonly githubConnections = new Map<number, GitHubConnectionRecord>();
   private readonly discordConnections = new Map<string, DiscordConnectionRecord>();
+  private readonly telegramConnections = new Map<string, TelegramConnectionRecord>();
   private readonly slackConnections = new Map<string, SlackConnectionRecord>();
   private readonly linearConnections = new Map<string, LinearConnectionRecord>();
   private readonly organizationIds: Set<string>;
@@ -1140,6 +1144,17 @@ class MemoryDatabase implements Database {
       binding?.id,
       input.guildId,
       reason,
+    );
+  }
+
+  async acceptTelegramEvent(input: AcceptTelegramEventInput): Promise<ProviderEventAcceptance> {
+    const binding = this.telegramConnections.get(input.chatId);
+    return this.acceptMemoryEvent(
+      input,
+      binding?.organizationId,
+      binding?.id,
+      input.chatId,
+      binding === undefined ? "telegram_unbound" : undefined,
     );
   }
 
@@ -3193,6 +3208,9 @@ class MemoryDatabase implements Database {
       discord: Array.from(this.discordConnections.values()).filter(
         (connection) => connection.organizationId === organizationId,
       ),
+      telegram: Array.from(this.telegramConnections.values()).filter(
+        (connection) => connection.organizationId === organizationId,
+      ),
       slack: Array.from(this.slackConnections.values()).filter(
         (connection) => connection.organizationId === organizationId,
       ),
@@ -3447,6 +3465,28 @@ class MemoryDatabase implements Database {
     return connectionPersistenceUnavailable();
   }
 
+  async bindTelegramConnection(input: BindTelegramConnectionInput): Promise<void> {
+    const record: TelegramConnectionRecord = {
+      id: `tg-${input.chatId}`,
+      organizationId: input.organizationId,
+      slug: `${input.chatName.toLowerCase().replace(/[^a-z0-9]+/gu, "-") || "telegram"}-${input.chatId}`,
+      chatId: input.chatId,
+      chatName: input.chatName,
+      providerApplicationId: "telegram",
+    };
+    this.telegramConnections.set(input.chatId, record);
+  }
+
+  async disconnectTelegramConnection(connectionId: string): Promise<void> {
+    for (const [chatId, connection] of this.telegramConnections) {
+      if (connection.id === connectionId) this.telegramConnections.delete(chatId);
+    }
+  }
+
+  async findTelegramConnection(chatId: string): Promise<TelegramConnectionRecord | undefined> {
+    return this.telegramConnections.get(chatId);
+  }
+
   bindSlackConnection(_input: BindSlackConnectionInput): Promise<void> {
     return connectionPersistenceUnavailable();
   }
@@ -3662,6 +3702,7 @@ class MemoryDatabase implements Database {
     input:
       | AcceptGitHubEventInput
       | AcceptDiscordEventInput
+      | AcceptTelegramEventInput
       | AcceptSlackEventInput
       | AcceptLinearEventInput,
     organizationId: string | undefined,
@@ -3858,11 +3899,13 @@ function providerForInput(
   input:
     | AcceptGitHubEventInput
     | AcceptDiscordEventInput
+    | AcceptTelegramEventInput
     | AcceptSlackEventInput
     | AcceptLinearEventInput,
-): "github" | "discord" | "slack" | "linear" {
+): "github" | "discord" | "slack" | "linear" | "telegram" {
   if ("installationId" in input) return "github";
   if ("guildId" in input) return "discord";
+  if ("chatId" in input) return "telegram";
   return "teamId" in input ? "slack" : "linear";
 }
 

@@ -675,11 +675,86 @@ export const LINEAR_GUIDE: ProviderGuide = {
   receivesEvents: true,
 };
 
+export const TELEGRAM_GUIDE: ProviderGuide = {
+  provider: "telegram",
+  name: "Telegram",
+  summary: "Reads mentions in groups and direct messages, replies, and shows inline buttons.",
+  portal: {
+    label: "Open Telegram and talk to BotFather",
+    href: "https://t.me/BotFather",
+  },
+  formTitle: "Paste from Telegram",
+  summaryLabels: { identity: "Bot", connections: "Connections" },
+  environmentVariables: ["TELEGRAM_BOT_TOKEN", "TELEGRAM_WEBHOOK_SECRET"],
+  groups: [
+    {
+      id: "application",
+      steps: [
+        {
+          segments: [
+            { kind: "text", value: "Open a chat with " },
+            { kind: "link", value: "BotFather", href: "https://t.me/BotFather" },
+            { kind: "text", value: " on Telegram and send " },
+            { kind: "term", value: "/newbot" },
+            { kind: "text", value: ". Follow the prompts to name the bot." },
+          ],
+        },
+        {
+          segments: [
+            { kind: "text", value: "Copy the " },
+            { kind: "term", value: "HTTP API token" },
+            { kind: "text", value: " BotFather gives you. Keep it secret." },
+          ],
+        },
+        {
+          segments: [
+            { kind: "text", value: "Optionally set a " },
+            { kind: "term", value: "secret token" },
+            { kind: "text", value: " with " },
+            { kind: "term", value: "/setwebhook" },
+            { kind: "text", value: " so the Hub can verify updates." },
+          ],
+        },
+      ],
+      fields: [
+        {
+          name: "botToken",
+          label: "Bot token",
+          kind: "secret",
+          description: "The HTTP API token from BotFather.",
+          required: "Enter the bot token.",
+        },
+        {
+          name: "secretToken",
+          label: "Webhook secret",
+          kind: "secret",
+          description: "Optional secret token used to verify updates.",
+          required: "",
+          optional: true,
+        },
+      ],
+    },
+  ],
+  urls: [],
+  savingContinues: false,
+  actions: {
+    save: "Verify and save",
+    savePending: "Verifying…",
+    connect: "Connect Telegram",
+    connectAgain: "Connect another bot",
+  },
+  verifiedMessage: "Telegram accepted this bot.",
+  requiresHttps: true,
+  httpsRequirement: (origin) => `Telegram needs a public HTTPS address; this Hub is at ${origin}.`,
+  receivesEvents: true,
+};
+
 export const PROVIDER_GUIDES: readonly ProviderGuide[] = [
   GITHUB_GUIDE,
   SLACK_GUIDE,
   DISCORD_GUIDE,
   LINEAR_GUIDE,
+  TELEGRAM_GUIDE,
 ];
 
 export function guideFor(provider: Provider): ProviderGuide {

@@ -90,6 +90,7 @@ function connectionTable(provider: Provider): string {
   if (provider === "github") return "github_connections";
   if (provider === "slack") return "slack_connections";
   if (provider === "linear") return "linear_connections";
+  if (provider === "telegram") return "telegram_connections";
   return "discord_connections";
 }
 
@@ -114,6 +115,12 @@ function connectionIdentityQuery(provider: Provider): string {
                    provider_application_id as application_id,
                    false as action_needed, scopes, refresh_token, access_token_expires_at
             from linear_connections order by connected_at`;
+  }
+  if (provider === "telegram") {
+    return `select id::text as id, chat_name as name,
+                   provider_application_id as application_id,
+                   false as action_needed, null::jsonb as scopes
+            from telegram_connections order by connected_at`;
   }
   return `select id::text as id, guild_name as name,
                  provider_application_id as application_id,

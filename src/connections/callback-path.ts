@@ -8,6 +8,7 @@ const CONNECTION_CALLBACK_PATHS = new Set([
   "/api/integrations/discord/callback",
   "/api/integrations/slack/callback",
   "/api/integrations/linear/callback",
+  "/api/integrations/telegram/callback",
 ]);
 
 /** Marks a connection attempt that the Paseo window started and must finish. */

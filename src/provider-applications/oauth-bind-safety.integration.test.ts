@@ -10,7 +10,7 @@ import {
   type DatabaseRuntimeBundle,
 } from "../db/runtime/index.js";
 import { createDatabase } from "../db/pg.js";
-import type { Database } from "../db/types.js";
+import type { ConnectionProvider, Database } from "../db/types.js";
 import { SLACK_REQUIRED_BOT_SCOPES } from "../providers/slack/client.js";
 import {
   activateProviderApplicationsAtStartup,
@@ -250,7 +250,9 @@ async function startAttempt(
 ): Promise<string> {
   const initialState = `${name}-initial`;
   await database.startConnectionAttempt({
-    provider,
+    // Telegram never uses connection attempts; this helper is only called for OAuth providers.
+    // eslint-disable-next-line typescript-eslint/no-unsafe-type-assertion
+    provider: provider as ConnectionProvider,
     stateVerifier: initialState,
     access: START_ACCESS,
     lifetimeMinutes: 10,
@@ -417,6 +419,9 @@ function identity(configuration: ProviderApplicationConfiguration): ProviderAppl
   }
   if (configuration.provider === "linear") {
     return { provider: "linear", id: configuration.clientId, name: configuration.clientId };
+  }
+  if (configuration.provider === "telegram") {
+    return { provider: "telegram", id: configuration.botToken, name: configuration.botToken };
   }
   return {
     provider: "discord",

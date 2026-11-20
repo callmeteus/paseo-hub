@@ -9,7 +9,15 @@ import { TerminalIcon, ClockIcon, WebhookIcon } from "lucide-react";
 export function ProviderGlyph({
   provider,
 }: {
-  provider: "github" | "discord" | "slack" | "linear" | "manual" | "schedule" | "webhook";
+  provider:
+    | "github"
+    | "discord"
+    | "slack"
+    | "linear"
+    | "telegram"
+    | "manual"
+    | "schedule"
+    | "webhook";
 }) {
   if (provider === "webhook") return <WebhookIcon className="size-4.5" aria-hidden="true" />;
   if (provider === "schedule") return <ClockIcon className="size-4.5" aria-hidden="true" />;
@@ -17,6 +25,7 @@ export function ProviderGlyph({
   if (provider === "discord") return <DiscordMark />;
   if (provider === "slack") return <SlackMark />;
   if (provider === "linear") return <LinearMark />;
+  if (provider === "telegram") return <TelegramMark />;
   return <TerminalIcon className="size-4.5" aria-hidden="true" />;
 }
 
@@ -40,6 +49,14 @@ function SlackMark() {
   return (
     <svg viewBox="0 0 16 16" className="size-4.5" fill="currentColor" aria-hidden="true">
       <path d="M3.38 9.88A1.69 1.69 0 1 1 1.69 8.2h1.69v1.69Zm.85 0a1.69 1.69 0 1 1 3.38 0v4.23a1.69 1.69 0 1 1-3.38 0V9.88Zm1.69-6.76a1.69 1.69 0 1 1 1.69-1.69v1.69H5.92Zm0 .85a1.69 1.69 0 1 1 0 3.38H1.69a1.69 1.69 0 1 1 0-3.38h4.23Zm6.76 1.69a1.69 1.69 0 1 1 1.69 1.69h-1.69V5.66Zm-.85 0a1.69 1.69 0 1 1-3.38 0V1.43a1.69 1.69 0 1 1 3.38 0v4.23Zm-1.69 6.76a1.69 1.69 0 1 1-1.69 1.69v-1.69h1.69Zm0-.85a1.69 1.69 0 1 1 0-3.38h4.23a1.69 1.69 0 1 1 0 3.38h-4.23Z" />
+    </svg>
+  );
+}
+
+function TelegramMark() {
+  return (
+    <svg viewBox="0 0 16 16" className="size-4.5" fill="currentColor" aria-hidden="true">
+      <path d="M14.6 2.3 1.7 7.1c-.7.3-.7.7-.1.9l3.2 1 1.2 3.7c.2.5.1.7.6.7.4 0 .5-.2.8-.5l1.7-1.6 3.2 2.4c.6.3 1 .1 1.2-.5l2.1-10c.2-.8-.2-1.1-1.8-.9ZM6.1 9.9l5.7-3.6c.3-.2.5-.1.3.1L8.3 11c-.2.2-.3.3-.5.3l-.2 2.1-.8-2.5-.7-.9Z" />
     </svg>
   );
 }

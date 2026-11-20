@@ -72,6 +72,7 @@ import type {
   RecordConfigurationSyncAttemptInput,
   AdvanceGitHubConnectionAttemptInput,
   BindDiscordConnectionInput,
+  BindTelegramConnectionInput,
   BindGitHubConnectionInput,
   BindLinearConnectionInput,
   BindSlackConnectionInput,
@@ -82,6 +83,7 @@ import type {
   ReadConnectionAttemptInput,
   StartConnectionAttemptInput,
   AcceptDiscordEventInput,
+  AcceptTelegramEventInput,
   AcceptGitHubEventInput,
   AcceptLinearEventInput,
   AcceptSlackEventInput,
@@ -97,6 +99,7 @@ import type {
   ProjectConfigurationRevisionRecord,
   ProjectRecord,
   OrganizationConnectionUsage,
+  TelegramConnectionRecord,
   GitHubRepositoryRecord,
   GitHubConfigurationTarget,
   ProjectTriggerRoute,
@@ -177,6 +180,10 @@ class PgDatabase implements Database {
 
   acceptDiscordEvent(input: AcceptDiscordEventInput) {
     return this.triggerAcceptance.acceptDiscord(input);
+  }
+
+  acceptTelegramEvent(input: AcceptTelegramEventInput) {
+    return this.triggerAcceptance.acceptTelegram(input);
   }
 
   acceptSlackEvent(input: AcceptSlackEventInput) {
@@ -4101,7 +4108,7 @@ class PgDatabase implements Database {
        order by connection.account_login, connection.id`,
       [organizationId],
     );
-    const [discord, slack, linear] = await Promise.all([
+    const [discord, telegram, slack, linear] = await Promise.all([
       query<{
         id: string;
         organization_id: string;
@@ -4114,6 +4121,20 @@ class PgDatabase implements Database {
         `select id, organization_id, slug, guild_id, guild_name, provider_application_id
          from discord_connections where organization_id = $1
          order by guild_name, id`,
+        [organizationId],
+      ),
+      query<{
+        id: string;
+        organization_id: string;
+        slug: string;
+        chat_id: string;
+        chat_name: string;
+        provider_application_id: string | null;
+      }>(
+        this.pool,
+        `select id, organization_id, slug, chat_id, chat_name, provider_application_id
+         from telegram_connections where organization_id = $1
+         order by chat_name, id`,
         [organizationId],
       ),
       query<{
@@ -4174,6 +4195,14 @@ class PgDatabase implements Database {
         slug: row.slug,
         guildId: row.guild_id,
         guildName: row.guild_name,
+        providerApplicationId: row.provider_application_id,
+      })),
+      telegram: telegram.rows.map((row) => ({
+        id: row.id,
+        organizationId: row.organization_id,
+        slug: row.slug,
+        chatId: row.chat_id,
+        chatName: row.chat_name,
         providerApplicationId: row.provider_application_id,
       })),
       slack: slack.rows.map((row) => ({
@@ -4462,6 +4491,65 @@ class PgDatabase implements Database {
 
   bindDiscordConnection(input: BindDiscordConnectionInput): Promise<void> {
     return this.connections.bindDiscord(input);
+  }
+
+  async bindTelegramConnection(input: BindTelegramConnectionInput): Promise<void> {
+    const slug = `${
+      input.chatName
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/gu, "-")
+        .replace(/^-|-$/gu, "") || "telegram"
+    }-${input.chatId}`.slice(0, 120);
+    await this.pool.query(
+      `insert into telegram_connections
+         (organization_id, chat_id, slug, chat_name, provider_application_id, connected_by_user_id)
+       values ($1, $2, $3, $4, 'telegram', $5)
+       on conflict (chat_id) do update set chat_name = excluded.chat_name, updated_at = now()`,
+      [input.organizationId, input.chatId, slug, input.chatName, input.membershipId],
+    );
+  }
+
+  async disconnectTelegramConnection(
+    connectionId: string,
+    access: ConnectionStartAuthority,
+  ): Promise<void> {
+    await this.pool.transaction(async (transaction) => {
+      const existing = await transaction.query<{ id: string }>(
+        `select id from telegram_connections where id = $1 and organization_id = $2`,
+        [connectionId, access.organizationId],
+      );
+      if (existing.rows[0] === undefined) throw new Error("connection access denied");
+      await transaction.query(`delete from project_trigger_routes where connection_id = $1`, [
+        connectionId,
+      ]);
+      await transaction.query(`delete from telegram_connections where id = $1`, [connectionId]);
+    });
+  }
+
+  async findTelegramConnection(chatId: string): Promise<TelegramConnectionRecord | undefined> {
+    const result = await query<{
+      id: string;
+      organization_id: string;
+      slug: string;
+      chat_id: string;
+      chat_name: string;
+      provider_application_id: string | null;
+    }>(
+      this.pool,
+      `select id, organization_id, slug, chat_id, chat_name, provider_application_id
+       from telegram_connections where chat_id = $1`,
+      [chatId],
+    );
+    const row = result.rows[0];
+    if (row === undefined) return undefined;
+    return {
+      id: row.id,
+      organizationId: row.organization_id,
+      slug: row.slug,
+      chatId: row.chat_id,
+      chatName: row.chat_name,
+      providerApplicationId: row.provider_application_id,
+    };
   }
 
   bindSlackConnection(input: BindSlackConnectionInput): Promise<void> {

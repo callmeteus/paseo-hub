@@ -11,6 +11,7 @@ import type {
   TriggerProviderResources,
 } from "../../providers/registration.js";
 import { createSlackRegistration } from "../../providers/slack/index.js";
+import { createTelegramRegistration } from "../../providers/telegram/index.js";
 import type { TriggerHandler, TriggerProvider, TriggerSource } from "../../triggers/index.js";
 import type {
   Provider,
@@ -112,13 +113,14 @@ export class DynamicProviderRuntime implements ProviderRuntimeOwner {
     ["slack", emptySlot()],
     ["discord", emptySlot()],
     ["linear", emptySlot()],
+    ["telegram", emptySlot()],
   ]);
   private readonly stable = new Map<Provider, ProviderRegistration>();
   private slackInstallationHandler: SlackInstallationHandler | undefined;
   private linearInstallationHandler: LinearInstallationHandler | undefined;
 
   constructor(private readonly options: DynamicProviderRuntimeOptions) {
-    for (const provider of ["github", "slack", "discord", "linear"] as const) {
+    for (const provider of ["github", "slack", "discord", "linear", "telegram"] as const) {
       this.stable.set(provider, this.stableRegistration(provider));
     }
   }
@@ -129,6 +131,7 @@ export class DynamicProviderRuntime implements ProviderRuntimeOwner {
       this.stable.get("discord")!,
       this.stable.get("slack")!,
       this.stable.get("linear")!,
+      this.stable.get("telegram")!,
     ];
   }
 
@@ -228,6 +231,7 @@ export class DynamicProviderRuntime implements ProviderRuntimeOwner {
     };
   }
 
+  // eslint-disable-next-line complexity -- one branch per configured provider keeps the dispatch explicit.
   private build(
     provider: Provider,
     configuration: ProviderApplicationConfiguration,
@@ -278,6 +282,17 @@ export class DynamicProviderRuntime implements ProviderRuntimeOwner {
           clientId: configuration.applicationId,
           clientSecret: configuration.clientSecret,
           botToken: configuration.botToken,
+        },
+      });
+    }
+    if (provider === "telegram" && configuration.provider === "telegram") {
+      return createTelegramRegistration({
+        ...shared,
+        configuration: {
+          botToken: configuration.botToken,
+          ...(configuration.secretToken === undefined
+            ? {}
+            : { secretToken: configuration.secretToken }),
         },
       });
     }
@@ -636,6 +651,7 @@ function eventNames(provider: Provider): TriggerProvider["eventNames"] {
   // The dispatcher drops an event that is missing here, before the real provider runs.
   if (provider === "slack") return ["slack.mention", "slack.message"];
   if (provider === "discord") return ["discord.mention"];
+  if (provider === "telegram") return ["telegram.message", "telegram.mention"];
   if (provider === "linear") return ["linear.issue", "linear.comment"];
   return GITHUB_TRIGGER_SOURCE_NAMES;
 }

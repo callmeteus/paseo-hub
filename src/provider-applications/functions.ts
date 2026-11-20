@@ -11,7 +11,7 @@ import {
 } from "./index.js";
 import { providerApplicationSaveFailure, providerHost, providerName } from "./save-failure.js";
 
-const providerSchema = z.enum(["github", "slack", "discord", "linear"]);
+const providerSchema = z.enum(["github", "slack", "discord", "linear", "telegram"]);
 const surfaceSchema = z.enum(["appSetup", "apps"]).optional();
 const expectedVersionSchema = z.number().int().positive().optional();
 const configurationSchema = z.discriminatedUnion("provider", [
@@ -50,6 +50,13 @@ const configurationSchema = z.discriminatedUnion("provider", [
     clientId: z.string().trim().min(1),
     clientSecret: z.string().min(1),
     webhookSecret: z.string().min(1),
+    expectedVersion: expectedVersionSchema,
+    surface: surfaceSchema,
+  }),
+  z.object({
+    provider: z.literal("telegram"),
+    botToken: z.string().min(1),
+    secretToken: z.string().min(1).optional(),
     expectedVersion: expectedVersionSchema,
     surface: surfaceSchema,
   }),
@@ -202,6 +209,12 @@ function sensitiveConfigurationValues(
   if (configuration.provider === "linear") {
     return [configuration.clientSecret, configuration.webhookSecret];
   }
+  if (configuration.provider === "telegram") {
+    return [
+      configuration.botToken,
+      ...(configuration.secretToken === undefined ? [] : [configuration.secretToken]),
+    ];
+  }
   return [configuration.clientSecret, configuration.botToken];
 }
 
@@ -239,6 +252,14 @@ function normalizedConfiguration(
       clientId: data.clientId,
       clientSecret: data.clientSecret,
       webhookSecret: data.webhookSecret,
+      ...version,
+    };
+  }
+  if (data.provider === "telegram") {
+    return {
+      provider: data.provider,
+      botToken: data.botToken,
+      ...(data.secretToken === undefined ? {} : { secretToken: data.secretToken }),
       ...version,
     };
   }

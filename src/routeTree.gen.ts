@@ -35,6 +35,8 @@ import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as AgentSessionsSessionIdMcpRouteImport } from './routes/agent-sessions/$sessionId/mcp'
 import { Route as AgentExecutionsExecutionIdMcpRouteImport } from './routes/agent-executions/$executionId/mcp'
 import { Route as ApiV1CliAuthorizationsPollRouteImport } from './routes/api/v1/cli-authorizations/poll'
+import { Route as ApiIntegrationsTelegramEventsRouteImport } from './routes/api/integrations/telegram/events'
+import { Route as ApiIntegrationsTelegramCallbackRouteImport } from './routes/api/integrations/telegram/callback'
 import { Route as ApiIntegrationsSlackInteractivityRouteImport } from './routes/api/integrations/slack/interactivity'
 import { Route as ApiIntegrationsSlackEventsRouteImport } from './routes/api/integrations/slack/events'
 import { Route as ApiIntegrationsSlackCallbackRouteImport } from './routes/api/integrations/slack/callback'
@@ -195,6 +197,18 @@ const ApiV1CliAuthorizationsPollRoute =
     id: '/poll',
     path: '/poll',
     getParentRoute: () => ApiV1CliAuthorizationsRoute,
+  } as any)
+const ApiIntegrationsTelegramEventsRoute =
+  ApiIntegrationsTelegramEventsRouteImport.update({
+    id: '/api/integrations/telegram/events',
+    path: '/api/integrations/telegram/events',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiIntegrationsTelegramCallbackRoute =
+  ApiIntegrationsTelegramCallbackRouteImport.update({
+    id: '/api/integrations/telegram/callback',
+    path: '/api/integrations/telegram/callback',
+    getParentRoute: () => rootRouteImport,
   } as any)
 const ApiIntegrationsSlackInteractivityRoute =
   ApiIntegrationsSlackInteractivityRouteImport.update({
@@ -406,6 +420,8 @@ export interface FileRoutesByFullPath {
   '/api/integrations/slack/callback': typeof ApiIntegrationsSlackCallbackRoute
   '/api/integrations/slack/events': typeof ApiIntegrationsSlackEventsRoute
   '/api/integrations/slack/interactivity': typeof ApiIntegrationsSlackInteractivityRoute
+  '/api/integrations/telegram/callback': typeof ApiIntegrationsTelegramCallbackRoute
+  '/api/integrations/telegram/events': typeof ApiIntegrationsTelegramEventsRoute
   '/api/v1/cli-authorizations/poll': typeof ApiV1CliAuthorizationsPollRoute
   '/o/$organizationSlug/activity/$runId': typeof ShellOOrganizationSlugActivityRunIdRoute
   '/o/$organizationSlug/daemons/$daemonId': typeof ShellOOrganizationSlugDaemonsDaemonIdRoute
@@ -457,6 +473,8 @@ export interface FileRoutesByTo {
   '/api/integrations/slack/callback': typeof ApiIntegrationsSlackCallbackRoute
   '/api/integrations/slack/events': typeof ApiIntegrationsSlackEventsRoute
   '/api/integrations/slack/interactivity': typeof ApiIntegrationsSlackInteractivityRoute
+  '/api/integrations/telegram/callback': typeof ApiIntegrationsTelegramCallbackRoute
+  '/api/integrations/telegram/events': typeof ApiIntegrationsTelegramEventsRoute
   '/api/v1/cli-authorizations/poll': typeof ApiV1CliAuthorizationsPollRoute
   '/o/$organizationSlug/activity/$runId': typeof ShellOOrganizationSlugActivityRunIdRoute
   '/o/$organizationSlug/daemons/$daemonId': typeof ShellOOrganizationSlugDaemonsDaemonIdRoute
@@ -514,6 +532,8 @@ export interface FileRoutesById {
   '/api/integrations/slack/callback': typeof ApiIntegrationsSlackCallbackRoute
   '/api/integrations/slack/events': typeof ApiIntegrationsSlackEventsRoute
   '/api/integrations/slack/interactivity': typeof ApiIntegrationsSlackInteractivityRoute
+  '/api/integrations/telegram/callback': typeof ApiIntegrationsTelegramCallbackRoute
+  '/api/integrations/telegram/events': typeof ApiIntegrationsTelegramEventsRoute
   '/api/v1/cli-authorizations/poll': typeof ApiV1CliAuthorizationsPollRoute
   '/_shell/o/$organizationSlug/activity/$runId': typeof ShellOOrganizationSlugActivityRunIdRoute
   '/_shell/o/$organizationSlug/daemons/$daemonId': typeof ShellOOrganizationSlugDaemonsDaemonIdRoute
@@ -571,6 +591,8 @@ export interface FileRouteTypes {
     | '/api/integrations/slack/callback'
     | '/api/integrations/slack/events'
     | '/api/integrations/slack/interactivity'
+    | '/api/integrations/telegram/callback'
+    | '/api/integrations/telegram/events'
     | '/api/v1/cli-authorizations/poll'
     | '/o/$organizationSlug/activity/$runId'
     | '/o/$organizationSlug/daemons/$daemonId'
@@ -622,6 +644,8 @@ export interface FileRouteTypes {
     | '/api/integrations/slack/callback'
     | '/api/integrations/slack/events'
     | '/api/integrations/slack/interactivity'
+    | '/api/integrations/telegram/callback'
+    | '/api/integrations/telegram/events'
     | '/api/v1/cli-authorizations/poll'
     | '/o/$organizationSlug/activity/$runId'
     | '/o/$organizationSlug/daemons/$daemonId'
@@ -678,6 +702,8 @@ export interface FileRouteTypes {
     | '/api/integrations/slack/callback'
     | '/api/integrations/slack/events'
     | '/api/integrations/slack/interactivity'
+    | '/api/integrations/telegram/callback'
+    | '/api/integrations/telegram/events'
     | '/api/v1/cli-authorizations/poll'
     | '/_shell/o/$organizationSlug/activity/$runId'
     | '/_shell/o/$organizationSlug/daemons/$daemonId'
@@ -723,6 +749,8 @@ export interface RootRouteChildren {
   ApiIntegrationsSlackCallbackRoute: typeof ApiIntegrationsSlackCallbackRoute
   ApiIntegrationsSlackEventsRoute: typeof ApiIntegrationsSlackEventsRoute
   ApiIntegrationsSlackInteractivityRoute: typeof ApiIntegrationsSlackInteractivityRoute
+  ApiIntegrationsTelegramCallbackRoute: typeof ApiIntegrationsTelegramCallbackRoute
+  ApiIntegrationsTelegramEventsRoute: typeof ApiIntegrationsTelegramEventsRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -908,6 +936,20 @@ declare module '@tanstack/react-router' {
       fullPath: '/api/v1/cli-authorizations/poll'
       preLoaderRoute: typeof ApiV1CliAuthorizationsPollRouteImport
       parentRoute: typeof ApiV1CliAuthorizationsRoute
+    }
+    '/api/integrations/telegram/events': {
+      id: '/api/integrations/telegram/events'
+      path: '/api/integrations/telegram/events'
+      fullPath: '/api/integrations/telegram/events'
+      preLoaderRoute: typeof ApiIntegrationsTelegramEventsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/integrations/telegram/callback': {
+      id: '/api/integrations/telegram/callback'
+      path: '/api/integrations/telegram/callback'
+      fullPath: '/api/integrations/telegram/callback'
+      preLoaderRoute: typeof ApiIntegrationsTelegramCallbackRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/api/integrations/slack/interactivity': {
       id: '/api/integrations/slack/interactivity'
@@ -1275,6 +1317,8 @@ const rootRouteChildren: RootRouteChildren = {
   ApiIntegrationsSlackEventsRoute: ApiIntegrationsSlackEventsRoute,
   ApiIntegrationsSlackInteractivityRoute:
     ApiIntegrationsSlackInteractivityRoute,
+  ApiIntegrationsTelegramCallbackRoute: ApiIntegrationsTelegramCallbackRoute,
+  ApiIntegrationsTelegramEventsRoute: ApiIntegrationsTelegramEventsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
