@@ -9,11 +9,13 @@ export async function readProviderApplicationEnvironment(
   const slack = slackEnvironment(environment);
   const discord = discordEnvironment(environment);
   const linear = linearEnvironment(environment);
+  const telegram = telegramEnvironment(environment);
   return {
     ...(github === undefined ? {} : { github }),
     ...(slack === undefined ? {} : { slack }),
     ...(discord === undefined ? {} : { discord }),
     ...(linear === undefined ? {} : { linear }),
+    ...(telegram === undefined ? {} : { telegram }),
   };
 }
 
@@ -114,6 +116,20 @@ function discordEnvironment(
   return applicationId === undefined || clientSecret === undefined || botToken === undefined
     ? undefined
     : { provider: "discord", applicationId, clientSecret, botToken };
+}
+
+function telegramEnvironment(
+  environment: Record<string, string | undefined>,
+): ProviderApplicationConfiguration | undefined {
+  const botToken = nonEmpty(environment["TELEGRAM_BOT_TOKEN"]);
+  if (botToken === undefined) return undefined;
+  return {
+    provider: "telegram",
+    botToken,
+    ...(nonEmpty(environment["TELEGRAM_WEBHOOK_SECRET"]) === undefined
+      ? {}
+      : { secretToken: nonEmpty(environment["TELEGRAM_WEBHOOK_SECRET"]) }),
+  };
 }
 
 function linearEnvironment(

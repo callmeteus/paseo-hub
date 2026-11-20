@@ -60,3 +60,22 @@ describe("Slack provider environment", () => {
     }
   });
 });
+
+describe("Telegram provider environment", () => {
+  it("reads bot token and optional webhook secret", async () => {
+    const result = await readProviderApplicationEnvironment({
+      TELEGRAM_BOT_TOKEN: "12345:token",
+      TELEGRAM_WEBHOOK_SECRET: "secret",
+    });
+    assert.deepEqual(result.telegram, {
+      provider: "telegram",
+      botToken: "12345:token",
+      secretToken: "secret",
+    });
+  });
+
+  it("returns undefined without a bot token", async () => {
+    const result = await readProviderApplicationEnvironment({});
+    assert.equal(result.telegram, undefined);
+  });
+});
