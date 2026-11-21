@@ -46,6 +46,7 @@ export interface TelegramBotApi {
   setWebhook(url: string, secretToken?: string): Promise<void>;
   deleteWebhook(): Promise<void>;
   sendMessage(input: TelegramMessageInput): Promise<TelegramMessageResult>;
+  sendChatAction(chatId: string | number, action: "typing"): Promise<void>;
   answerCallbackQuery(callbackQueryId: string, text?: string): Promise<void>;
   getFile(fileId: string): Promise<string | undefined>;
 }
@@ -136,6 +137,9 @@ export function createTelegramBotApi(options: CreateTelegramBotApiOptions): Tele
         SendResultSchema,
       );
       return { messageId: result.message_id, chatId: result.chat.id };
+    },
+    async sendChatAction(chatId, action) {
+      await post("sendChatAction", { chat_id: chatId, action }, z.unknown());
     },
     async answerCallbackQuery(callbackQueryId, text) {
       await post(

@@ -9,6 +9,7 @@ function fakeApi(): { api: TelegramBotApi; sent: Array<Record<string, unknown>> 
     getMe: async () => ({ id: 1, username: "bot", firstName: "Bot" }),
     setWebhook: async () => undefined,
     deleteWebhook: async () => undefined,
+    sendChatAction: async () => {},
     sendMessage: async (message) => {
       sent.push({
         chatId: message.chatId,

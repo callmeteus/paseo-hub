@@ -178,6 +178,8 @@ export function createTelegramOutputExecutor(
 ): OutputExecutor {
   return async function executeTelegramOutput(input) {
     const context = TelegramOutputContextSchema.parse(input.outputContext);
+    // Telegram typing indicator expires after ~5s; refresh it on every agent output.
+    await api.sendChatAction(context.chatId, "typing").catch(() => undefined);
     if (type === "telegram.reply") {
       const args = ReplyArgsSchema.parse(input.args);
       await api.sendMessage({ chatId: context.chatId, text: args.content });
