@@ -31,6 +31,14 @@ describe("matchTelegramTriggers", () => {
     expect(result.map((match) => match.trigger.name)).toEqual(["mention"]);
   });
 
+  it("treats groups: ['*'] as any group", () => {
+    const anyGroup = [
+      { name: "mention", on: "telegram.mention", filters: { from_users: ["*"], groups: ["*"] } },
+    ];
+    expect(
+      matchTelegramTriggers({ triggers: anyGroup }, event({ chatId: "-5160361212" }), "kevin_bot"),
+    ).toHaveLength(1);
+  });
   it("does not match a plain group message to telegram.mention", () => {
     const plain = event({ type: "message", mentionedBot: false, content: "só um recado" });
     const result = matchTelegramTriggers({ triggers: [...triggers] }, plain, "kevin_bot");

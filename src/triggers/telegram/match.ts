@@ -55,11 +55,9 @@ function matchesFilter(
     return false;
   }
 
-  // Group allowlist. Telegram chat ids are numeric strings.
-  const groups = readStrings(filter, "groups");
-  if (groups !== undefined && !groups.includes(event.chatId)) return false;
-  const channels = readStrings(filter, "channels");
-  if (channels !== undefined && !channels.includes(event.chatId)) return false;
+  // Group allowlist. Telegram chat ids are numeric strings. "*" means any chat.
+  if (!matchesChatList(readStrings(filter, "groups"), event.chatId)) return false;
+  if (!matchesChatList(readStrings(filter, "channels"), event.chatId)) return false;
 
   if (event.chatType === "private") {
     if (filter.direct_messages !== true) return false;
@@ -116,4 +114,8 @@ export function readTelegramPromptBody(
   const token = `@${botUsername.replace(/^@/u, "")}`;
   const index = event.content.indexOf(token);
   return index < 0 ? event.content : event.content.slice(index + token.length).trimStart();
+}
+
+function matchesChatList(list: readonly string[] | undefined, chatId: string): boolean {
+  return list === undefined || list.includes("*") || list.includes(chatId);
 }
