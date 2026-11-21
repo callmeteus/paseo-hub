@@ -10,7 +10,7 @@ import { withReference } from "../failures/reference.js";
  * nobody mapped cannot leak through as raw text.
  */
 
-export const CONNECTION_PROVIDERS = ["github", "discord", "slack", "linear"] as const;
+export const CONNECTION_PROVIDERS = ["github", "discord", "slack", "linear", "telegram"] as const;
 export type ConnectionProvider = (typeof CONNECTION_PROVIDERS)[number];
 
 export const connectionResultSchema = z.enum([
@@ -18,14 +18,17 @@ export const connectionResultSchema = z.enum([
   "discord_connected",
   "slack_connected",
   "linear_connected",
+  "telegram_connected",
   "github_disconnected",
   "discord_disconnected",
   "slack_disconnected",
   "linear_disconnected",
+  "telegram_disconnected",
   "github_cancelled",
   "discord_cancelled",
   "slack_cancelled",
   "linear_cancelled",
+  "telegram_cancelled",
   "github_approval_required",
   "slack_bot_failed",
   "provider_not_configured",
@@ -112,6 +115,7 @@ const PROVIDER_NAMES: Readonly<Record<ConnectionProvider, string>> = {
   discord: "Discord",
   slack: "Slack",
   linear: "Linear",
+  telegram: "Telegram",
 };
 
 export function connectionProviderName(provider: ConnectionProvider): string {
@@ -149,6 +153,9 @@ const RETURN_COPY: Readonly<Record<ConnectionResult, (name: string) => Connectio
   slack_cancelled: (name) => cancelled("Installation", name),
   discord_cancelled: (name) => cancelled("Authorization", name),
   linear_cancelled: (name) => cancelled("Authorization", name),
+  telegram_connected: connected,
+  telegram_disconnected: disconnected,
+  telegram_cancelled: (name) => cancelled("Authorization", name),
   github_approval_required: (name) =>
     failed(
       name,

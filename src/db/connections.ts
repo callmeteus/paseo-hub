@@ -642,6 +642,26 @@ export class ConnectionRepository {
           guildId: connection.guildId,
         } as const;
       }
+      if (provider === "telegram") {
+        const [connection] = await transaction
+          .select({ chatId: schema.telegramConnections.chatId })
+          .from(schema.telegramConnections)
+          .where(
+            and(
+              eq(schema.telegramConnections.id, connectionId),
+              eq(schema.telegramConnections.organizationId, access.organizationId),
+            ),
+          )
+          .for("update");
+        if (connection === undefined) throw new ConnectionAccessDeniedError();
+        await transaction
+          .delete(schema.projectTriggerRoutes)
+          .where(eq(schema.projectTriggerRoutes.connectionId, connectionId));
+        await transaction
+          .delete(schema.telegramConnections)
+          .where(eq(schema.telegramConnections.id, connectionId));
+        return { provider, chatId: connection.chatId } as const;
+      }
       if (provider === "linear") {
         const [connection] = await transaction
           .select({
@@ -1081,6 +1101,7 @@ async function consumeLockedAttempt(transaction: HubTransaction, attemptId: stri
 function initialConnectionAttemptPhase(provider: ConnectionProvider): ConnectionAttemptPhase {
   if (provider === "github") return "github_setup";
   if (provider === "discord") return "discord_authorization";
+  if (provider === "telegram") return "telegram_authorization";
   return provider === "slack" ? "slack_authorization" : "linear_authorization";
 }
 

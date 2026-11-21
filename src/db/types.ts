@@ -501,14 +501,15 @@ export interface PendingProjectTriggerMigration {
   revision: ProjectConfigurationRevisionRecord;
 }
 
-export type ConnectionProvider = "github" | "discord" | "slack" | "linear";
+export type ConnectionProvider = "github" | "discord" | "slack" | "linear" | "telegram";
 
 export type ConnectionAttemptPhase =
   | "github_setup"
   | "github_user_authorization"
   | "discord_authorization"
   | "slack_authorization"
-  | "linear_authorization";
+  | "linear_authorization"
+  | "telegram_authorization";
 
 export interface ConnectionAccountAccess {
   sessionId: string;
@@ -721,6 +722,7 @@ export type LinearConnectionRefreshOperation<T> = (
 
 export type DisconnectConnectionResult =
   | { provider: "github" }
+  | { provider: "telegram"; chatId: string | undefined }
   | { provider: "discord"; guildId: string | undefined }
   | {
       provider: "slack";

@@ -676,7 +676,7 @@ async function compileTriggers(
     if (typeof authoredConnection === "string" && candidates.length === 0) {
       issues.push({
         path: triggerFilterPath(trigger, "connection"),
-        message: `"${authoredConnection}" does not match any ${providerLabel(provider)} connection (${formatConnectionCandidates(provider, usage[provider])})`,
+        message: `"${authoredConnection}" does not match any ${providerLabel(provider)} connection (${formatConnectionCandidates(provider, usage[provider] ?? [])})`,
       });
       continue;
     }
@@ -738,6 +738,7 @@ async function compileTriggers(
 
 function providerForEvent(eventName: string): ConnectionProvider | undefined {
   const provider = eventName.slice(0, eventName.indexOf("."));
+  if (provider === "telegram") return "telegram";
   return provider === "github" ||
     provider === "slack" ||
     provider === "discord" ||
@@ -764,7 +765,7 @@ function connectionCandidates(
   usage: Awaited<ReturnType<Database["organizationConnectionUsage"]>>,
   filters: CompiledTrigger["filters"] | undefined,
 ) {
-  const connections = usage[provider];
+  const connections = usage[provider] ?? [];
   const authoredSlug = filters?.["connection"];
   if (typeof authoredSlug !== "string") return connections;
   return connections.filter((connection) => connection.slug === authoredSlug);

@@ -861,7 +861,7 @@ export const organizationConnectionAttempts = pgTable(
   "organization_connection_attempts",
   {
     id: uuid().defaultRandom().primaryKey(),
-    provider: text().$type<"github" | "discord" | "slack" | "linear">().notNull(),
+    provider: text().$type<"github" | "discord" | "slack" | "linear" | "telegram">().notNull(),
     phase: text()
       .$type<
         | "github_setup"
@@ -869,6 +869,7 @@ export const organizationConnectionAttempts = pgTable(
         | "discord_authorization"
         | "slack_authorization"
         | "linear_authorization"
+        | "telegram_authorization"
       >()
       .notNull(),
     stateVerifier: text("state_verifier").notNull().unique(),
