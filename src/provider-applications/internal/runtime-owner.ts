@@ -217,13 +217,22 @@ export class DynamicProviderRuntime implements ProviderRuntimeOwner {
         published = true;
         if (previous !== undefined) {
           previous.retiring = true;
-          void stopSources(previous).catch((error: unknown) => {
-            reportFailure(error, {
-              operation: "provider_runtime.retire_inbound",
-              component: "provider_runtime",
-              provider,
+          // stopSources clears the shared source's handler set. The new registration
+          // was started before publish(), so re-attach its handler after the old
+          // one stops, or the source drops every event as configuration_unavailable.
+          void stopSources(previous)
+            .then(() => {
+              const handler = this.slot(provider).handler;
+              if (handler !== undefined) return startSources(active, handler);
+              return undefined;
+            })
+            .catch((error: unknown) => {
+              reportFailure(error, {
+                operation: "provider_runtime.retire_inbound",
+                component: "provider_runtime",
+                provider,
+              });
             });
-          });
           void this.retireWhenDrained(provider, previous);
         }
       },
