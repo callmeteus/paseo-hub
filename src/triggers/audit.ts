@@ -12,6 +12,7 @@ export function logProviderEventIntake(input: {
   repository?: string | undefined;
   resourceId?: string | undefined;
   log?: EventAuditLogger;
+  debugHandlerCount?: number | undefined;
 }): void {
   const acceptance = input.acceptance;
   (input.log ?? logger).info(
@@ -25,6 +26,9 @@ export function logProviderEventIntake(input: {
       ...(acceptance.status === "dropped" ? { reason: acceptance.reason } : {}),
       ...(input.repository === undefined ? {} : { repository: input.repository }),
       ...(input.resourceId === undefined ? {} : { resourceId: input.resourceId }),
+      ...(input.debugHandlerCount === undefined
+        ? {}
+        : { debugHandlerCount: input.debugHandlerCount }),
     },
     "provider event intake completed",
   );

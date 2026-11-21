@@ -75,6 +75,7 @@ export async function intakeSlackEvent(
     deliveryId,
     resourceId: normalizedEvent.teamId,
     acceptance,
+    ...(process.env["NODE_ENV"] === "production" ? { debugHandlerCount: handlers.size } : {}),
   });
   const events = acceptance.status === "accepted" ? acceptance.events : [];
   await Promise.all(
