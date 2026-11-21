@@ -44,6 +44,7 @@ export interface ConfigurationResources {
   }[];
   discord: readonly { slug: string; guildName: string }[];
   slack: readonly { slug: string; teamName: string }[];
+  telegram: readonly { slug: string; chatName: string }[];
   linear: readonly { slug: string; organizationName: string }[];
 }
 

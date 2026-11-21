@@ -389,6 +389,7 @@ function configurationResourcesResponse(
         github: result.github,
         discord: result.discord,
         slack: result.slack,
+        telegram: result.telegram,
         linear: result.linear,
       })
     : infrastructureProblem(requestId);
