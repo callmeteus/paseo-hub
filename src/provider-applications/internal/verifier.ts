@@ -43,6 +43,9 @@ export function createProviderApplicationVerifier(
       if (configuration.provider === "discord") {
         return verifyDiscord(configuration, request, timeoutMs);
       }
+      if (configuration.provider === "telegram") {
+        return verifyTelegram(configuration, request, timeoutMs);
+      }
       // Slack client credentials have no honest verification endpoint. They are verified only
       // by the OAuth installation callback, where the returned bot token is tested.
       return Promise.reject(new ProviderVerificationError("credentialsRejected"));
@@ -225,6 +228,35 @@ async function fixedRequest(
       cause: safeTransportCause(error),
     });
   }
+}
+
+async function verifyTelegram(
+  configuration: Extract<ProviderApplicationConfiguration, { provider: "telegram" }>,
+  request: typeof fetch,
+  timeoutMs: number,
+): Promise<ProviderApplicationIdentity> {
+  const response = await request(`https://api.telegram.org/bot${configuration.botToken}/getMe`, {
+    signal: AbortSignal.timeout(timeoutMs),
+  }).catch((error: unknown) => {
+    throw new ProviderVerificationError("network", undefined, { cause: error });
+  });
+  rejectFailedResponse(response);
+  const body = await safeJson(response);
+  const identity = z
+    .object({
+      ok: z.literal(true),
+      result: z.object({
+        id: z.union([z.number(), z.string()]),
+        username: z.string().min(1),
+      }),
+    })
+    .safeParse(body);
+  if (!identity.success) throw new ProviderVerificationError("credentialsRejected");
+  return {
+    provider: "telegram",
+    id: String(identity.data.result.id),
+    name: `@${identity.data.result.username}`,
+  };
 }
 
 function safeTransportCause(error: unknown): Error {

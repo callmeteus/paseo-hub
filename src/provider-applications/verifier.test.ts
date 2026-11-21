@@ -217,6 +217,26 @@ describe("provider application verification", () => {
         error instanceof ProviderVerificationError && error.reason === "invalidResponse",
     );
   });
+  it("verifies a Telegram bot with getMe", async () => {
+    const verifier = createProviderApplicationVerifier({
+      fetch: (input) => {
+        assert.match(requestUrl(input), /api\.telegram\.org\/bot123:abc\/getMe/u);
+        return Promise.resolve(
+          Response.json({
+            ok: true,
+            result: { id: 9067058984, username: "e7kevinbot" },
+          }),
+        );
+      },
+    });
+    assert.deepEqual(
+      await verifier.verify("telegram", {
+        provider: "telegram",
+        botToken: "123:abc",
+      }),
+      { provider: "telegram", id: "9067058984", name: "@e7kevinbot" },
+    );
+  });
 });
 
 function requestUrl(input: string | URL | Request): string {
