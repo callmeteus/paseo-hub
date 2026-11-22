@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { NormalizedTelegramMessageEvent } from "./events.js";
 import { matchTelegramTriggers, readTelegramPromptBody } from "./match.js";
+import { createTelegramTriggerProvider } from "./provider.js";
 
 function event(
   overrides: Partial<NormalizedTelegramMessageEvent> = {},
@@ -24,6 +25,45 @@ const triggers = [
   { name: "mention", on: "telegram.mention", filters: { from_users: ["*"] } },
   { name: "messages", on: "telegram.message", filters: { from_users: ["*"] } },
 ] as const;
+
+describe("telegram materialized context", () => {
+  it("exposes the trigger message author so the agent can resolve the SRE identity", async () => {
+    const provider = createTelegramTriggerProvider({
+      configurationStoreForProject: () => {
+        throw new Error("not used");
+      },
+      botUsername: "kevin_bot",
+    });
+    const context = await provider.materializeContext!({
+      executionId: "execution",
+      organizationId: "org",
+      projectId: "project",
+      providerEventReceiptId: "receipt",
+      triggerContext: {
+        provider: "telegram",
+        organizationId: "org",
+        target: { provider: "telegram", chatId: "-1001", messageId: 1 },
+        event: {
+          telegram: {
+            event_type: "mention",
+            connection_id: null,
+            chat: { id: "-1001", type: "group" },
+            trigger_message: {
+              id: "chat:1",
+              text: "@kevin_bot oi",
+              body: "oi",
+              author: { id: "99", username: "gio", first_name: "Gio", is_bot: false },
+              created_at: "2026-01-01T00:00:00.000Z",
+              chat: { id: "-1001" },
+            },
+            trigger_thread_context: { status: "not_applicable" },
+          },
+        },
+      },
+    });
+    expect(context.telegram.trigger_message.author.id).toBe("99");
+  });
+});
 
 describe("matchTelegramTriggers", () => {
   it("matches a group mention for telegram.mention", () => {

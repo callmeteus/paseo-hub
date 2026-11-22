@@ -53,12 +53,7 @@ export interface CreateTelegramTriggerProviderOptions {
  */
 export function createTelegramTriggerProvider(
   options: CreateTelegramTriggerProviderOptions,
-): TriggerProvider<
-  "telegram",
-  TelegramTriggerContext,
-  TelegramOutputContext,
-  Record<string, never>
-> {
+): TriggerProvider<"telegram", TelegramTriggerContext, TelegramOutputContext, TelegramMergeData> {
   return {
     name: "telegram",
     eventNames: ["telegram.message", "telegram.mention"] as readonly TriggerEventName[],
@@ -124,8 +119,11 @@ export function createTelegramTriggerProvider(
     async materializeLaunch() {
       return {};
     },
-    async materializeContext() {
-      return {};
+    async materializeContext(launch): Promise<TelegramMergeData> {
+      // The prompt reads `${{ paseo.context }}`. Expose the trigger message here
+      // so the agent can resolve the author (telegram.trigger_message.author.id)
+      // against team_member_platform_links before acting.
+      return launch.triggerContext.event;
     },
   };
 }
