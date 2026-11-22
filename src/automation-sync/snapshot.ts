@@ -48,12 +48,15 @@ export async function collectAutomationSnapshot(
   const files = directory.map((file) =>
     blob(`${repositoryDirectory}/${file.path}`, file.bytes, file.path),
   );
+  const triggersDirectory = repositoryDirectory.includes(".paseo/")
+    ? path.posix.join(path.posix.dirname(repositoryDirectory), "triggers")
+    : ".paseo/triggers";
   for (const revision of revisions) {
     if (!TRIGGER_FILE_NAME.test(revision.name)) {
       throw new Error(`trigger name is not a safe file name: ${revision.name}`);
     }
     const bytes = Buffer.from(revision.yaml, "utf8");
-    files.push(blob(`.paseo/triggers/${revision.name}.yml`, bytes, revision.name));
+    files.push(blob(`${triggersDirectory}/${revision.name}.yml`, bytes, revision.name));
   }
   return files;
 }

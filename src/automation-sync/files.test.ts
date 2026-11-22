@@ -119,6 +119,26 @@ describe("automation files", () => {
     ]);
   });
 
+  it("writes triggers beside a nested automations directory", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-sync-nested-"));
+    await writeFile(path.join(directory, "falar.md"), "oi\n");
+    const database = createMemoryDatabase();
+    seedAutomationInclude(
+      database,
+      directory,
+      `prompt:\n  - include:\n      path: falar.md\n      root: ${JSON.stringify(directory)}\n`,
+    );
+    const files = await collectAutomationSnapshot(
+      database,
+      "org",
+      "packages/kevin/.paseo/automations",
+    );
+    assert.deepEqual(files.map((file) => file.path).sort(), [
+      "packages/kevin/.paseo/automations/falar.md",
+      "packages/kevin/.paseo/triggers/triagem.yml",
+    ]);
+  });
+
   it("refuses prompt files that live in separate directories", async () => {
     const left = await mkdtemp(path.join(tmpdir(), "paseo-sync-left-"));
     const right = await mkdtemp(path.join(tmpdir(), "paseo-sync-right-"));
