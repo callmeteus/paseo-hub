@@ -96,6 +96,58 @@ describe("automation files", () => {
     assert.equal(commits.length, 1);
   });
 
+  it("retries a publish when the branch moves between read and write", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-sync-race-"));
+    await writeFile(path.join(directory, "falar.md"), "oi\n");
+    const database = createMemoryDatabase({
+      githubConnections: [githubConnection()],
+    });
+    seedAutomationInclude(database, directory);
+
+    let heads = 0;
+    let commits = 0;
+    let remote = [{ path: ".paseo/triggers/old.yml", sha: "old" }];
+    const client: GitTreeClient = {
+      async readHead() {
+        heads += 1;
+        return {
+          commitSha: String(heads).repeat(40),
+          treeSha: String(heads + 10).repeat(40),
+        };
+      },
+      async readTree() {
+        return remote;
+      },
+      async commit(input) {
+        commits += 1;
+        if (commits === 1) throw new Error("Update is not a fast forward");
+        const next = new Map(remote.map((blob) => [blob.path, blob.sha]));
+        for (const change of input.changes) {
+          if ("sha" in change) next.delete(change.path);
+          else next.set(change.path, gitBlobSha(Buffer.from(change.content, "utf8")));
+        }
+        remote = [...next].map(([blobPath, sha]) => ({ path: blobPath, sha }));
+        return "c".repeat(40);
+      },
+    };
+    await database.saveAutomationGitSync({
+      organizationId: "org",
+      enabled: true,
+      githubConnectionId: "connection",
+      repositoryId: 42,
+      repositoryFullName: "acme/widgets",
+      branch: "main",
+      commitMessage: "Ship the automations",
+      automationsDirectory: "prompts",
+      intervalMinutes: 15,
+    });
+    const sync = new AutomationGitSync({ database, auth: null, trees: async () => client });
+    const result = await sync.syncOrganization("org");
+    assert.deepEqual(result, { status: "committed", commitSha: "c".repeat(40) });
+    assert.equal(heads, 2);
+    assert.equal(commits, 2);
+  });
+
   it("copies the outer directory when a catalog lives inside it", async () => {
     const parent = await mkdtemp(path.join(tmpdir(), "paseo-sync-"));
     const directory = path.join(parent, "automations");

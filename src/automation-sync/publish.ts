@@ -131,6 +131,13 @@ export function gitTreeClient(github: GitHubRequester): GitTreeClient {
   };
 }
 
+const MAX_PUBLISH_ATTEMPTS = 4;
+
+/** GitHub rejects a ref update when the branch moved after we read its head. */
+function isFastForwardConflict(error: unknown): boolean {
+  return error instanceof Error && /not a fast forward/u.test(error.message);
+}
+
 export async function publishAutomationTree(
   client: GitTreeClient,
   input: {
@@ -142,18 +149,28 @@ export async function publishAutomationTree(
     message: string;
   },
 ): Promise<{ status: "unchanged" | "committed"; commitSha: string }> {
-  const head = await client.readHead(input);
-  const remote = await client.readTree({ ...input, treeSha: head.treeSha });
-  const changes = planAutomationTree(remote, input.files, input.prefixes);
-  if (changes.length === 0) return { status: "unchanged", commitSha: head.commitSha };
-  const commitSha = await client.commit({
-    owner: input.owner,
-    repo: input.repo,
-    branch: input.branch,
-    parentSha: head.commitSha,
-    baseTreeSha: head.treeSha,
-    message: input.message,
-    changes,
-  });
-  return { status: "committed", commitSha };
+  for (let attempt = 0; attempt < MAX_PUBLISH_ATTEMPTS; attempt += 1) {
+    // Re-read the head on every attempt: another writer may have pushed while
+    // we were building the tree. The retry is a fresh plan against the new tip.
+    const head = await client.readHead(input);
+    const remote = await client.readTree({ ...input, treeSha: head.treeSha });
+    const changes = planAutomationTree(remote, input.files, input.prefixes);
+    if (changes.length === 0) return { status: "unchanged", commitSha: head.commitSha };
+    try {
+      const commitSha = await client.commit({
+        owner: input.owner,
+        repo: input.repo,
+        branch: input.branch,
+        parentSha: head.commitSha,
+        baseTreeSha: head.treeSha,
+        message: input.message,
+        changes,
+      });
+      return { status: "committed", commitSha };
+    } catch (error) {
+      if (attempt + 1 < MAX_PUBLISH_ATTEMPTS && isFastForwardConflict(error)) continue;
+      throw error;
+    }
+  }
+  throw new Error("automation publish exhausted its retries");
 }
