@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "vitest";
 import type { AccountAccessValue } from "../auth/organization-access.js";
+import type { DatabaseRuntime } from "../db/runtime/index.js";
+import type { Locks } from "../db/runtime/locks/index.js";
+import { createProviderApplicationStore } from "./internal/store.js";
 import {
   ProviderApplicationError,
   activateProviderApplicationsAtStartup,
@@ -39,6 +42,42 @@ const linearConfiguration: ProviderApplicationConfiguration = {
 };
 
 describe("provider applications", () => {
+  it("reads a stored Telegram application at startup", async () => {
+    const now = new Date();
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- focused query double
+    const database = {
+      query: async () => ({
+        rows: [
+          {
+            provider: "telegram",
+            configuration: { provider: "telegram", botToken: "123:abc" },
+            verified_external_identity: {
+              provider: "telegram",
+              id: "9067058984",
+              name: "@e7kevinbot",
+            },
+            version: 1,
+            verified_at: now,
+            updated_at: now,
+            updated_by_user_id: "operator",
+          },
+        ],
+      }),
+    } as unknown as DatabaseRuntime;
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- readAll needs no locking.
+    const store = createProviderApplicationStore(database, {} as Locks);
+
+    const stored = await store.readAll();
+
+    assert.equal(stored.length, 1);
+    assert.deepEqual(stored[0]?.configuration, { provider: "telegram", botToken: "123:abc" });
+    assert.deepEqual(stored[0]?.identity, {
+      provider: "telegram",
+      id: "9067058984",
+      name: "@e7kevinbot",
+    });
+  });
+
   it("reveals no provider state to a signed-in non-operator", async () => {
     const fixture = createFixture({ operator: false });
 

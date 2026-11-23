@@ -344,6 +344,7 @@ function connectionTable(provider: Provider): string {
   if (provider === "github") return "github_connections";
   if (provider === "slack") return "slack_connections";
   if (provider === "linear") return "linear_connections";
+  if (provider === "telegram") return "telegram_connections";
   return "discord_connections";
 }
 
@@ -366,7 +367,13 @@ function parseRow(row: ProviderConfigurationRow): StoredProviderApplication {
 }
 
 function providerSchema(value: string): Provider {
-  if (value === "github" || value === "slack" || value === "discord" || value === "linear") {
+  if (
+    value === "github" ||
+    value === "slack" ||
+    value === "discord" ||
+    value === "linear" ||
+    value === "telegram"
+  ) {
     return value;
   }
   throw new Error("stored provider configuration has invalid provider");
