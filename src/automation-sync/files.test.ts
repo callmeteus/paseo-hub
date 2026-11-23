@@ -191,6 +191,38 @@ describe("automation files", () => {
     ]);
   });
 
+  it("skips a prompt root that only existed on another machine", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-sync-stale-"));
+    await mkdir(path.join(directory, "partials"), { recursive: true });
+    await writeFile(path.join(directory, "partials", "falar.md"), "oi\n");
+    const missing = path.join(tmpdir(), `paseo-sync-gone-${Date.now()}`);
+    const database = createMemoryDatabase();
+    seedAutomationInclude(
+      database,
+      directory,
+      `prompt:\n  - include:\n      path: partials/falar.md\n      root: ${JSON.stringify(missing)}\n  - include:\n      path: partials/falar.md\n      root: ${JSON.stringify(directory)}\n`,
+    );
+    const files = await collectAutomationSnapshot(database, "org", ".paseo/automations");
+    assert.deepEqual(files.map((file) => file.path).sort(), [
+      ".paseo/automations/partials/falar.md",
+      ".paseo/triggers/triagem.yml",
+    ]);
+  });
+
+  it("refuses a snapshot when no prompt root exists", async () => {
+    const missing = path.join(tmpdir(), `paseo-sync-gone-${Date.now()}`);
+    const database = createMemoryDatabase();
+    seedAutomationInclude(
+      database,
+      missing,
+      `prompt:\n  - include:\n      path: partials/falar.md\n      root: ${JSON.stringify(missing)}\n`,
+    );
+    await assert.rejects(
+      collectAutomationSnapshot(database, "org", ".paseo/automations"),
+      /any prompt directory/u,
+    );
+  });
+
   it("refuses prompt files that live in separate directories", async () => {
     const left = await mkdtemp(path.join(tmpdir(), "paseo-sync-left-"));
     const right = await mkdtemp(path.join(tmpdir(), "paseo-sync-right-"));

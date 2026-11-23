@@ -1,6 +1,7 @@
 import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { load } from "js-yaml";
+import { logger } from "../logger.js";
 import type { Database } from "../db/types.js";
 import { expandInstructionRoot } from "../workflows/prompt-instructions.js";
 import { AutomationSyncError } from "./contract.js";
@@ -112,7 +113,15 @@ async function sharedInstructionRoot(documents: readonly string[]): Promise<stri
   }
   if (expanded.size === 0) return undefined;
   const resolved = new Set<string>();
-  for (const root of expanded) resolved.add(await existingDirectory(root));
+  for (const root of expanded) {
+    const directory = await existingDirectory(root);
+    if (directory !== undefined) resolved.add(directory);
+  }
+  if (resolved.size === 0) {
+    throw new AutomationSyncError(
+      `Hub can't read any prompt directory named by these automations (${[...expanded].join(", ")}).`,
+    );
+  }
   const directory = containingDirectory([...resolved]);
   if (directory === undefined) {
     throw new AutomationSyncError(
@@ -122,12 +131,29 @@ async function sharedInstructionRoot(documents: readonly string[]): Promise<stri
   return directory;
 }
 
-async function existingDirectory(root: string): Promise<string> {
+/**
+ * A trigger can name a directory that only existed on another machine. That root contributes no
+ * files here, so skip it instead of blocking every other automation and the trigger YAMLs. A
+ * different read error still fails the snapshot: it is not the same as a stale path.
+ */
+async function existingDirectory(root: string): Promise<string | undefined> {
   try {
     return await realpath(root);
   } catch (error) {
+    if (isMissingDirectory(error)) {
+      logger.warn(
+        { root, operation: "automation_git_sync.skip_missing_root" },
+        "prompt directory is missing on this Hub",
+      );
+      return undefined;
+    }
     throw new AutomationSyncError(`Hub can't read the prompt directory ${root}.`, { cause: error });
   }
+}
+
+function isMissingDirectory(error: unknown): boolean {
+  if (!(error instanceof Error) || !("code" in error)) return false;
+  return error.code === "ENOENT" || error.code === "ENOTDIR";
 }
 
 /** The named directory that contains every other one, after symlinks are resolved. */
