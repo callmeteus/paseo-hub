@@ -16,7 +16,11 @@ import {
   type SaveAutomationGitSyncRequest,
 } from "./contract.js";
 import { gitTreeClient, publishAutomationTree, type GitTreeClient } from "./publish.js";
-import { collectAutomationSnapshot, repositoryAutomationDirectory } from "./snapshot.js";
+import {
+  collectAutomationSnapshot,
+  repositoryAutomationDirectory,
+  repositoryTriggersDirectory,
+} from "./snapshot.js";
 
 const ERROR_LIMIT = 500;
 const BRANCH_NAME = /^(?!.*\.\.)[A-Za-z0-9._/-]{1,250}$/u;
@@ -158,7 +162,7 @@ export class AutomationGitSync {
         repo: target.repo,
         branch: target.branch,
         files,
-        prefixes: [".paseo/triggers/", `${directory}/`],
+        prefixes: [`${repositoryTriggersDirectory(directory)}/`, `${directory}/`],
         message: commitMessageFor(record),
       });
       await this.options.database.recordAutomationGitSyncResult({

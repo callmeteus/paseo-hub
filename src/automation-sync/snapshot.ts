@@ -30,6 +30,13 @@ export function repositoryAutomationDirectory(value: string | null | undefined):
   return directory;
 }
 
+/** Triggers live in the folder beside the automations directory. */
+export function repositoryTriggersDirectory(repositoryDirectory: string): string {
+  return repositoryDirectory.includes(".paseo/")
+    ? path.posix.join(path.posix.dirname(repositoryDirectory), "triggers")
+    : ".paseo/triggers";
+}
+
 /**
  * One snapshot for the git commit: trigger YAML from Hub plus the prompt files.
  * Prompt files are read from the directory the automations already name, and written
@@ -48,9 +55,7 @@ export async function collectAutomationSnapshot(
   const files = directory.map((file) =>
     blob(`${repositoryDirectory}/${file.path}`, file.bytes, file.path),
   );
-  const triggersDirectory = repositoryDirectory.includes(".paseo/")
-    ? path.posix.join(path.posix.dirname(repositoryDirectory), "triggers")
-    : ".paseo/triggers";
+  const triggersDirectory = repositoryTriggersDirectory(repositoryDirectory);
   for (const revision of revisions) {
     if (!TRIGGER_FILE_NAME.test(revision.name)) {
       throw new Error(`trigger name is not a safe file name: ${revision.name}`);
