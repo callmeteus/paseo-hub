@@ -165,6 +165,19 @@ async function fixture(now = Date.now) {
   return { database, connection, sessions, replies, arrival, execution, call };
 }
 
+test("the Hub MCP is present even without a continuation policy", async () => {
+  const f = await fixture();
+  const arrival = await f.arrival(false);
+  await arrival.dispatch();
+  const execution = await f.execution(arrival.executionId);
+  const session = await f.database.findAgentSession(execution.agentSessionId!);
+  const mcp = session!.creationOptions.mcpServers?.["hub"] as
+    | { type?: string; url?: string }
+    | undefined;
+  expect(mcp?.type ?? "http").toBe("http");
+  expect(mcp?.url).toContain(`/agent-sessions/${session!.id}/mcp`);
+});
+
 test("same-key arrivals share an agent; an earlier completion cannot archive newer work", async () => {
   const f = await fixture();
   const first = await f.arrival();

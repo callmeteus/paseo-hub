@@ -134,17 +134,19 @@ export class AgentSessions {
           capabilityTokenHash: hashAgentExecutionCompletionToken(token),
           creationOptions: {
             ...options,
-            ...(policy === undefined
-              ? {}
-              : {
-                  mcpServers: {
-                    hub: {
-                      type: "http",
-                      url: new URL(`/agent-sessions/${id}/mcp`, this.publicBaseUrl).toString(),
-                      headers: { Authorization: `Bearer ${token}` },
-                    },
-                  },
-                }),
+            // Always expose the Hub MCP to the agent session. The hub_reply /
+            // hub_finish_execution tools are how workflow agents answer; without
+            // them the agent answers in the Paseo chat instead of the channel
+            // that triggered it. A missing continuation policy must not drop
+            // this server.
+            mcpServers: {
+              ...options?.mcpServers,
+              hub: {
+                type: "http",
+                url: new URL(`/agent-sessions/${id}/mcp`, this.publicBaseUrl).toString(),
+                headers: { Authorization: `Bearer ${token}` },
+              },
+            },
           },
         };
         await this.database.saveAgentSession(session);
