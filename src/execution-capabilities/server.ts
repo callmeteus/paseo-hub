@@ -75,6 +75,26 @@ export function createExecutionCapabilityServer(
         !options.completionTokenSecret ||
         !verifyAgentExecutionCompletionToken(token, session.capabilityTokenHash)
       ) {
+        const { createHash } = await import("node:crypto");
+        const expected = deriveAgentExecutionCompletionToken(
+          options.completionTokenSecret ?? "",
+          `session:${sessionId}`,
+        );
+        reportFailure(new Error("hub_mcp_auth_debug"), {
+          operation: "hub_mcp_auth_debug",
+          component: "execution_capabilities",
+          path: JSON.stringify({
+            sessionId,
+            hasToken: !!token,
+            hasSecret: !!options.completionTokenSecret,
+            savedHash: (session?.capabilityTokenHash ?? "").slice(0, 12),
+            expectedHash: createHash("sha256").update(expected).digest("base64url").slice(0, 12),
+            receivedHash: createHash("sha256")
+              .update(token ?? "")
+              .digest("base64url")
+              .slice(0, 12),
+          }),
+        });
         return Response.json({ error: "unauthorized" }, { status: 401 });
       }
       const server = new Server(
