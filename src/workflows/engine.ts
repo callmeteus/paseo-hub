@@ -1128,6 +1128,11 @@ export class DurableWorkflowEngine {
     );
     if (terminalFailure === undefined) return false;
     const status = terminalFailure.status === "timed_out" ? "timed_out" : "failed";
+    this.report(new Error("workflow_terminal_failure"), "workflow.terminal_failure", {
+      triggerRunId,
+      stepId: terminalFailure.stepId,
+      failureReason: terminalFailure.failureReason,
+    });
     const failed = await database.failWorkflowRun(
       triggerRunId,
       status,
