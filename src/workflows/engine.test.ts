@@ -648,6 +648,46 @@ describe("durable multi-step workflow engine", () => {
     }
   });
 
+  it("clears the wakeup when a launch intent is rejected so the worker does not spin", async () => {
+    const fixture = await workflowFixture();
+    const dispatches: string[] = [];
+    const { handler, engine } = createDurableWorkflowHandler({
+      database: fixture.database,
+      entitlements: fixture.entitlements,
+      providers: [providerMatch(fixture.configuration, fixture.revisionId)],
+      validateLaunchMachineIntent: () => {
+        throw new Error("required output capability unavailable");
+      },
+      dispatchLaunchMachineIntent: async (intent) => {
+        dispatches.push(dispatchLabel(intent));
+        const execution = await fixture.database.findAgentExecutionByWorkflowStepRunId(
+          intent.workflowStepRunId!,
+        );
+        if (execution === undefined) throw new Error("workflow execution was not persisted");
+        return { execution };
+      },
+    });
+
+    try {
+      await handler(fixture.trigger("run"));
+      await engine.processAvailable();
+
+      const runs = await fixture.database.findTriggerRunsByProviderEventReceiptId(
+        fixture.providerEventReceiptId,
+      );
+      assert.equal(runs.length, 1);
+      assert.equal(runs[0]!.status, "failed");
+      assert.deepEqual(dispatches, []);
+      assert.equal(
+        await fixture.database.claimWorkflowWakeup(new Date(), 1_000),
+        undefined,
+        "a rejected launch must not leave a claimable wakeup behind",
+      );
+    } finally {
+      await engine.stop();
+    }
+  });
+
   it("keeps a shared accepted receipt replayable when one project route has no workflow match", async () => {
     const fixture = await workflowFixture({ rawConfiguration: deadlineConfiguration() });
     const secondProject = await fixture.database.createProject({

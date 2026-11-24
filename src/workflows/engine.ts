@@ -360,14 +360,23 @@ export class DurableWorkflowEngine {
       next.id,
       deadlineAt,
     );
-    if (preparedIntent === undefined) return;
+    if (preparedIntent === undefined) {
+      // The run was failed while building the intent. Clearing the wakeup here
+      // keeps the worker from claiming the same run forever when no execution
+      // can be created; leaving it in place turns one failure into a hot loop.
+      await database.deleteWorkflowWakeup(run.id);
+      return;
+    }
     if (preparedIntent === "deferred") {
       await this.releaseUnavailableWakeup(wakeup);
       return "deferred";
     }
     const { executionId, intent } = preparedIntent;
     if (await this.deferUnavailableDispatch(intent, wakeup)) return "deferred";
-    if (await this.failInvalidLaunchIntent(database, run, step, intent)) return;
+    if (await this.failInvalidLaunchIntent(database, run, step, intent)) {
+      await database.deleteWorkflowWakeup(run.id);
+      return;
+    }
     const reservation = await this.reserveExecution(run.organizationId);
     const created = await database.createWorkflowStepExecution({
       triggerRunId: run.id,
