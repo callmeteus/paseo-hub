@@ -1275,6 +1275,10 @@ async function buildStepIntent(
             key: continuationKey(step.continuation, run.conversation, (value) =>
               renderExpressionTemplate(value, context),
             ),
+            ...(!("restoreArchived" in step.continuation) ||
+            step.continuation.restoreArchived === undefined
+              ? {}
+              : { restoreArchived: step.continuation.restoreArchived }),
             compatibility: {
               // Model, thinking, and Fast are chosen per run. They stay off the
               // fingerprint so an existing thread is not abandoned when they change.

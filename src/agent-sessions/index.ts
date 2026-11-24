@@ -20,6 +20,14 @@ export type { AgentSessionRecord, AgentSessionAction } from "./types.js";
 
 export class AgentSessionError extends Error {}
 
+interface DispatchInput {
+  executionId: string;
+  intent: LaunchMachineIntent;
+  connection: AgentConnection;
+  createOptions: () => Promise<DaemonCreateAgentOptions>;
+  onEvent: (event: AgentEvent) => void;
+}
+
 function missingAgentSession(error: unknown): boolean {
   const message = error instanceof Error ? error.message : "";
   return /session/i.test(message) && /not found/i.test(message);
@@ -51,13 +59,7 @@ export class AgentSessions {
   ) {}
 
   async dispatch(
-    input: {
-      executionId: string;
-      intent: LaunchMachineIntent;
-      connection: AgentConnection;
-      createOptions: () => Promise<DaemonCreateAgentOptions>;
-      onEvent: (event: AgentEvent) => void;
-    },
+    input: DispatchInput,
     attempt = 0,
   ): Promise<{
     agentId: string;
@@ -177,18 +179,9 @@ export class AgentSessions {
         session.daemonId,
         session.agentId,
       );
-      const agent = await input.connection.get(session.agentId);
-      if (isDeadAgent(agent)) {
-        if (canReleaseDeadSession(session, attempt)) {
-          await this.releaseDeadContinuation(session);
-          return undefined;
-        }
-        throw new AgentSessionError("agent_interrupted");
-      }
-      if (agent.archivedAt) {
-        await input.connection.restore(session.workspaceId, startupTimeoutMs);
-        action = "restored";
-      }
+      const resolved = await this.resolveExistingAgent(session, input, startupTimeoutMs, attempt);
+      if (resolved === "released") return undefined;
+      if (resolved !== "continued") action = resolved;
       await this.database.attachExecutionToSession(input.executionId, id, action);
       try {
         const unsubscribe = await this.deliver(input, session.agentId, startupTimeoutMs);
@@ -269,6 +262,44 @@ export class AgentSessions {
     if (hashAgentExecutionCompletionToken(token) === session.capabilityTokenHash) return session;
     await this.database.saveAgentSession({ ...session, continuationKey: null });
     return undefined;
+  }
+
+  /**
+   * Decides what to do with the agent attached to a reused session.
+   *
+   * An archived agent is restored by default so a thread can continue. A
+   * continuation can opt out: its old timeline overrides a freshly compiled
+   * prompt, leaving the agent stuck answering from habits formed in earlier
+   * runs. In that case the continuation is released so the retry creates a
+   * clean agent.
+   */
+  private async resolveExistingAgent(
+    session: AgentSessionRecord,
+    input: DispatchInput,
+    startupTimeoutMs: number,
+    attempt: number,
+  ): Promise<"released" | "restored" | "continued"> {
+    const agent = await input.connection.get(session.agentId!);
+    if (isDeadAgent(agent)) {
+      if (canReleaseDeadSession(session, attempt)) {
+        await this.releaseDeadContinuation(session);
+        return "released";
+      }
+      throw new AgentSessionError("agent_interrupted");
+    }
+    if (
+      agent.archivedAt &&
+      input.intent.continuation?.restoreArchived === false &&
+      canReleaseDeadSession(session, attempt)
+    ) {
+      await this.releaseDeadContinuation(session);
+      return "released";
+    }
+    if (agent.archivedAt) {
+      await input.connection.restore(session.workspaceId!, startupTimeoutMs);
+      return "restored";
+    }
+    return "continued";
   }
 
   /**

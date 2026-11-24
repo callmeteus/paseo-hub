@@ -25,7 +25,12 @@ export interface LaunchInstruction {
 }
 
 export interface LaunchMachineIntent {
-  continuation?: { key: string | null; compatibility: unknown };
+  continuation?: {
+    key: string | null;
+    compatibility: unknown;
+    /** When false, an archived agent is not restored; a new agent is created. */
+    restoreArchived?: boolean;
+  };
   kind: "launch_machine";
   organizationId: string;
   projectId: string;

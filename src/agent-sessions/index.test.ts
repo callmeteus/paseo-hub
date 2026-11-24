@@ -245,6 +245,32 @@ test("a tool change on the same daemon starts a new agent instead of sticking th
   expect(current?.agentId).toBe(next.agentId);
 });
 
+test("restoreArchived: false replaces an archived agent instead of restoring it", async () => {
+  const f = await fixture();
+  const first = await f.arrival("conversation", "daemon", {}, "first");
+  const original = await first.dispatch();
+  await f.database.transitionAgentExecution(first.executionId, "succeeded");
+  await f.sessions.control(await f.execution(first.executionId), f.connection, "archive");
+  expect(f.connection.archives).toBe(1);
+
+  const second = await f.arrival("conversation", "daemon", {}, "second", {
+    continuation: {
+      key: "conversation",
+      compatibility: { target: "daemon" },
+      restoreArchived: false,
+    },
+  });
+  const next = await second.dispatch();
+  expect(next.action).toBe("created");
+  expect(next.agentId).not.toBe(original.agentId);
+  expect(f.connection.restorations).toBe(0);
+  expect(f.connection.creates).toHaveLength(2);
+  const retired = await f.database.findAgentSession(
+    (await f.execution(first.executionId)).agentSessionId ?? "",
+  );
+  expect(retired?.continuationKey).toBeNull();
+});
+
 test("a tool change without continuation replaces that execution's agent once", async () => {
   const f = await fixture();
   const first = await f.arrival(false);
@@ -416,7 +442,13 @@ test("a rotated Hub secret starts a fresh agent instead of reusing a stale MCP b
 
   // The Hub restarted with a new auth secret; the continuation survived in the
   // database, but its MCP token can no longer be verified against that secret.
-  const rotated = new AgentSessions(f.database, "rotated-secret", "https://hub.test", new OutputExecutorRegistry(), Date.now);
+  const rotated = new AgentSessions(
+    f.database,
+    "rotated-secret",
+    "https://hub.test",
+    new OutputExecutorRegistry(),
+    Date.now,
+  );
   const second = await f.arrival("conversation", "daemon", {}, "after rotation");
   const next = await rotated.dispatch({
     executionId: second.executionId,

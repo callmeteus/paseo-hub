@@ -1,7 +1,14 @@
 import { z } from "zod";
 
 export const ContinuationSchema = z.discriminatedUnion("mode", [
-  z.object({ mode: z.literal("conversation") }).strict(),
+  z
+    .object({
+      mode: z.literal("conversation"),
+      // Default keeps today's behaviour: restoring an archived agent carries
+      // its conversation forward. false starts a new agent instead.
+      restoreArchived: z.boolean().optional(),
+    })
+    .strict(),
   z
     .object({
       mode: z.literal("key"),
@@ -10,6 +17,7 @@ export const ContinuationSchema = z.discriminatedUnion("mode", [
         .min(1)
         .max(512)
         .refine((key) => key.trim().length > 0, "Continuation key must not be blank"),
+      restoreArchived: z.boolean().optional(),
     })
     .strict(),
   z.object({ mode: z.literal("new") }).strict(),
