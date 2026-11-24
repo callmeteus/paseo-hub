@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { OutputExecutionInput } from "../../execution-capabilities/outputs.js";
 import type { TelegramBotApi } from "../../providers/telegram/client.js";
-import { createTelegramOutputExecutor } from "./reply.js";
+import { createTelegramOutputExecutor, telegramAgentTool } from "./reply.js";
 
 function fakeApi(): { api: TelegramBotApi; sent: Array<Record<string, unknown>> } {
   const sent: Array<Record<string, unknown>> = [];
@@ -34,6 +34,10 @@ function input(args: Record<string, unknown>): OutputExecutionInput {
 }
 
 describe("telegram outputs", () => {
+  it("exposes the reply tool under the name the automation prompts use", () => {
+    expect(telegramAgentTool("telegram.reply").name).toBe("telegram_reply");
+  });
+
   it("sends telegram.reply to the chat", async () => {
     const { api, sent } = fakeApi();
     await createTelegramOutputExecutor(api, "telegram.reply")(input({ content: "oi" }));

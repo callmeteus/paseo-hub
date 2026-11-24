@@ -155,7 +155,10 @@ export function telegramAgentTool(type: TelegramOutputType): OutputToolDefinitio
 }
 
 const REPLY_TOOL: OutputToolDefinition = {
-  name: "reply",
+  // Telegram automation prompts refer to this as `hub_telegram_reply`. The
+  // Slack reply tool keeps the plain `reply` name; sharing it would leave a
+  // Telegram agent with no tool matching the name its instructions use.
+  name: "telegram_reply",
   description: "Sends a reply to the conversation that triggered this execution.",
   inputSchema: {
     type: "object",
