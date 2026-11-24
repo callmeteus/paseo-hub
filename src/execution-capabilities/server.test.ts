@@ -21,7 +21,12 @@ import { createMemoryDatabase } from "../db/memory.js";
 import type { LaunchMachineIntent } from "../dispatcher/launch-machine-intent.js";
 import { createFetchServer } from "../http/node-server.js";
 import { registerResponseLifecycle, takeResponseLifecycle } from "../http/response-lifecycle.js";
-import { OutputExecutorRegistry, replyOutputTool, type OutputCapability } from "./outputs.js";
+import {
+  executionToolDefinitions,
+  OutputExecutorRegistry,
+  replyOutputTool,
+  type OutputCapability,
+} from "./outputs.js";
 import { createExecutionCapabilityServer } from "./server.js";
 
 const RpcResponseSchema = z
@@ -38,6 +43,16 @@ const ToolsListSchema = z
   .passthrough();
 
 describe("execution capability MCP boundary", () => {
+  it("exposes reply as an alias when the Telegram reply tool is materialized", () => {
+    const telegramReply = { ...replyOutputTool, name: "telegram_reply" };
+    const tools = executionToolDefinitions(undefined, [
+      { declaration: { type: "telegram.reply", max: 1 }, capability: { tool: telegramReply } },
+    ] as never);
+    const names = tools.map((tool) => tool.name);
+    assert.ok(names.includes("telegram_reply"));
+    assert.ok(names.includes("reply"));
+  });
+
   it.each([
     {
       name: "missing bearer",

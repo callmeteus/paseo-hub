@@ -272,6 +272,9 @@ export function executionToolDefinitions(
   materializedOutputs: readonly MaterializedOutputCapability[],
   loadInstructions = false,
 ): readonly OutputToolDefinition[] {
+  const telegramReply = materializedOutputs.find(
+    (output) => output.capability.tool.name === "telegram_reply",
+  );
   return [
     {
       name: finishExecutionToolName,
@@ -291,6 +294,17 @@ export function executionToolDefinitions(
           : `${capability.tool.description} (up to ${String(declaration.max)} times).`,
       inputSchema: capability.tool.inputSchema,
     })),
+    // Continuations that started before Telegram got its own tool name still
+    // call `reply`. Keep that name working for them alongside `telegram_reply`.
+    ...(telegramReply === undefined
+      ? []
+      : [
+          {
+            name: "reply",
+            description: "Alias of telegram_reply for older continuations.",
+            inputSchema: telegramReply.capability.tool.inputSchema,
+          },
+        ]),
   ];
 }
 

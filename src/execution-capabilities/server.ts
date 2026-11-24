@@ -278,11 +278,16 @@ async function callExecutionTool(
   toolName: string,
   args: Record<string, unknown>,
 ) {
+  const resolvedToolName =
+    toolName === "reply" &&
+    materializedOutputs.some((output) => output.capability.tool.name === "telegram_reply")
+      ? "telegram_reply"
+      : toolName;
   const tool = executionToolDefinitions(
     execution.launchIntent?.outputSchema,
     materializedOutputs,
     hasInstructionCatalog(execution),
-  ).find((candidate) => candidate.name === toolName);
+  ).find((candidate) => candidate.name === resolvedToolName);
   if (!tool) return toolFailure(`Tool ${toolName} not found`);
   const contract =
     toolName === finishExecutionToolName
@@ -297,7 +302,9 @@ async function callExecutionTool(
   if (toolName === loadInstructionToolName) return loadInstructionCall(execution, args);
   if (toolName === finishExecutionToolName)
     return finishExecutionCall(options, execution, token, args, materializedOutputs);
-  const output = materializedOutputs.find((item) => item.capability.tool.name === toolName);
+  const output = materializedOutputs.find(
+    (item) => item.capability.tool.name === resolvedToolName,
+  );
   return output === undefined
     ? toolFailure(`Tool ${toolName} not found`)
     : executeOutputCall(options, execution, toolName, output, args);
