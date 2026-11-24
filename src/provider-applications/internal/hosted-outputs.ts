@@ -4,6 +4,7 @@ import {
 } from "../../execution-capabilities/outputs.js";
 import type { ProviderOutputRegistration } from "../../providers/registration.js";
 import { reactOutputTool } from "../../triggers/slack/react.js";
+import { telegramAgentTool } from "../../triggers/telegram/reply.js";
 import type { Provider } from "../index.js";
 
 interface HostedActive {
@@ -33,8 +34,12 @@ export function hostedOutputs<Active extends HostedActive>(
 ): ProviderOutputRegistration[] {
   // The agent only receives outputs declared here. The inner registration can
   // have more tools; a missing wrapper drops them before the model starts.
+  // Telegram automations call `hub_telegram_reply`; the generic Slack reply
+  // tool name would leave those agents without a working reply path.
+  const replyTool =
+    provider === "telegram" ? telegramAgentTool("telegram.reply") : replyOutputTool;
   const outputs = [
-    hostedOutput(provider, slot, `${provider}.reply`, replyOutputTool, withLease, unavailable),
+    hostedOutput(provider, slot, `${provider}.reply`, replyTool, withLease, unavailable),
   ];
 
   // Slack is the only provider whose agent picks the emoji itself

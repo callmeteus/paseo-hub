@@ -47,6 +47,18 @@ describe("hosted outputs", () => {
     assert.deepEqual(calls, [{ name: "eyes" }]);
   });
 
+  it("exposes Telegram reply under the name the Telegram prompts use", () => {
+    const outputs = hostedOutputs(
+      "telegram",
+      { active: undefined },
+      async (_active, operation) => {
+        await operation();
+      },
+      (code) => new Error(code),
+    );
+    assert.equal(outputs[0]?.tool.name, "telegram_reply");
+  });
+
   it("does not expose Slack react on another provider and rejects a retired registration", async () => {
     const outputs = hostedOutputs(
       "github",
