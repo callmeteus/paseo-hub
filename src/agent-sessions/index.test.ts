@@ -405,3 +405,36 @@ test("a ping cannot send more work after the inherited deadline while timeout cl
   await expect(next.dispatch()).rejects.toThrow("execution_deadline_exceeded");
   expect(f.connection.deliveries).toHaveLength(1);
 });
+
+test("a rotated Hub secret starts a fresh agent instead of reusing a stale MCP bearer", async () => {
+  const f = await fixture();
+  const first = await f.arrival("conversation", "daemon", {}, "before rotation");
+  const original = await first.dispatch();
+  const stored = await f.execution(first.executionId);
+  const oldSessionId = stored.agentSessionId!;
+  const oldHash = (await f.database.findAgentSession(oldSessionId))!.capabilityTokenHash;
+
+  // The Hub restarted with a new auth secret; the continuation survived in the
+  // database, but its MCP token can no longer be verified against that secret.
+  const rotated = new AgentSessions(f.database, "rotated-secret", "https://hub.test", new OutputExecutorRegistry(), Date.now);
+  const second = await f.arrival("conversation", "daemon", {}, "after rotation");
+  const next = await rotated.dispatch({
+    executionId: second.executionId,
+    intent: (await f.execution(second.executionId)).launchIntent!,
+    connection: f.connection,
+    onEvent: () => {},
+    createOptions: async () => ({
+      provider: "codex",
+      cwd: "/repo",
+      env: {},
+      toolPolicy: { preapproved: [] },
+    }),
+  });
+
+  expect(next.action).toBe("created");
+  expect(next.agentId).not.toBe(original.agentId);
+  expect((await f.database.findAgentSession(oldSessionId))!.continuationKey).toBeNull();
+  expect((await f.database.findAgentSession(oldSessionId))!.capabilityTokenHash).toBe(oldHash);
+  const current = await f.database.findAgentSessionByKey("project", "conversation");
+  expect(current?.id).not.toBe(oldSessionId);
+});

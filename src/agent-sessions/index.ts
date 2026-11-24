@@ -114,6 +114,7 @@ export class AgentSessions {
         session = undefined;
       }
       session = await this.releaseIncompatibleSession(session, compatibility);
+      session = await this.releaseStaleCredentialSession(session);
       const id = session?.id ?? deriveSessionId(projectId, `execution:${input.executionId}`);
       if (!session) {
         if (!options) {
@@ -249,6 +250,23 @@ export class AgentSessions {
     compatibility: string,
   ): Promise<AgentSessionRecord | undefined> {
     if (!session || session.compatibility === compatibility) return session;
+    await this.database.saveAgentSession({ ...session, continuationKey: null });
+    return undefined;
+  }
+
+  /**
+   * A continuation survives restarts and credential rotations. Its MCP bearer
+   * is derived from the Hub auth secret, so a session created under an older
+   * secret keeps a hash the current Hub cannot verify: every tool call then
+   * gets a 401 and the agent answers in chat without any Hub tool. Drop that
+   * continuation so the next arrival builds a fresh session and token.
+   */
+  private async releaseStaleCredentialSession(
+    session: AgentSessionRecord | undefined,
+  ): Promise<AgentSessionRecord | undefined> {
+    if (!session) return session;
+    const token = deriveAgentExecutionCompletionToken(this.secret, `session:${session.id}`);
+    if (hashAgentExecutionCompletionToken(token) === session.capabilityTokenHash) return session;
     await this.database.saveAgentSession({ ...session, continuationKey: null });
     return undefined;
   }
