@@ -302,9 +302,7 @@ async function callExecutionTool(
   if (toolName === loadInstructionToolName) return loadInstructionCall(execution, args);
   if (toolName === finishExecutionToolName)
     return finishExecutionCall(options, execution, token, args, materializedOutputs);
-  const output = materializedOutputs.find(
-    (item) => item.capability.tool.name === resolvedToolName,
-  );
+  const output = materializedOutputs.find((item) => item.capability.tool.name === resolvedToolName);
   return output === undefined
     ? toolFailure(`Tool ${toolName} not found`)
     : executeOutputCall(options, execution, toolName, output, args);
