@@ -205,6 +205,21 @@ export function createHubApplication(options: HubRuntimeOptions): HubApplication
       ? undefined
       : (intent: Parameters<DaemonModule["lifecycle"]["handoffLaunchMachineIntent"]>[0]) =>
           daemonModule.lifecycle.handoffLaunchMachineIntent(intent);
+  // Telegram only: start the typing indicator as soon as a trigger matches,
+  // before the agent has produced any output. The output executor refreshes it
+  // on every subsequent Telegram output while the agent works.
+  const showTyping = async (run: AcceptedTriggerRunRecord) => {
+    try {
+      await outputRegistry.execute({
+        agentExecutionId: "workflow-typing",
+        toolType: "telegram.typing",
+        args: {},
+        outputContext: run.outputContext,
+      });
+    } catch {
+      // Telegram may be unconfigured, or this run may be on another provider.
+    }
+  };
   const dispatcherOptions = {
     canDispatchToDaemon: (daemonId: string) =>
       (options.daemonConnectionForId?.(daemonId) ?? daemons?.connection(daemonId)) !== undefined,
@@ -242,10 +257,16 @@ export function createHubApplication(options: HubRuntimeOptions): HubApplication
           onWorkflowDeadlineExceeded: async (recovery: WorkflowDeadlineRecovery) => {
             await daemonModule.lifecycle.recoverWorkflowDeadlineExecutions(recovery.executionIds);
           },
-          onWorkflowRunAccepted: (run: AcceptedTriggerRunRecord) =>
-            daemonModule.lifecycle.notifyWorkflowRunAccepted(run),
-          onWorkflowRunStarted: (run: AcceptedTriggerRunRecord) =>
-            daemonModule.lifecycle.notifyWorkflowRunStarted(run),
+          onWorkflowRunAccepted: async (run: AcceptedTriggerRunRecord) => {
+            const notified = await daemonModule.lifecycle.notifyWorkflowRunAccepted(run);
+            await showTyping(run);
+            return notified;
+          },
+          onWorkflowRunStarted: async (run: AcceptedTriggerRunRecord) => {
+            const notified = await daemonModule.lifecycle.notifyWorkflowRunStarted(run);
+            await showTyping(run);
+            return notified;
+          },
           onWorkflowRunTerminal: (run: TriggerRunRecord) =>
             daemonModule.lifecycle.notifyWorkflowRunTerminal(run),
         }),

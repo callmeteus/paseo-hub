@@ -52,6 +52,7 @@ const OUTPUT_TYPES: readonly TelegramOutputType[] = [
   "telegram.agent.say",
   "telegram.agent.finish",
   "telegram.agent.prompts",
+  "telegram.typing",
 ];
 
 /**

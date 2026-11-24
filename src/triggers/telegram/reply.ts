@@ -17,6 +17,14 @@ const TelegramOutputContextSchema = z.object({
 
 const objectSchema = { type: "object" as const, additionalProperties: false };
 
+// Not exposed in any trigger's allow-outputs. It exists only so the Hub can
+// send a typing indicator at run acceptance, before the agent emits anything.
+export const telegramTypingTool: OutputToolDefinition = {
+  name: "telegram_typing",
+  description: "Shows the typing indicator in the Telegram chat.",
+  inputSchema: { ...objectSchema, properties: {} },
+};
+
 export const telegramStageTool: OutputToolDefinition = {
   name: "telegram_stage",
   description:
@@ -133,10 +141,14 @@ export type TelegramOutputType =
   | "telegram.agent.tool"
   | "telegram.agent.say"
   | "telegram.agent.finish"
-  | "telegram.agent.prompts";
+  | "telegram.agent.prompts"
+  /** Internal: shows the typing indicator while the agent works. Not offered to the model. */
+  | "telegram.typing";
 
 export function telegramAgentTool(type: TelegramOutputType): OutputToolDefinition {
   switch (type) {
+    case "telegram.typing":
+      return telegramTypingTool;
     case "telegram.reply":
       return REPLY_TOOL;
     case "telegram.agent.stage":

@@ -3,13 +3,20 @@ import type { OutputExecutionInput } from "../../execution-capabilities/outputs.
 import type { TelegramBotApi } from "../../providers/telegram/client.js";
 import { createTelegramOutputExecutor, telegramAgentTool } from "./reply.js";
 
-function fakeApi(): { api: TelegramBotApi; sent: Array<Record<string, unknown>> } {
+function fakeApi(): {
+  api: TelegramBotApi;
+  sent: Array<Record<string, unknown>>;
+  actions: Array<{ chatId: string | number; action: string }>;
+} {
   const sent: Array<Record<string, unknown>> = [];
+  const actions: Array<{ chatId: string | number; action: string }> = [];
   const api: TelegramBotApi = {
     getMe: async () => ({ id: 1, username: "bot", firstName: "Bot" }),
     setWebhook: async () => undefined,
     deleteWebhook: async () => undefined,
-    sendChatAction: async () => {},
+    sendChatAction: async (chatId, action) => {
+      actions.push({ chatId, action });
+    },
     sendMessage: async (message) => {
       sent.push({
         chatId: message.chatId,
@@ -21,7 +28,7 @@ function fakeApi(): { api: TelegramBotApi; sent: Array<Record<string, unknown>> 
     answerCallbackQuery: async () => undefined,
     getFile: async () => undefined,
   };
-  return { api, sent };
+  return { api, sent, actions };
 }
 
 function input(args: Record<string, unknown>): OutputExecutionInput {
@@ -36,6 +43,13 @@ function input(args: Record<string, unknown>): OutputExecutionInput {
 describe("telegram outputs", () => {
   it("exposes the reply tool under the name the automation prompts use", () => {
     expect(telegramAgentTool("telegram.reply").name).toBe("telegram_reply");
+  });
+
+  it("shows typing without posting a message for the internal typing output", async () => {
+    const { api, sent, actions } = fakeApi();
+    await createTelegramOutputExecutor(api, "telegram.typing")(input({}));
+    expect(actions).toEqual([{ chatId: -100, action: "typing" }]);
+    expect(sent).toEqual([]);
   });
 
   it("sends telegram.reply to the chat", async () => {
