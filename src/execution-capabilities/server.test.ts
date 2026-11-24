@@ -25,6 +25,7 @@ import {
   executionToolDefinitions,
   OutputExecutorRegistry,
   replyOutputTool,
+  type MaterializedOutputCapability,
   type OutputCapability,
 } from "./outputs.js";
 import { createExecutionCapabilityServer } from "./server.js";
@@ -45,12 +46,20 @@ const ToolsListSchema = z
 describe("execution capability MCP boundary", () => {
   it("exposes reply as an alias when the Telegram reply tool is materialized", () => {
     const telegramReply = { ...replyOutputTool, name: "telegram_reply" };
-    const tools = executionToolDefinitions(undefined, [
-      { declaration: { type: "telegram.reply", max: 1 }, capability: { tool: telegramReply } },
-    ] as never);
-    const names = tools.map((tool) => tool.name);
-    assert.ok(names.includes("telegram_reply"));
-    assert.ok(names.includes("reply"));
+    const materialized: MaterializedOutputCapability[] = [
+      {
+        declaration: { type: "telegram.reply", max: 1 },
+        capability: {
+          type: "telegram.reply",
+          tool: telegramReply,
+          execute: async () => {},
+        },
+      },
+    ];
+    const tools = executionToolDefinitions(undefined, materialized);
+    const names = new Set(tools.map((tool) => tool.name));
+    assert.ok(names.has("telegram_reply"));
+    assert.ok(names.has("reply"));
   });
 
   it.each([

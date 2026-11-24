@@ -344,16 +344,51 @@ async function main(): Promise<void> {
     await build.stopProductionRuntime();
   };
   const stopAfterSignal = () => {
-    void shutdownProductionServer(stop)
-      .then((clean) => {
-        if (!clean) process.exitCode = 1;
-        return undefined;
-      })
-      .finally(removeProcessFailureHandlers);
+    void finalizeSignalShutdown(shutdownProductionServer(stop), {
+      exit: (code) => process.exit(code),
+      after: (ms, fn) => {
+        const timer = setTimeout(fn, ms);
+        return () => clearTimeout(timer);
+      },
+    }).finally(removeProcessFailureHandlers);
   };
   process.once("SIGTERM", stopAfterSignal);
   process.once("SIGINT", stopAfterSignal);
 }
+
+/**
+ * Guarantee that a signal-triggered shutdown actually ends the process.
+ *
+ * `server.close()` only stops the HTTP listener; it does not tear down the
+ * Slack Socket Mode / Telegram connections. A process that has lost its HTTP
+ * port but still holds those sockets is a zombie: it answers no RPC and no
+ * health check while `pgrep` still reports it alive, so a process-based
+ * supervisor never restarts it. Always exit explicitly once graceful
+ * shutdown settles, and force an exit if graceful shutdown hangs.
+ */
+export function finalizeSignalShutdown(
+  result: Promise<boolean>,
+  actions: {
+    exit(code: number): void;
+    after(ms: number, fn: () => void): () => void;
+  },
+): Promise<void> {
+  const cancelWatchdog = actions.after(FORCED_EXIT_MS, () => actions.exit(1));
+  return result.then(
+    (clean) => {
+      cancelWatchdog();
+      actions.exit(clean ? 0 : 1);
+      return undefined;
+    },
+    () => {
+      cancelWatchdog();
+      actions.exit(1);
+      return undefined;
+    },
+  );
+}
+
+const FORCED_EXIT_MS = 10_000;
 
 export async function shutdownProductionServer(
   stop: () => Promise<void>,

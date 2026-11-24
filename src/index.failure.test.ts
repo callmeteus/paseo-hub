@@ -3,7 +3,11 @@ import { Duplex } from "node:stream";
 import { describe, it } from "vitest";
 import { createLogger } from "./logger.js";
 import { assertOneFailure, FailureLogStream } from "./test-utils/failure-logs.js";
-import { handleDaemonUpgradeRequest, shutdownProductionServer } from "./index.js";
+import {
+  finalizeSignalShutdown,
+  handleDaemonUpgradeRequest,
+  shutdownProductionServer,
+} from "./index.js";
 
 class UpgradeSocket extends Duplex {
   destroyedByOwner = false;
@@ -60,5 +64,70 @@ describe("production server failure ownership", () => {
       component: "server",
       canary,
     });
+  });
+});
+
+describe("signal shutdown finalization", () => {
+  it("exits cleanly after a clean graceful shutdown and cancels the watchdog", async () => {
+    const exits: number[] = [];
+    let cancels = 0;
+
+    await finalizeSignalShutdown(Promise.resolve(true), {
+      exit: (code) => {
+        exits.push(code);
+      },
+      after: () => () => {
+        cancels += 1;
+      },
+    });
+
+    assert.deepEqual(exits, [0]);
+    assert.equal(cancels, 1);
+  });
+
+  it("exits fatally when graceful shutdown reports an unclean outcome", async () => {
+    const exits: number[] = [];
+
+    await finalizeSignalShutdown(Promise.resolve(false), {
+      exit: (code) => {
+        exits.push(code);
+      },
+      after: () => () => {},
+    });
+
+    assert.deepEqual(exits, [1]);
+  });
+
+  it("exits fatally when graceful shutdown rejects", async () => {
+    const exits: number[] = [];
+
+    await finalizeSignalShutdown(Promise.reject(new Error("shutdown hung")), {
+      exit: (code) => {
+        exits.push(code);
+      },
+      after: () => () => {},
+    });
+
+    assert.deepEqual(exits, [1]);
+  });
+
+  it("force-exits if graceful shutdown never settles", async () => {
+    const exits: number[] = [];
+    let fireWatchdog: (() => void) | undefined;
+
+    // A promise that never settles models a shutdown stuck on an open socket.
+    void finalizeSignalShutdown(new Promise<boolean>(() => {}), {
+      exit: (code) => {
+        exits.push(code);
+      },
+      after: (_ms, fn) => {
+        fireWatchdog = fn;
+        return () => {};
+      },
+    });
+
+    assert.ok(fireWatchdog);
+    fireWatchdog?.();
+    assert.deepEqual(exits, [1]);
   });
 });
