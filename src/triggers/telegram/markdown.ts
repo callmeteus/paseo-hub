@@ -21,18 +21,33 @@ export function toTelegramHtml(text: string): string {
   out = out.replace(/`([^`\n]+)`/gu, (_match, code: string) =>
     keep(`<code>${escapeHtml(code)}</code>`),
   );
-  // Links before emphasis: the label may itself use markdown.
+  // Only explicit markdown links become anchors. A bare URL, including one in
+  // parentheses, is text the model wrote and must stay exactly as written.
   out = out.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/gu, (_match, label: string, url: string) =>
     keep(`<a href="${escapeAttribute(url)}">${toTelegramHtml(label)}</a>`),
   );
-  out = out.replace(/([\p{L}\p{N}./-]+)\s+\((https?:\/\/[^\s)]+)\)/gu, (_match, label: string, url: string) =>
-    keep(`<a href="${escapeAttribute(url)}">${escapeHtml(label)}</a>`),
-  );
+  // Protect URLs before emphasis: usernames and path segments use underscores.
+  out = out.replace(/https?:\/\/[^\s<>`]+/gu, (url: string) => keep(escapeHtml(url)));
+
+  // Lists and headings are line-prefix constructs; turn them into tokens so a
+  // bullet's `*` can never open emphasis with a `*` on another line.
+  out = out
+    .split("\n")
+    .map((line) => {
+      const bullet = /^(\s*)[*+-]\s+(.*)$/u.exec(line);
+      if (bullet !== null) return keep(`${bullet[1]}• ${bullet[2]}`);
+      const heading = /^(\s*)#{1,3}\s+(.*)$/u.exec(line);
+      if (heading !== null) return keep(`${heading[1]}<b>${escapeHtml(heading[2] ?? "")}</b>`);
+      return line;
+    })
+    .join("\n");
 
   out = escapeHtml(out);
   out = out.replace(/\*\*([^*\n]+)\*\*/gu, "<b>$1</b>");
-  out = out.replace(/\*([^*\n]+)\*/gu, "<b>$1</b>");
-  out = out.replace(/_([^_\n]+)_/gu, "<i>$1</i>");
+  // Emphasis only at a word boundary, CommonMark style: snake_case, @user_name
+  // and protected URLs must never become italics.
+  out = out.replace(/(?<![\p{L}\p{N}_])\*([^*\n]+)\*(?![\p{L}\p{N}_])/gu, "<i>$1</i>");
+  out = out.replace(/(?<![\p{L}\p{N}_])_([^_\n]+)_(?![\p{L}\p{N}_])/gu, "<i>$1</i>");
 
   return out.replace(/\uE000(\d+)\uE000/gu, (_match, index: string) => tokens[Number(index)] ?? "");
 }
