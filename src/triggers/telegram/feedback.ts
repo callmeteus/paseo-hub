@@ -7,6 +7,7 @@
  */
 
 import { message } from "../../i18n/messages.js";
+import { editTelegramText } from "./markdown.js";
 import type { TelegramBotApi } from "../../providers/telegram/client.js";
 
 export const TELEGRAM_CHOICE_LIMIT = 5;
@@ -46,7 +47,7 @@ export async function settleTelegramChoice(
     user: input.user,
     choice: input.label,
   });
-  await api.editMessageText({
+  await editTelegramText(api, {
     chatId: input.chatId,
     messageId: input.messageId,
     text: `${input.text}\n\n${line}`,

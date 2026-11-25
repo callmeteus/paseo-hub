@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { sendTelegramText } from "./markdown.js";
 import type { OutputExecutor, OutputToolDefinition } from "../../execution-capabilities/outputs.js";
 import type { TelegramBotApi } from "../../providers/telegram/client.js";
 import {
@@ -197,7 +198,7 @@ export function createTelegramOutputExecutor(
     await api.sendChatAction(context.chatId, "typing").catch(() => undefined);
     if (type === "telegram.reply") {
       const args = ReplyArgsSchema.parse(input.args);
-      await api.sendMessage({ chatId: context.chatId, text: args.content });
+      await sendTelegramText(api, { chatId: context.chatId, text: args.content });
       return;
     }
     if (type === "telegram.agent.finish") {
@@ -207,7 +208,7 @@ export function createTelegramOutputExecutor(
         value: (choice.value ?? choice.label).trim(),
       }));
       const text = args.text ?? (choices === undefined ? "Concluído." : "Escolha uma opção.");
-      await api.sendMessage({
+      await sendTelegramText(api, {
         chatId: context.chatId,
         text,
         ...(choices === undefined ? {} : { replyMarkup: telegramChoiceKeyboard(choices) }),
@@ -216,12 +217,12 @@ export function createTelegramOutputExecutor(
     }
     if (type === "telegram.agent.say") {
       const args = z.object({ text: z.string().min(1) }).parse(input.args);
-      await api.sendMessage({ chatId: context.chatId, text: args.text });
+      await sendTelegramText(api, { chatId: context.chatId, text: args.text });
       return;
     }
     // stage / tool / prompts are rendered as a plain line for this lean surface.
     const line = readStatusLine(type, input.args);
-    if (line !== undefined) await api.sendMessage({ chatId: context.chatId, text: line });
+    if (line !== undefined) await sendTelegramText(api, { chatId: context.chatId, text: line });
   };
 }
 

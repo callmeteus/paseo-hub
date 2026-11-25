@@ -50,6 +50,7 @@ export interface TelegramBotApi {
     chatId: string | number;
     messageId: number;
     text: string;
+    parseMode?: "HTML" | "MarkdownV2" | "Markdown";
     replyMarkup?: ReplyMarkup;
   }): Promise<void>;
   sendChatAction(chatId: string | number, action: "typing"): Promise<void>;
@@ -151,6 +152,7 @@ export function createTelegramBotApi(options: CreateTelegramBotApiOptions): Tele
           chat_id: input.chatId,
           message_id: input.messageId,
           text: input.text,
+          ...(input.parseMode === undefined ? {} : { parse_mode: input.parseMode }),
           ...(input.replyMarkup === undefined ? {} : { reply_markup: input.replyMarkup }),
         },
         z.unknown(),
