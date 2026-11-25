@@ -99,7 +99,9 @@ async function handleUpdate(
     if (callback.data !== undefined) {
       const label = options.choiceLabel?.(callback.data) ?? callback.data;
       const arrival = telegramChoiceArrival({ label, value: callback.data });
-      await options.api.answerCallbackQuery(callback.id);
+      // Acknowledging the tap is cosmetic. A stale or replayed callback id
+      // must not stop the choice from reaching the agent.
+      await options.api.answerCallbackQuery(callback.id).catch(() => undefined);
       await dispatch(
         {
           type: "message",
