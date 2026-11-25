@@ -106,7 +106,7 @@ export function createTelegramRegistration(
 
   const webhookUrl = telegramWebhookUrl(options.publicBaseUrl);
   const source = createTelegramSource({
-    botUsername: "",
+    getBotUsername: () => botUsername,
     ...(configuration.secretToken === undefined ? {} : { secretToken: configuration.secretToken }),
     webhookUrl,
     api,

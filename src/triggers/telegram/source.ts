@@ -26,7 +26,8 @@ export interface TelegramAcceptInput {
 }
 
 export interface CreateTelegramSourceOptions {
-  botUsername: string;
+  /** Read at message time: getMe resolves asynchronously after the source starts. */
+  getBotUsername(): string;
   secretToken?: string;
   webhookUrl?: string;
   api: TelegramBotApi;
@@ -126,7 +127,7 @@ async function handleUpdate(
 
   const message = update.message ?? update.edited_message;
   if (message !== undefined) {
-    const normalized = normalizeMessage(message, options.botUsername);
+    const normalized = normalizeMessage(message, options.getBotUsername());
     if (normalized !== undefined) await dispatch(normalized, handlers, options);
   }
   return new Response("OK", { status: 200 });
