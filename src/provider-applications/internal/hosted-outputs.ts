@@ -4,8 +4,13 @@ import {
 } from "../../execution-capabilities/outputs.js";
 import type { ProviderOutputRegistration } from "../../providers/registration.js";
 import { reactOutputTool } from "../../triggers/slack/react.js";
+import { readSlackMessagesTool } from "../../triggers/slack/read-messages.js";
+import { slackAgentTool } from "../../triggers/slack/agent-surface.js";
+import { SLACK_AGENT_OUTPUT_TYPES } from "../../triggers/slack/agent-block.js";
 import { telegramAgentTool } from "../../triggers/telegram/reply.js";
 import type { Provider } from "../index.js";
+import { OUTPUT_TYPES as TELEGRAM_OUTPUT_TYPES } from "../../providers/telegram/index.js";
+import { SLACK_OUTPUT_TYPES } from "../../providers/slack/index.js";
 
 interface HostedActive {
   registration: {
@@ -32,40 +37,35 @@ export function hostedOutputs<Active extends HostedActive>(
   withLease: (active: Active, operation: () => Promise<void>) => Promise<void>,
   unavailable: (code: string) => Error,
 ): ProviderOutputRegistration[] {
-  // The agent only receives outputs declared here. The inner registration can
-  // have more tools; a missing wrapper drops them before the model starts.
-  // Telegram automations call `hub_telegram_reply`; the generic Slack reply
-  // tool name would leave those agents without a working reply path.
-  const replyTool =
-    provider === "telegram" ? telegramAgentTool("telegram.reply") : replyOutputTool;
-  const outputs = [
-    hostedOutput(provider, slot, `${provider}.reply`, replyTool, withLease, unavailable),
-  ];
+  // The agent only receives outputs declared here. Derive the list from each
+  // provider's own declarations so a new output cannot be silently dropped
+  // (that is how telegram.typing, telegram.agent.finish and slack.read_messages
+  // were all lost before).
+  return declaredOutputs(provider).map(({ type, tool }) =>
+    hostedOutput(provider, slot, type, tool, withLease, unavailable),
+  );
+}
 
-  // Slack is the only provider whose agent picks the emoji itself
-  if (provider === "slack") {
-    outputs.push(
-      hostedOutput(provider, slot, "slack.react", reactOutputTool, withLease, unavailable),
-    );
-  }
-
-  // The Hub fires this internal output at run acceptance to show the typing
-  // indicator while the agent works. It must be exposed by the hosted wrapper
-  // too, otherwise the runtime has no executor for it.
+/** The outputs a provider declares, paired with the tool the model calls. */
+function declaredOutputs(
+  provider: Provider,
+): readonly { type: string; tool: OutputToolDefinition }[] {
   if (provider === "telegram") {
-    outputs.push(
-      hostedOutput(
-        provider,
-        slot,
-        "telegram.typing",
-        telegramAgentTool("telegram.typing"),
-        withLease,
-        unavailable,
-      ),
-    );
+    return TELEGRAM_OUTPUT_TYPES.map((type) => ({ type, tool: telegramAgentTool(type) }));
   }
+  if (provider === "slack") {
+    return SLACK_OUTPUT_TYPES.map((type) => ({ type, tool: slackOutputTool(type) }));
+  }
+  return [{ type: `${provider}.reply`, tool: replyOutputTool }];
+}
 
-  return outputs;
+function slackOutputTool(type: string): OutputToolDefinition {
+  if (type === "slack.reply") return replyOutputTool;
+  if (type === "slack.react") return reactOutputTool;
+  if (type === "slack.read_messages") return readSlackMessagesTool;
+  const agentType = SLACK_AGENT_OUTPUT_TYPES.find((candidate) => candidate === type);
+  if (agentType !== undefined) return slackAgentTool(agentType);
+  return replyOutputTool;
 }
 
 /**

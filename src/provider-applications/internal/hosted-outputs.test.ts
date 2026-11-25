@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "vitest";
 import type { OutputExecutionInput } from "../../execution-capabilities/outputs.js";
 import { hostedOutputs } from "./hosted-outputs.js";
+import { OUTPUT_TYPES } from "../../providers/telegram/index.js";
+import { SLACK_OUTPUT_TYPES } from "../../providers/slack/index.js";
 
 const input: OutputExecutionInput = {
   agentExecutionId: "execution-1",
@@ -58,6 +60,26 @@ describe("hosted outputs", () => {
     );
     assert.equal(outputs[0]?.tool.name, "telegram_reply");
     assert.ok(outputs.some((output) => output.type === "telegram.typing"));
+  });
+
+  it("exposes every declared output for Telegram and Slack", () => {
+    for (const [provider, declared] of [
+      ["telegram", OUTPUT_TYPES],
+      ["slack", SLACK_OUTPUT_TYPES],
+    ] as const) {
+      const outputs = hostedOutputs(
+        provider,
+        { active: undefined },
+        async (_active, operation) => {
+          await operation();
+        },
+        (code) => new Error(code),
+      );
+      const exposed = new Set(outputs.map((output) => output.type));
+      for (const type of declared) {
+        assert.ok(exposed.has(type), `${provider} wrapper is missing ${type}`);
+      }
+    }
   });
 
   it("does not expose Slack react on another provider and rejects a retired registration", async () => {

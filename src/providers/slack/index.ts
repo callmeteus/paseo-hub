@@ -62,6 +62,14 @@ import { readSlackBotGrant } from "./installation.js";
 /** Output type of the read-only Slack tool. Validated by `OUTPUT_TYPE` in the config compiler. */
 export const SLACK_READ_MESSAGES_OUTPUT_TYPE = "slack.read_messages";
 
+/** Every output this provider registers, so the hosted wrapper can derive its list. */
+export const SLACK_OUTPUT_TYPES: readonly string[] = [
+  "slack.reply",
+  "slack.react",
+  SLACK_READ_MESSAGES_OUTPUT_TYPE,
+  ...SLACK_AGENT_OUTPUT_TYPES,
+];
+
 export type SlackRegistrationConfiguration =
   | {
       transport: "socket";

@@ -45,7 +45,7 @@ interface TelegramConnectionOptions {
   configuration: TelegramRegistrationConfiguration;
 }
 
-const OUTPUT_TYPES: readonly TelegramOutputType[] = [
+export const OUTPUT_TYPES: readonly TelegramOutputType[] = [
   "telegram.reply",
   "telegram.agent.stage",
   "telegram.agent.tool",
