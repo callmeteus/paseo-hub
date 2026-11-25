@@ -23,6 +23,7 @@ export const TelegramEntitySchema = z
     type: z.string(),
     offset: z.number().int().nonnegative(),
     length: z.number().int().nonnegative(),
+    text: z.string().optional(),
   })
   .passthrough();
 
