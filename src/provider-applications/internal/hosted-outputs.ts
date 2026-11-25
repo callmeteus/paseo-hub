@@ -65,7 +65,8 @@ function slackOutputTool(type: string): OutputToolDefinition {
   if (type === "slack.read_messages") return readSlackMessagesTool;
   const agentType = SLACK_AGENT_OUTPUT_TYPES.find((candidate) => candidate === type);
   if (agentType !== undefined) return slackAgentTool(agentType);
-  return replyOutputTool;
+  // A new declared output must fail loudly here, not silently become a reply.
+  throw new Error(`no hosted tool for Slack output: ${type}`);
 }
 
 /**

@@ -100,8 +100,25 @@ async function handleUpdate(
       const label = options.choiceLabel?.(callback.data) ?? callback.data;
       const arrival = telegramChoiceArrival({ label, value: callback.data });
       // Acknowledging the tap is cosmetic. A stale or replayed callback id
-      // must not stop the choice from reaching the agent.
-      await options.api.answerCallbackQuery(callback.id).catch(() => undefined);
+      // must not stop the choice from reaching the agent, but a real failure
+      // (bad token, Telegram down) still goes to the log with its code.
+      await options.api.answerCallbackQuery(callback.id).catch((error: unknown) => {
+        const code =
+          error instanceof Error && "code" in error && typeof error.code === "string"
+            ? error.code
+            : undefined;
+        reportFailure(
+          new Error(
+            `telegram callback ack failed for ${callback.id}: ${code ?? "unknown"}`,
+            { cause: error },
+          ),
+          {
+            operation: "telegram.callback_ack",
+            component: "triggers",
+            provider: "telegram",
+          },
+        );
+      });
       await dispatch(
         {
           type: "message",

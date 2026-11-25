@@ -15,6 +15,7 @@ import { unconfiguredAutomationGitSyncView } from "../../automation-sync/contrac
 import { DynamicProviderRuntime } from "./runtime-owner.js";
 import { OutputExecutorRegistry, replyOutputTool } from "../../execution-capabilities/outputs.js";
 import { createGitHubReplyExecutor, githubReplyAvailable } from "../../triggers/github/reply.js";
+import { SLACK_OUTPUT_TYPES } from "../../providers/slack/index.js";
 
 describe("dynamic provider runtime", () => {
   it("advertises Slack channel messages to the dispatcher", () => {
@@ -41,7 +42,7 @@ describe("dynamic provider runtime", () => {
     assert.deepEqual(trigger.eventNames, ["slack.mention", "slack.message"]);
     assert.deepEqual(
       slack.outputs.map((output) => output.type),
-      ["slack.reply", "slack.react"],
+      [...SLACK_OUTPUT_TYPES],
     );
   });
 
