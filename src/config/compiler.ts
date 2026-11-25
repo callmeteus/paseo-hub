@@ -164,6 +164,8 @@ const AuthoredTriggerFilterSchema = z
     direct_messages: z.boolean().optional(),
     /** When true, a Slack message from another app can run this trigger. Off when omitted. */
     include_bots: z.boolean().optional(),
+    /** Telegram: require a mention of this Hub's own bot, not just any @mention. Off when omitted. */
+    self_mention_only: z.boolean().optional(),
     webhook_secret: z.string().min(32).optional(),
     inputs: z.record(z.string(), InputValueSchema).optional(),
     connection: z

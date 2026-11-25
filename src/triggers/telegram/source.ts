@@ -177,17 +177,11 @@ export function normalizeMessage(
 ): NormalizedTelegramMessageEvent | undefined {
   const text = message.text ?? message.caption ?? "";
   const entities = message.entities ?? message.caption_entities ?? [];
-  const handle = botUsername.replace(/^@/u, "").toLowerCase();
-  // A group message can mention another bot. Only a mention of this Hub's bot
-  // opens a run; otherwise Kevin answers when someone calls FOLFABOT.
+  // A group message can mention any bot. Whether only a mention of this Hub's
+  // bot opens a run is decided per trigger by `self_mention_only`.
   const mentionedBot =
-    text.toLowerCase().includes(`@${handle}`) ||
-    entities.some((entity) => {
-      if (entity.type === "text_mention") return true;
-      if (entity.type !== "mention") return false;
-      const mentioned = entity.text ?? text.slice(entity.offset, entity.offset + entity.length);
-      return mentioned.toLowerCase().replace(/^@/u, "") === handle;
-    });
+    text.toLowerCase().includes(`@${botUsername.replace(/^@/u, "").toLowerCase()}`) ||
+    entities.some((entity) => entity.type === "mention" || entity.type === "text_mention");
   const type: "message" | "mention" =
     message.chat.type !== "private" && mentionedBot ? "mention" : "message";
   return NormalizedTelegramMessageEventSchema.parse({

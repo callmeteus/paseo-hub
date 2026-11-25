@@ -32,7 +32,7 @@ describe("telegram materialized context", () => {
       configurationStoreForProject: () => {
         throw new Error("not used");
       },
-      botUsername: "kevin_bot",
+      getBotUsername: () => "kevin_bot",
     });
     const context = await provider.materializeContext!({
       executionId: "execution",
@@ -69,6 +69,21 @@ describe("matchTelegramTriggers", () => {
   it("matches a group mention for telegram.mention", () => {
     const result = matchTelegramTriggers({ triggers: [...triggers] }, event(), "kevin_bot");
     expect(result.map((match) => match.trigger.name)).toEqual(["mention"]);
+  });
+
+  it("filters another bot's mention only when self_mention_only is set", () => {
+    const other = event({ content: "@folfa_bot me lembra", mentionedBot: true });
+    const strict = [
+      {
+        name: "mention",
+        on: "telegram.mention",
+        filters: { from_users: ["*"], self_mention_only: true },
+      },
+    ];
+    expect(matchTelegramTriggers({ triggers: strict }, other, "kevin_bot")).toHaveLength(0);
+    expect(matchTelegramTriggers({ triggers: [...triggers] }, other, "kevin_bot")).toHaveLength(1);
+    const own = event({ content: "@kevin_bot oi", mentionedBot: true });
+    expect(matchTelegramTriggers({ triggers: strict }, own, "kevin_bot")).toHaveLength(1);
   });
 
   it("treats groups: ['*'] as any group", () => {

@@ -64,8 +64,23 @@ function matchesFilter(
   } else if (event.type === "mention" && !event.mentionedBot) {
     return false;
   }
+  if (!isSelfMentionAllowed(event, filter, botId)) return false;
 
   return matchesText(event.content, filter);
+}
+
+/** Opt-in: require a mention of this bot, not just any @mention in the group. */
+function isSelfMentionAllowed(
+  event: NormalizedTelegramMessageEvent,
+  filter: TriggerFilter,
+  botId: string,
+): boolean {
+  return !(
+    filter.self_mention_only === true &&
+    event.chatType !== "private" &&
+    event.type === "mention" &&
+    !event.content.toLowerCase().includes(`@${botId.replace(/^@/u, "").toLowerCase()}`)
+  );
 }
 
 function matchesText(text: string, filter: TriggerFilter): boolean {

@@ -22,20 +22,20 @@ describe("Telegram mention normalization", () => {
     expect(event?.type).toBe("mention");
   });
 
-  it("does not mark a mention of another bot", () => {
+  it("reports any @mention by default; the strict filter is opt-in per trigger", () => {
     const event = normalizeMessage(
       message("@folfa_bot me lembra", [
         { type: "mention", offset: 0, length: 10, text: "@folfa_bot" },
       ]),
       "kevin_bot",
     );
-    expect(event?.mentionedBot).toBe(false);
-    expect(event?.type).toBe("message");
+    expect(event?.mentionedBot).toBe(true);
+    expect(event?.type).toBe("mention");
   });
 
-  it("falls back to the message text when the entity has no text", () => {
+  it("marks a text_mention", () => {
     const event = normalizeMessage(
-      message("@kevin_bot oi", [{ type: "mention", offset: 0, length: 10 }]),
+      message("oi", [{ type: "text_mention", offset: 0, length: 2 }]),
       "kevin_bot",
     );
     expect(event?.mentionedBot).toBe(true);

@@ -44,7 +44,8 @@ export interface TelegramMergeData {
 
 export interface CreateTelegramTriggerProviderOptions {
   configurationStoreForProject: (projectId: string) => ProjectConfigurationStore;
-  botUsername: string;
+  /** Read at match time: getMe resolves asynchronously after startup. */
+  getBotUsername(): string;
 }
 
 /**
@@ -70,7 +71,7 @@ export function createTelegramTriggerProvider(
       for (const match of matchTelegramTriggers(
         stored.configuration,
         event,
-        options.botUsername,
+        options.getBotUsername(),
         external.connectionId,
       )) {
         const compiled = stored.configuration.triggers.find(
@@ -87,14 +88,14 @@ export function createTelegramTriggerProvider(
           provider: "telegram",
           organizationId: external.organizationId,
           target: outputContext,
-          event: buildMergeData(event, external.connectionId, options.botUsername),
+          event: buildMergeData(event, external.connectionId, options.getBotUsername()),
           ...(compiled.locale === undefined ? {} : { locale: compiled.locale }),
         };
         const invocation = parseInvocation(
           event.content,
           compiled.inputs,
           undefined,
-          readTelegramPromptBody(event, options.botUsername),
+          readTelegramPromptBody(event, options.getBotUsername()),
         );
         const base = {
           conversation: {

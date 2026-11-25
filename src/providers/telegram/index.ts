@@ -124,7 +124,7 @@ export function createTelegramRegistration(
       ({ configurationStoreForProject }) =>
         createTelegramTriggerProvider({
           configurationStoreForProject,
-          botUsername,
+          getBotUsername: () => botUsername,
         }),
     ],
     sources: [source],
