@@ -1971,6 +1971,46 @@ run:
 
     assert.deepEqual(seen, [{ projectId: fixture.projectId, conversationKey: "slack-thread-1" }]);
   });
+
+  it("stops a conversation from a signal match without starting a run", async () => {
+    const fixture = await workflowFixture({ rawConfiguration: interruptConfiguration() });
+    const originalProvider = providerMatch(fixture.configuration, fixture.revisionId);
+    const provider = {
+      ...originalProvider,
+      async match(external: Parameters<typeof originalProvider.match>[0]) {
+        const matches = await originalProvider.match(external);
+        return matches.map((match) =>
+          Object.assign({}, match, {
+            conversation: { key: "slack-thread-2", label: "Slack thread" },
+            interruptOnly: true,
+          }),
+        );
+      },
+    } satisfies import("../triggers/index.js").TriggerProvider;
+    const seen: string[] = [];
+    const { handler } = createDurableWorkflowHandler({
+      database: fixture.database,
+      entitlements: fixture.entitlements,
+      providers: [provider],
+      interruptActiveConversationExecutions: async (input) => {
+        seen.push(input.conversationKey);
+        return ["execution-1"];
+      },
+      dispatchLaunchMachineIntent: async () => {
+        throw new Error("a signal must never start an agent");
+      },
+    });
+
+    await handler(fixture.trigger("repo=hub work"));
+
+    assert.deepEqual(seen, ["slack-thread-2"]);
+    assert.deepEqual(
+      await fixture.database.findTriggerRunsByProviderEventReceiptId(
+        fixture.providerEventReceiptId,
+      ),
+      [],
+    );
+  });
 });
 
 interface Fixture {

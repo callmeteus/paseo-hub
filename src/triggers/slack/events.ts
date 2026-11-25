@@ -6,6 +6,9 @@ import {
   readSlackMessageText,
 } from "./forwarded-message.js";
 
+/** A thread event that cannot open a case, kept only for interruption filters. */
+export const SLACK_THREAD_SIGNAL_SOURCE = "slack.thread_signal";
+
 const SlackIdSchema = z.string().min(1).max(255);
 const SlackTimestampSchema = z.string().regex(/^\d+\.\d+$/u);
 const SlackAttachmentMetadataSchema = z.object({

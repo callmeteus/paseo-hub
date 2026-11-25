@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SLACK_THREAD_SIGNAL_SOURCE } from "./events.js";
 
 const SlackAgentPromptItemSchema = z
   .object({
@@ -96,7 +97,12 @@ export interface SlackAgentDraft {
 export function eventsAllowSlackAgent(events: readonly string[]): boolean {
   return (
     events.length > 0 &&
-    events.every((event) => event === "slack.message" || event === "slack.mention")
+    events.every(
+      (event) =>
+        event === "slack.message" ||
+        event === "slack.mention" ||
+        event === SLACK_THREAD_SIGNAL_SOURCE,
+    )
   );
 }
 

@@ -56,7 +56,7 @@ import {
   SlackBotVerificationError,
 } from "./client.js";
 import { listSlackMemberChannels } from "./channels.js";
-import { readSlackChannelHistory } from "./history.js";
+import { readSlackChannelHistory, readSlackThreadReplies } from "./history.js";
 import { readSlackBotGrant } from "./installation.js";
 
 /** Output type of the read-only Slack tool. Validated by `OUTPUT_TYPE` in the config compiler. */
@@ -317,6 +317,15 @@ function createSlackMessageReader(
       return readSlackChannelHistory(
         await tokenForWorkspace(organizationId, teamId),
         channelId,
+        limit,
+        calls.request,
+      );
+    },
+    async readThread({ organizationId, teamId, channelId, threadTs, limit }) {
+      return readSlackThreadReplies(
+        await tokenForWorkspace(organizationId, teamId),
+        channelId,
+        threadTs,
         limit,
         calls.request,
       );

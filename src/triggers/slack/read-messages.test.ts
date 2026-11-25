@@ -304,6 +304,52 @@ describe("Slack read_slack_messages output", () => {
     assert.equal(unknownResult.isError, true);
     assert.match(unknownResult.content[0]?.text ?? "", /Não encontrei o canal nao-existe/u);
   });
+
+  it("reads a thread with conversations.replies when thread_ts is passed", async () => {
+    const reader = new ReaderFake([
+      {
+        ts: "1795612980.000001",
+        author: "U2",
+        text: "The customer confirmed and closed",
+        threadTs: "1795611989.216289",
+        isReply: true,
+      },
+      {
+        ts: "1795611989.216289",
+        author: "U1",
+        text: "Original card",
+        threadTs: "1795611989.216289",
+        isReply: false,
+      },
+    ]);
+    const execute = createSlackReadMessagesExecutor({ reader });
+
+    const text = await execute({
+      agentExecutionId: "execution-1",
+      toolType: "slack.read_messages",
+      args: { channel: "C1", thread_ts: "1795611989.216289", limit: 10 },
+      outputContext: slackContext(),
+    });
+
+    assert.equal(
+      text,
+      [
+        "#thread 1795611989.216289 em #tecnologia-triagem: 2 mensagens.",
+        "[1795611989.216289] U1: Original card",
+        "[1795612980.000001] U2: The customer confirmed and closed",
+      ].join("\n"),
+    );
+    assert.deepEqual(reader.threadCalls, [
+      {
+        organizationId: "org-1",
+        teamId: "T1",
+        channelId: "C1",
+        threadTs: "1795611989.216289",
+        limit: 10,
+      },
+    ]);
+    assert.deepEqual(reader.historyCalls, []);
+  });
 });
 
 const ToolsListSchema = z
@@ -402,6 +448,14 @@ class ReaderFake implements SlackMessageReader {
     limit: number;
   }> = [];
 
+  threadCalls: Array<{
+    organizationId: string;
+    teamId: string;
+    channelId: string;
+    threadTs: string;
+    limit: number;
+  }> = [];
+
   constructor(private readonly messages: readonly SlackChannelMessage[]) {}
 
   listChannels(): Promise<readonly SlackChannelChoice[]> {
@@ -410,6 +464,11 @@ class ReaderFake implements SlackMessageReader {
 
   readHistory(input: (typeof this.historyCalls)[number]): Promise<readonly SlackChannelMessage[]> {
     this.historyCalls.push(input);
+    return Promise.resolve(this.messages);
+  }
+
+  readThread(input: (typeof this.threadCalls)[number]): Promise<readonly SlackChannelMessage[]> {
+    this.threadCalls.push(input);
     return Promise.resolve(this.messages);
   }
 }

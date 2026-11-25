@@ -89,6 +89,8 @@ export function continuationAgentIdentity(agent: TriggerAgentConfig): TriggerAge
 
 interface TriggerProviderMatchBase<TriggerContext, OutputContext> {
   conversation?: import("./continuation.js").Conversation | null;
+  /** The match asks the Hub to stop a conversation, not to start an agent. */
+  interruptOnly?: boolean;
   triggerName: string;
   triggerContext: TriggerContext;
   outputContext: OutputContext;

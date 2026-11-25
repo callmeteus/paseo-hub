@@ -12,6 +12,11 @@ const ReadSlackMessagesArgsSchema = z
   .object({
     channel: z.string().trim().min(1),
     limit: z.number().int().min(1).max(MAX_READ_LIMIT).optional(),
+    /** Read one Slack thread instead of the channel. The root message timestamp. */
+    thread_ts: z
+      .string()
+      .regex(/^\d+\.\d+$/u)
+      .optional(),
   })
   .strict();
 
@@ -37,6 +42,14 @@ export interface SlackMessageReader {
     channelId: string;
     limit: number;
   }): Promise<readonly SlackChannelMessage[]>;
+  /** Reads a thread through `conversations.replies`, not the channel history. */
+  readThread?(input: {
+    organizationId: string;
+    teamId: string;
+    channelId: string;
+    threadTs: string;
+    limit: number;
+  }): Promise<readonly SlackChannelMessage[]>;
 }
 
 /**
@@ -49,7 +62,7 @@ export interface SlackMessageReader {
 export const readSlackMessagesTool: OutputToolDefinition = {
   name: "read_slack_messages",
   description:
-    "Reads recent messages from a Slack channel the bot belongs to. Pass the channel name, with or without #, or its id. Returns one line per message, oldest first, as [ts] author: text. This does not post anything and does not require this run to have started in that channel.",
+    "Reads recent messages from a Slack channel the bot belongs to, or one thread in it. Pass the channel name, with or without #, or its id. Add thread_ts with the root message timestamp to read that thread's replies. Returns one line per message, oldest first, as [ts] author: text. This does not post anything and does not require this run to have started in that channel.",
   inputSchema: {
     type: "object",
     properties: {
@@ -64,6 +77,10 @@ export const readSlackMessagesTool: OutputToolDefinition = {
         minimum: 1,
         maximum: MAX_READ_LIMIT,
         description: "How many messages to read. Defaults to 20.",
+      },
+      thread_ts: {
+        type: "string",
+        description: "Root message timestamp of a thread to read instead of the channel.",
       },
     },
     required: ["channel"],
@@ -115,10 +132,24 @@ export function createSlackReadMessagesExecutor(options: {
       );
     }
 
+    const limit = args.limit ?? DEFAULT_READ_LIMIT;
+    if (args.thread_ts !== undefined) {
+      if (options.reader.readThread === undefined) {
+        throw new SlackReadMessagesError("Thread reading is not available in this workspace.");
+      }
+      const messages = await options.reader.readThread({
+        ...workspace,
+        channelId: resolved.channel.id,
+        threadTs: args.thread_ts,
+        limit,
+      });
+      return formatSlackMessages(`thread ${args.thread_ts} em #${resolved.channel.name}`, messages);
+    }
+
     const messages = await options.reader.readHistory({
       ...workspace,
       channelId: resolved.channel.id,
-      limit: args.limit ?? DEFAULT_READ_LIMIT,
+      limit,
     });
 
     return formatSlackMessages(resolved.channel.name, messages);

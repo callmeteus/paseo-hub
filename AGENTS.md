@@ -41,3 +41,4 @@ mechanical parts.
 - Lists of provider capabilities — outputs, tools, grants — must be derived from the provider's declarations, never kept as a separate hand-written list. An unknown entry must fail loudly.
 - User-facing strings go through `src/i18n`; never hardcode a language or a workflow's button values in the Hub.
 - Before fixing, read the literal normalized event and reproduce with the provider's real payload shape.
+- The Hub is agnostic. Code, schemas, tests and Hub messages apply to any organization, bot and workflow: no Kevin, E7, ticket, support-app, tenant, channel-name, slug or fixed-language wording. Opinions — conditions, text, names, locale — belong in the trigger YAML and the automations of the organization that owns them. A behavior that only one organization wants is a YAML option the Hub evaluates generically, not a branch in Hub code.

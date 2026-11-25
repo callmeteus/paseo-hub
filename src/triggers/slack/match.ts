@@ -19,6 +19,7 @@ export function matchSlackTriggers(
   event: NormalizedSlackMentionEvent,
   botUserId: string,
   connectionId?: string | null,
+  expectedOnOverride?: string,
 ): MatchedSlackTrigger[] {
   if (event.author.id === botUserId) return [];
   if (event.planDecision !== undefined) {
@@ -36,7 +37,8 @@ export function matchSlackTriggers(
     const chosen = messageTriggers.length > 0 ? messageTriggers : matched;
     return chosen.map((trigger) => ({ event, trigger }));
   }
-  const expectedOn = event.type === "message" ? "slack.message" : "slack.mention";
+  const expectedOn =
+    expectedOnOverride ?? (event.type === "message" ? "slack.message" : "slack.mention");
   return config.triggers.flatMap((trigger) => {
     return trigger.on === expectedOn &&
       acceptsBotMessage(event, trigger.filters) &&

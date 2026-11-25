@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "vitest";
 import { SlackChannelListError } from "./channels.js";
-import { readSlackChannelHistory } from "./history.js";
+import { readSlackChannelHistory, readSlackThreadReplies } from "./history.js";
 
 describe("Slack channel history", () => {
   it("returns readable messages and keeps the bot token out of the URL", async () => {
@@ -85,6 +85,40 @@ describe("Slack channel history", () => {
         assert.equal(SlackChannelListError.read(error), "invalid_response");
         return true;
       },
+    );
+  });
+
+  it("reads a thread through conversations.replies with the root timestamp", async () => {
+    let requested = "";
+    const messages = await readSlackThreadReplies(
+      "xoxb-test",
+      "C1",
+      "1795611989.216289",
+      10,
+      async (input) => {
+        requested = requestUrl(input).href;
+        return Response.json({
+          ok: true,
+          messages: [
+            { ts: "1795611989.216289", text: "card", user: "U1", thread_ts: "1795611989.216289" },
+            {
+              ts: "1795612980.000001",
+              text: "closed",
+              user: "U2",
+              thread_ts: "1795611989.216289",
+            },
+          ],
+        });
+      },
+    );
+
+    const url = new URL(requested);
+    assert.equal(url.pathname, "/api/conversations.replies");
+    assert.equal(url.searchParams.get("channel"), "C1");
+    assert.equal(url.searchParams.get("ts"), "1795611989.216289");
+    assert.deepEqual(
+      messages.map((message) => message.text),
+      ["closed", "card"],
     );
   });
 });

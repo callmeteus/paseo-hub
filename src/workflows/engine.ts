@@ -188,9 +188,25 @@ export class DurableWorkflowEngine {
       });
       return { providerEventReceiptId: trigger.providerEventReceiptId };
     }
+    // A signal only stops a conversation. It never starts an agent or a new case.
+    const interruptMatches = matches.filter((match) => match.interruptOnly === true);
+    if (interruptMatches.length > 0) {
+      const keys = new Set<string>();
+      for (const match of interruptMatches) {
+        if (match.conversation !== null && match.conversation !== undefined)
+          keys.add(match.conversation.key);
+      }
+      for (const conversationKey of keys) {
+        await this.options.interruptActiveConversationExecutions?.({
+          projectId: trigger.projectId,
+          conversationKey,
+        });
+      }
+    }
+    const runnableMatches = matches.filter((match) => match.interruptOnly !== true);
     const createdAt = this.now();
     await Promise.all(
-      matches.map(async (match) => {
+      runnableMatches.map(async (match) => {
         const configurationRevisionId =
           match.configurationRevisionId ?? this.options.configurationRevisionId;
         if (configurationRevisionId === undefined)
@@ -262,9 +278,10 @@ export class DurableWorkflowEngine {
       deliveryId: trigger.deliveryId,
       receiptId: trigger.providerEventReceiptId,
       projectId: trigger.projectId,
-      triggerNames: matches.map((match) => match.triggerName),
-      acceptedCount: matches.filter(isAcceptedTriggerProviderMatch).length,
-      rejectedCount: matches.filter((match) => match.invocation.status === "rejected").length,
+      triggerNames: runnableMatches.map((match) => match.triggerName),
+      acceptedCount: runnableMatches.filter(isAcceptedTriggerProviderMatch).length,
+      rejectedCount: runnableMatches.filter((match) => match.invocation.status === "rejected")
+        .length,
     });
     return { providerEventReceiptId: trigger.providerEventReceiptId };
   }

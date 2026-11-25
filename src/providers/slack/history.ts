@@ -87,6 +87,57 @@ export async function readSlackChannelHistory(
 }
 
 /**
+ * Reads the newest messages of one Slack thread through `conversations.replies`.
+ * The channel history does not include replies, so a thread has to be read here.
+ *
+ * @param token - Bot token of the selected Slack connection
+ * @param channelId - Slack channel id
+ * @param threadTs - Timestamp of the thread's root message
+ * @param limit - How many messages to return. Clamped to 1..50
+ * @param request - HTTP client. Tests pass a fake; the server uses `fetch`
+ * @returns Newest messages first
+ */
+export async function readSlackThreadReplies(
+  token: string,
+  channelId: string,
+  threadTs: string,
+  limit: number = DEFAULT_LIMIT,
+  request: typeof fetch = fetch,
+): Promise<SlackChannelMessage[]> {
+  const pageSize = clampHistoryLimit(limit);
+  const messages: SlackChannelMessage[] = [];
+  let cursor: string | undefined;
+
+  while (true) {
+    const url = new URL("https://slack.com/api/conversations.replies");
+    url.searchParams.set("channel", channelId);
+    url.searchParams.set("ts", threadTs);
+    url.searchParams.set("limit", pageSize.toString());
+    if (cursor !== undefined) url.searchParams.set("cursor", cursor);
+
+    const response = await request(url, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) throw new SlackChannelListError("invalid_response");
+
+    const body = await readHistory(response);
+    if (!body.ok) throw new SlackChannelListError(body.error ?? "unknown_error");
+
+    for (const message of body.messages ?? []) {
+      const readable = toMessage(message);
+      if (readable !== undefined) messages.push(readable);
+    }
+
+    const metadata = z.record(z.string(), z.unknown()).safeParse(body["response_metadata"]);
+    const next = metadata.success ? metadata.data["next_cursor"] : undefined;
+    cursor = typeof next === "string" && next.length > 0 ? next : undefined;
+    if (cursor === undefined) break;
+  }
+
+  return messages.slice(-pageSize).toReversed();
+}
+
+/**
  * Keeps the history request inside Slack's page size.
  *
  * @param limit - Requested page size

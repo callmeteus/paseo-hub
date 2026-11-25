@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { ProjectConfigurationStore } from "../../configuration/store.js";
 import type { CompiledTriggerConfig } from "../../config/index.js";
 import type {
@@ -6,7 +7,12 @@ import type {
 } from "../../attachments/capabilities.js";
 import { reportFailure } from "../../failures/index.js";
 import { agentFailureNotice, missingBillingUrl } from "../failure-notice.js";
-import { type TriggerProvider, type TriggerProviderMatch } from "../index.js";
+import {
+  type ExternalTrigger,
+  type TriggerProvider,
+  type TriggerProviderMatch,
+  type TriggerProviderResult,
+} from "../index.js";
 import { openingSlackAgentBlock, type SlackAgentBlock } from "./agent-block.js";
 import {
   beginSlackAgentRun,
@@ -16,7 +22,11 @@ import {
   type SlackAgentRunTarget,
 } from "./agent-surface.js";
 import type { SlackBotClient, SlackThreadMessage } from "./client.js";
-import { NormalizedSlackMentionEventSchema, type NormalizedSlackMentionEvent } from "./events.js";
+import {
+  NormalizedSlackMentionEventSchema,
+  SLACK_THREAD_SIGNAL_SOURCE,
+  type NormalizedSlackMentionEvent,
+} from "./events.js";
 import { expandStoredSlackForwards } from "./forwarded-message.js";
 import {
   matchSlackTriggers,
@@ -24,6 +34,21 @@ import {
   readSlackPromptBody,
 } from "./match.js";
 import { defaultInputs, matchesInputFilters, parseInvocation } from "../invocation.js";
+
+const SlackThreadSignalSchema = z
+  .object({
+    type: z.literal("message"),
+    channelId: z.string().min(1),
+    channelType: z.enum(["channel", "group", "im", "mpim"]).optional(),
+    threadTs: z.string().regex(/^\d+\.\d+$/u),
+    messageTs: z.string().regex(/^\d+\.\d+$/u),
+    text: z.string(),
+    authorId: z.string().min(1),
+    botId: z.string().optional(),
+    subtype: z.string().optional(),
+    fromBot: z.boolean().optional(),
+  })
+  .strict();
 
 export interface SlackAttachmentLocator {
   id: string;
@@ -189,10 +214,83 @@ export function createSlackTriggerProvider(options: {
     return { status: history.complete ? "available" : "incomplete", messages };
   }
 
+  /**
+   * A reply or edit in a thread is not a case. Only triggers that opted in to
+   * interrupting a conversation can act on it, and their whole filter set is
+   * still evaluated against the signal's text, author and channel.
+   */
+  async function matchThreadSignal(
+    signalEvent: ExternalTrigger,
+  ): Promise<TriggerProviderResult<SlackTriggerContext, SlackOutputContext>> {
+    const signal = SlackThreadSignalSchema.parse(signalEvent.payload);
+    const teamId = signalEvent.resourceId ?? "unknown";
+    const botUserId = await options.botUserIdForWorkspace(signalEvent.organizationId, teamId);
+    if (botUserId === undefined) return "configuration_unavailable";
+    const stored = await options
+      .configurationStoreForProject(signalEvent.projectId)
+      .getRevision(signalEvent.configurationRevisionId);
+    if (stored === undefined) return "configuration_unavailable";
+    const event: NormalizedSlackMentionEvent = {
+      type: "message",
+      id: signalEvent.deliveryId,
+      teamId,
+      appId: teamId,
+      channelId: signal.channelId,
+      messageTs: signal.messageTs,
+      threadTs: signal.threadTs,
+      eventTs: signal.messageTs,
+      eventTime: Math.floor(signalEvent.receivedAt.getTime() / 1_000),
+      content: signal.text,
+      channelType: signal.channelType,
+      author: { id: signal.authorId },
+      fromBot: signal.fromBot,
+      lead: "",
+      forwards: [],
+      createdAt: signalEvent.receivedAt.toISOString(),
+      attachments: [],
+    };
+    const matched = matchSlackTriggers(
+      stored.configuration,
+      event,
+      botUserId,
+      signalEvent.connectionId,
+      SLACK_THREAD_SIGNAL_SOURCE,
+    ).filter((match) => match.trigger.filters?.interrupt_active_thread_execution === true);
+    if (matched.length === 0) return "trigger_filters_rejected";
+    const outputContext: SlackOutputContext = {
+      provider: "slack",
+      organizationId: signalEvent.organizationId,
+      teamId,
+      channelId: signal.channelId,
+      threadTs: signal.threadTs,
+      messageTs: signal.messageTs,
+    };
+    return matched.map((match) => ({
+      triggerName: match.trigger.name,
+      triggerContext: {
+        provider: "slack",
+        target: outputContext,
+        event: buildSlackMergeData(event, botUserId, signalEvent.connectionId),
+      },
+      outputContext,
+      configurationRevisionId: signalEvent.configurationRevisionId,
+      hubConfig: stored.configuration,
+      conversation: {
+        key: JSON.stringify(["slack", teamId, signal.channelId, signal.threadTs]),
+        label: "Slack thread",
+      },
+      invocation: { status: "accepted", prompt: signal.text, inputs: {} },
+      interruptOnly: true,
+    }));
+  }
+
   return {
     name: "slack",
-    eventNames: ["slack.mention", "slack.message"],
+    eventNames: ["slack.mention", "slack.message", SLACK_THREAD_SIGNAL_SOURCE],
     async match(trigger) {
+      if (trigger.source === SLACK_THREAD_SIGNAL_SOURCE) {
+        return matchThreadSignal(trigger);
+      }
       const rawEvent = await includeReadableForwards(
         NormalizedSlackMentionEventSchema.parse(trigger.payload),
         trigger.organizationId,

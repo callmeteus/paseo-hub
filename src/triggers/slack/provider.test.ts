@@ -1248,6 +1248,65 @@ describe("Slack Phase 1 trigger provider", () => {
       },
     ]);
   });
+
+  it("evaluates only interruption filters for a thread signal", async () => {
+    const base = configuration();
+    const signalTrigger = {
+      ...base.triggers[0]!,
+      name: "thread-signal",
+      on: "slack.thread_signal",
+      filters: {
+        workspace: "T1",
+        channels: ["C1"],
+        from_users: ["*"],
+        include_bots: true,
+        interrupt_active_thread_execution: true,
+        text: ["another answer"],
+      },
+    };
+    const database = createMemoryDatabase();
+    const { project, revision, store } = await createActiveProjectConfiguration(
+      database,
+      { ...base, triggers: [base.triggers[0]!, signalTrigger] },
+      { organizationId: "org-1" },
+    );
+    const provider = createSlackTriggerProvider({
+      configurationStoreForProject: () => store,
+      botUserIdForWorkspace: () => Promise.resolve("UBOT"),
+      client: new RecordingSlackClient(),
+    });
+    const event = {
+      providerEventReceiptId: "11111111-1111-4111-8111-111111111120",
+      organizationId: "org-1",
+      projectId: project.id,
+      configurationRevisionId: revision.id,
+      resourceId: "T1",
+      source: "slack.thread_signal",
+      deliveryId: "slack-signal-Ev9",
+      receivedAt: new Date("2026-11-25T13:23:00Z"),
+      payload: {
+        type: "message",
+        channelId: "C1",
+        channelType: "channel",
+        threadTs: "1795611989.216289",
+        messageTs: "1795612980.000001",
+        text: "An agent gave another answer",
+        authorId: "UBOT2",
+        fromBot: true,
+      },
+    };
+    const result = await provider.match(event);
+    if (typeof result === "string") throw new Error(`signal was dropped: ${result}`);
+    assert.deepEqual(
+      result.map((match) => match.triggerName),
+      ["thread-signal"],
+    );
+    const match = result[0];
+    if (!isAcceptedTriggerProviderMatch(match)) throw new Error("signal must be accepted");
+    assert.equal(match.triggerName, "thread-signal");
+    assert.equal(match.interruptOnly, true);
+    assert.equal(match.conversation?.key, '["slack","T1","C1","1795611989.216289"]');
+  });
 });
 
 function configuration() {
