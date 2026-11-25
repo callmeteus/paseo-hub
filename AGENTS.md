@@ -34,3 +34,10 @@ This is a project in early-development, take advantage of not needing to impleme
 `docs/design.md` is the visual contract for every `.tsx` file, `src/styles.css`, and everything under
 `src/components`. It is loaded with this file. Follow it; `src/typography-policy.test.ts` enforces the
 mechanical parts.
+
+# Engineering rules
+
+- The PGlite data directory belongs to the running Hub process. Never open it from another process; use the API.
+- Lists of provider capabilities — outputs, tools, grants — must be derived from the provider's declarations, never kept as a separate hand-written list. An unknown entry must fail loudly.
+- User-facing strings go through `src/i18n`; never hardcode a language or a workflow's button values in the Hub.
+- Before fixing, read the literal normalized event and reproduce with the provider's real payload shape.
