@@ -11,6 +11,7 @@ import {
 } from "../../config/compiler.js";
 import type { Continuation } from "../continuation.js";
 import { withSlackAgentOutputs } from "../slack/agent-block.js";
+import { OUTPUT_TYPES as TELEGRAM_OUTPUT_TYPES } from "../../providers/telegram/index.js";
 import { appendSlackReactGrant } from "../slack/react.js";
 import { flattenTriggerReactions, type FlattenedReactions } from "./reactions.js";
 import {
@@ -147,10 +148,12 @@ function withAutomaticReply(trigger: CompiledTrigger): CompiledTrigger {
       if (isCompiledStaticStep(step)) return step;
       return {
         ...step,
-        allowOutputs: withSlackAgentOutputs(
-          automaticAllowOutputs(step.allowOutputs, replyType, trigger.on),
-          step.slackAgent,
-        ),
+        allowOutputs: trigger.on.startsWith("telegram.")
+          ? withTelegramAgentOutputs(automaticAllowOutputs(step.allowOutputs, replyType, trigger.on))
+          : withSlackAgentOutputs(
+              automaticAllowOutputs(step.allowOutputs, replyType, trigger.on),
+              step.slackAgent,
+            ),
       };
     }),
   };
@@ -168,12 +171,25 @@ function automaticAllowOutputs(
   return appendSlackReactGrant(withReply);
 }
 
+/** Every output the Telegram provider declares, so buttons/stage/tools reach the agent. */
+function withTelegramAgentOutputs(
+  allowOutputs: CompiledAgentStep["allowOutputs"],
+): CompiledAgentStep["allowOutputs"] {
+  const present = new Set(allowOutputs.map((output) => output.type));
+  const added = TELEGRAM_OUTPUT_TYPES.filter((type) => !present.has(type)).map((type) => ({
+    type,
+    required: false as const,
+  }));
+  return added.length === 0 ? allowOutputs : [...allowOutputs, ...added];
+}
+
 function automaticReplyType(event: string): string | undefined {
   const provider = event.split(".", 1)[0];
   return provider === "slack" ||
     provider === "discord" ||
     provider === "linear" ||
-    provider === "github"
+    provider === "github" ||
+    provider === "telegram"
     ? `${provider}.reply`
     : undefined;
 }

@@ -4,6 +4,7 @@ import { compileTriggerDocument } from "./index.js";
 import { emptyWorktree, textInstructions } from "./form-drafts.js";
 import { blankSlackAgentDraft } from "../slack/agent-block.js";
 import { applyAutomationTemplate, createWebhookSecret } from "./editor.js";
+import { OUTPUT_TYPES as TELEGRAM_OUTPUT_TYPES } from "../../providers/telegram/index.js";
 import type { TriggerFormValue } from "./editor.js";
 
 const form: TriggerFormValue = {
@@ -65,6 +66,33 @@ run:
       { type: "slack.reply", required: false },
       { type: "slack.react", required: false },
     ]);
+  });
+
+  it("grants every declared Telegram output to a Telegram trigger", () => {
+    const compiled = compileTriggerDocument(`
+name: telegram-case
+enabled: true
+on:
+  telegram.mention:
+    filters:
+      from_users: ["*"]
+      groups: ["-1001"]
+run:
+  target:
+    daemon: office
+    cwd: /workspace
+  agent:
+    provider: opencode
+    mode: default
+  outputs:
+    telegram.reply:
+      max: 12
+  prompt: Answer the mention.
+`);
+    const granted = compiled.events[0]?.steps[0]?.allowOutputs.map((output) => output.type);
+    for (const type of TELEGRAM_OUTPUT_TYPES) {
+      assert.ok(granted?.includes(type), `Telegram trigger is missing ${type}`);
+    }
   });
 
   it("keeps include_bots off unless the automation turns it on", () => {
