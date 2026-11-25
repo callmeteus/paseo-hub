@@ -1,3 +1,5 @@
+import { message } from "../../i18n/messages.js";
+
 /**
  * Buttons the agent attaches to a finished Slack card.
  *
@@ -113,21 +115,27 @@ export function slackChoiceFromAction(action: {
 export function blocksAfterChoice(
   blocks: readonly unknown[],
   label: string,
+  user?: string,
+  locale?: string,
 ): Record<string, unknown>[] | undefined {
   let replaced = false;
   const next = blocks.flatMap((block) => {
     if (!isRecord(block)) return [];
     if (!blockHasChoice(block)) return [block];
     replaced = true;
-    return [choiceLine(label)];
+    return [choiceLine(label, user, locale)];
   });
   return replaced ? next : undefined;
 }
 
-function choiceLine(label: string): Record<string, unknown> {
+function choiceLine(label: string, user?: string, locale?: string): Record<string, unknown> {
+  const text =
+    user === undefined
+      ? label
+      : message(locale, "choice.chosen", { user, choice: label });
   return {
     type: "context",
-    elements: [{ type: "mrkdwn", text: label }],
+    elements: [{ type: "mrkdwn", text }],
   };
 }
 

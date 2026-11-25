@@ -36,6 +36,8 @@ export interface MessageCatalog {
   "outbound.fileLinkOutside": (params: MessageParams) => string;
   "outbound.invalidMention": (params: MessageParams) => string;
   "outbound.rawUserId": (params: MessageParams) => string;
+  /** Line replacing a button card after someone clicks one of its buttons. */
+  "choice.chosen": (params: MessageParams) => string;
 }
 
 export type MessageKey = keyof MessageCatalog;
@@ -70,6 +72,7 @@ export const en: MessageCatalog = {
     `The mention ${text(params, "mention")} is not a Slack id. Use <@U123456789> with the real id, or just the person's name.`,
   "outbound.rawUserId": (params) =>
     `The id ${text(params, "id")} is loose in the text. Use the person's name or the mention <@${text(params, "id")}>.`,
+  "choice.chosen": (params) => `${text(params, "user")} chose "${text(params, "choice")}"`,
 };
 
 export const ptBR: MessageCatalog = {
@@ -95,6 +98,7 @@ export const ptBR: MessageCatalog = {
     `A menção ${text(params, "mention")} não é um id do Slack. Use <@U123456789> com o id real, ou só o nome da pessoa.`,
   "outbound.rawUserId": (params) =>
     `O id ${text(params, "id")} está solto no texto. Use o nome da pessoa ou a menção <@${text(params, "id")}>.`,
+  "choice.chosen": (params) => `${text(params, "user")} escolheu "${text(params, "choice")}"`,
 };
 
 export const catalogs: Readonly<Record<Locale, MessageCatalog>> = {
@@ -115,6 +119,7 @@ export const MESSAGE_KEYS: readonly MessageKey[] = [
   "outbound.fileLinkOutside",
   "outbound.invalidMention",
   "outbound.rawUserId",
+  "choice.chosen",
 ];
 
 /**

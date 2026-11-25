@@ -36,6 +36,17 @@ describe("message catalog", () => {
     assert.equal(localeOf("pt-BR"), "pt-BR");
   });
 
+  it("names who chose what, in both locales", () => {
+    assert.equal(
+      message("en", "choice.chosen", { user: "@gio", choice: "Ver plano completo" }),
+      '@gio chose "Ver plano completo"',
+    );
+    assert.equal(
+      message("pt-BR", "choice.chosen", { user: "@gio", choice: "Ver plano completo" }),
+      '@gio escolheu "Ver plano completo"',
+    );
+  });
+
   it("interpolates the values a reason needs", () => {
     assert.equal(
       message("en", "outbound.tooManyParagraphs", { paragraphs: 4, max: 3 }),
@@ -63,6 +74,8 @@ describe("message catalog", () => {
       dir: "x",
       mention: "x",
       id: "x",
+      user: "x",
+      choice: "x",
     };
     for (const locale of SUPPORTED_LOCALES) {
       const catalog = catalogs[locale];

@@ -17,6 +17,7 @@ function fakeApi(): {
     sendChatAction: async (chatId, action) => {
       actions.push({ chatId, action });
     },
+    editMessageText: async () => undefined,
     sendMessage: async (message) => {
       sent.push({
         chatId: message.chatId,

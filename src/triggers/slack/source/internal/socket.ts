@@ -42,6 +42,7 @@ export interface SlackSocketSource extends TriggerSource {
 export interface SlackSocketSourceOptions extends SlackEventIntakeOptions {
   settlePlanDecision?: SlackInteractionIntakeOptions["settlePlanDecision"];
   recordFeedback?: SlackInteractionIntakeOptions["recordFeedback"];
+  localeFor?: SlackInteractionIntakeOptions["localeFor"];
   appToken: string;
   apiUrl?: string;
   random?: () => number;

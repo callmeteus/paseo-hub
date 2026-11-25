@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { describe, it } from "vitest";
 import type { DurableProviderEvent, ProviderEventAcceptance } from "../../db/types.js";
-import { slackChoiceArrival } from "./feedback.js";
+import { slackChoiceArrival, blocksAfterChoice } from "./feedback.js";
 import {
   createSlackInteractivitySource,
   settleSlackPlanDecision,
@@ -158,6 +158,15 @@ describe("Slack interactivity", () => {
     assert.equal(settled, undefined);
   });
 
+  it("names who clicked in the context line, in the trigger locale", () => {
+    const blocks = decisionInput().blocks;
+    const updated = blocksAfterChoice(blocks, "Ship it", "<@U123>", "pt-BR");
+    assert.deepEqual(blockTypes(updated), ["section", "context"]);
+    assert.equal(contextText(updated, 1), '<@U123> escolheu "Ship it"');
+    const english = blocksAfterChoice(blocks, "Ship it", "<@U123>", "en");
+    assert.equal(contextText(english, 1), '<@U123> chose "Ship it"');
+  });
+
   it("replaces the buttons, and posts the choice when the card cannot be updated", async () => {
     const updated: unknown[] = [];
     const posted: string[] = [];
@@ -250,6 +259,17 @@ function storedInput() {
     payload: storedEvent("ship").payload,
     receivedAt: new Date(NOW),
   };
+}
+
+function contextText(blocks: readonly unknown[] | undefined, index: number): string | undefined {
+  const block = blocks?.[index];
+  if (typeof block !== "object" || block === null || !("elements" in block)) return undefined;
+  const elements: unknown = block.elements;
+  if (!Array.isArray(elements)) return undefined;
+  const first: unknown = elements[0];
+  if (typeof first !== "object" || first === null) return undefined;
+  if (!("text" in first) || typeof first.text !== "string") return undefined;
+  return first.text;
 }
 
 function decisionInput(): SettleSlackPlanDecisionInput {

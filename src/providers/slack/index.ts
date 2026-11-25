@@ -165,6 +165,15 @@ export function createSlackRegistration(
       botHolder.current === undefined
         ? Promise.resolve()
         : settleSlackPlanDecision(botHolder.current, input),
+    localeFor: async (receiptId: string) => {
+      if (database === null) return undefined;
+      const runs = await database.findTriggerRunsByProviderEventReceiptId(receiptId);
+      const context = runs[0]?.outputContext;
+      if (typeof context !== "object" || context === null) return undefined;
+      if (!("locale" in context)) return undefined;
+      const locale: unknown = context.locale;
+      return typeof locale === "string" ? locale : undefined;
+    },
     recordFeedback: async (input) => {
       if (database === null) return;
       const connection = await database.findSlackConnection(input.teamId);

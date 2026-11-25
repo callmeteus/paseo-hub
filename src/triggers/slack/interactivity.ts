@@ -73,6 +73,10 @@ export interface SettleSlackPlanDecisionInput {
   decision: string;
   /** The button text the person saw. */
   label: string;
+  /** Who clicked, as a Slack mention. */
+  user?: string | undefined;
+  /** Locale of the trigger's system messages. */
+  locale?: string | undefined;
 }
 
 export interface RecordSlackFeedbackInput {
@@ -86,6 +90,8 @@ export interface SlackInteractionIntakeOptions extends SlackEventIntakeOptions {
   settlePlanDecision?: (this: void, input: SettleSlackPlanDecisionInput) => Promise<void>;
   /** Stores a thumb. The click does not start a run. */
   recordFeedback?: (this: void, input: RecordSlackFeedbackInput) => Promise<void>;
+  /** Locale of the run that posted the buttons, read from its stored receipt. */
+  localeFor?: (this: void, receiptId: string) => Promise<string | undefined>;
 }
 
 export interface SlackInteractionIntakeResult {
@@ -110,7 +116,7 @@ export async function settleSlackPlanDecision(
   client: Pick<SlackBotClient, "sendMessage" | "updateMessage">,
   input: SettleSlackPlanDecisionInput,
 ): Promise<void> {
-  const blocks = blocksAfterChoice(input.blocks, input.label);
+  const blocks = blocksAfterChoice(input.blocks, input.label, input.user, input.locale);
   if (blocks !== undefined && client.updateMessage !== undefined) {
     const updated = await client.updateMessage({
       organizationId: input.organizationId,
@@ -246,7 +252,7 @@ export async function intakeSlackInteraction(
   await Promise.all(
     events.flatMap((acceptedEvent) => Array.from(handlers, (handler) => handler(acceptedEvent))),
   );
-  const settlement = settlementFor(acceptance, choice, parsed.data, options);
+  const settlement = await settlementFor(acceptance, choice, parsed.data, options);
   return settlement === undefined ? {} : { settlement };
 }
 
@@ -278,18 +284,19 @@ export function createSlackInteractivitySource(
   };
 }
 
-function settlementFor(
+async function settlementFor(
   acceptance: ProviderEventAcceptance,
   choice: Pick<SlackChoice, "label" | "value">,
   payload: z.infer<typeof SlackBlockActionsSchema>,
   options: SlackInteractionIntakeOptions,
-): (() => Promise<void>) | undefined {
+): Promise<(() => Promise<void>) | undefined> {
   const settle = options.settlePlanDecision;
   if (settle === undefined || acceptance.status !== "accepted") return undefined;
   const stored = acceptance.events[0];
   if (stored === undefined) return undefined;
   const parsed = NormalizedSlackMentionEventSchema.safeParse(stored.payload);
   if (!parsed.success || parsed.data.planDecision !== choice.value) return undefined;
+  const locale = await options.localeFor?.(stored.providerEventReceiptId).catch(() => undefined);
   const input: SettleSlackPlanDecisionInput = {
     organizationId: stored.organizationId,
     teamId: payload.team.id,
@@ -300,6 +307,8 @@ function settlementFor(
     blocks: payload.message.blocks ?? [],
     decision: choice.value,
     label: choice.label,
+    user: `<@${payload.user.id}>`,
+    ...(locale === undefined ? {} : { locale }),
   };
   return () => settle(input);
 }

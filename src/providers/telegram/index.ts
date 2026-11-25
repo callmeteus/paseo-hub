@@ -112,6 +112,14 @@ export function createTelegramRegistration(
     api,
     accept: (input) => database.acceptTelegramEvent(input),
     choiceLabel: (value) => choiceLabels.get(value),
+    localeFor: async (receiptId) => {
+      const runs = await database.findTriggerRunsByProviderEventReceiptId(receiptId);
+      const context = runs[0]?.outputContext;
+      if (typeof context !== "object" || context === null) return undefined;
+      if (!("locale" in context)) return undefined;
+      const locale: unknown = context.locale;
+      return typeof locale === "string" ? locale : undefined;
+    },
   });
 
   return {

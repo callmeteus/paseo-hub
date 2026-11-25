@@ -6,6 +6,9 @@
  * the next turn receives is the same wording.
  */
 
+import { message } from "../../i18n/messages.js";
+import type { TelegramBotApi } from "../../providers/telegram/client.js";
+
 export const TELEGRAM_CHOICE_LIMIT = 5;
 
 export interface TelegramChoice {
@@ -21,6 +24,34 @@ export interface TelegramInlineKeyboard {
 export function telegramChoiceArrival(choice: Pick<TelegramChoice, "label" | "value">): string {
   if (choice.label === choice.value) return `The person chose "${choice.label}".`;
   return `The person chose "${choice.label}" (${choice.value}).`;
+}
+
+/**
+ * Replaces a clicked card's keyboard with the chooser line, keeping the text
+ * above it. An empty `inline_keyboard` removes the buttons so nobody can click
+ * the same choice twice.
+ */
+export async function settleTelegramChoice(
+  api: TelegramBotApi,
+  input: {
+    chatId: string | number;
+    messageId: number;
+    text: string;
+    label: string;
+    user: string;
+    locale?: string | undefined;
+  },
+): Promise<void> {
+  const line = message(input.locale, "choice.chosen", {
+    user: input.user,
+    choice: input.label,
+  });
+  await api.editMessageText({
+    chatId: input.chatId,
+    messageId: input.messageId,
+    text: `${input.text}\n\n${line}`,
+    replyMarkup: { inline_keyboard: [] },
+  });
 }
 
 /** Renders choices as one row of inline-keyboard buttons. */

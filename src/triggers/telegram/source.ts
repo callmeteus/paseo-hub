@@ -11,8 +11,9 @@ import {
   type NormalizedTelegramMessageEvent,
   type TelegramAttachment,
   type TelegramMessage,
+  type TelegramUpdate,
 } from "./events.js";
-import { telegramChoiceArrival } from "./feedback.js";
+import { settleTelegramChoice, telegramChoiceArrival } from "./feedback.js";
 
 const MAX_BODY_BYTES = 1_048_576;
 
@@ -34,6 +35,8 @@ export interface CreateTelegramSourceOptions {
   accept(input: TelegramAcceptInput): Promise<ProviderEventAcceptance>;
   /** Chooses the label for a callback value, from the choices the last finish offered. */
   choiceLabel?(value: string): string | undefined;
+  /** Locale of the run that offered the buttons, read from its stored receipt. */
+  localeFor?(receiptId: string): Promise<string | undefined>;
 }
 
 export interface TelegramSource extends TriggerSource {
@@ -95,52 +98,7 @@ async function handleUpdate(
   // A callback query is the click of an inline-keyboard button. Turn it into a normal message
   // so the next run sees the same arrival sentence Slack uses for a choice.
   if (update.callback_query !== undefined) {
-    const callback = update.callback_query;
-    if (callback.data !== undefined) {
-      const label = options.choiceLabel?.(callback.data) ?? callback.data;
-      const arrival = telegramChoiceArrival({ label, value: callback.data });
-      // Acknowledging the tap is cosmetic. A stale or replayed callback id
-      // must not stop the choice from reaching the agent, but a real failure
-      // (bad token, Telegram down) still goes to the log with its code.
-      await options.api.answerCallbackQuery(callback.id).catch((error: unknown) => {
-        const code =
-          error instanceof Error && "code" in error && typeof error.code === "string"
-            ? error.code
-            : undefined;
-        reportFailure(
-          new Error(
-            `telegram callback ack failed for ${callback.id}: ${code ?? "unknown"}`,
-            { cause: error },
-          ),
-          {
-            operation: "telegram.callback_ack",
-            component: "triggers",
-            provider: "telegram",
-          },
-        );
-      });
-      await dispatch(
-        {
-          type: "message",
-          id: `callback-${callback.id}`,
-          chatId: String(callback.message?.chat.id ?? callback.from.id),
-          chatType: callback.message?.chat.type ?? "private",
-          messageId: callback.message?.message_id ?? 0,
-          content: arrival,
-          author: {
-            id: String(callback.from.id),
-            username: callback.from.username,
-            firstName: callback.from.first_name,
-            isBot: callback.from.is_bot ?? false,
-          },
-          mentionedBot: false,
-          createdAt: new Date().toISOString(),
-          attachments: [],
-        },
-        handlers,
-        options,
-      );
-    }
+    await handleTelegramCallback(update.callback_query, handlers, options);
     return new Response("OK", { status: 200 });
   }
 
@@ -152,11 +110,87 @@ async function handleUpdate(
   return new Response("OK", { status: 200 });
 }
 
+/** One button tap: acknowledge, enqueue the choice, then settle the card. */
+async function handleTelegramCallback(
+  callback: NonNullable<TelegramUpdate["callback_query"]>,
+  handlers: Set<TriggerHandler>,
+  options: CreateTelegramSourceOptions,
+): Promise<void> {
+  if (callback.data === undefined) return;
+  const choiceLabel = options.choiceLabel?.(callback.data) ?? callback.data;
+  const arrival = telegramChoiceArrival({ label: choiceLabel, value: callback.data });
+  // Acknowledging the tap is cosmetic. A stale or replayed callback id must not
+  // stop the choice from reaching the agent, but a real failure goes to the log.
+  await options.api.answerCallbackQuery(callback.id).catch((error: unknown) => {
+    reportCodeFailure(error, "telegram.callback_ack", `callback ${callback.id}`);
+  });
+  const receiptId = await dispatch(
+    {
+      type: "message",
+      // Keyed by the card and the choice, never by the tap id: a repeated or
+      // delayed tap on the same card must reuse the same durable receipt.
+      id: `callback-${callback.message?.message_id ?? 0}-${callback.data}`,
+      chatId: String(callback.message?.chat.id ?? callback.from.id),
+      chatType: callback.message?.chat.type ?? "private",
+      messageId: callback.message?.message_id ?? 0,
+      content: arrival,
+      author: {
+        id: String(callback.from.id),
+        username: callback.from.username,
+        firstName: callback.from.first_name,
+        isBot: callback.from.is_bot ?? false,
+      },
+      mentionedBot: false,
+      createdAt: new Date().toISOString(),
+      attachments: [],
+    },
+    handlers,
+    options,
+  );
+  if (receiptId === undefined) return;
+  await settleCallbackCard(callback, choiceLabel, receiptId, options);
+}
+
+async function settleCallbackCard(
+  callback: NonNullable<TelegramUpdate["callback_query"]>,
+  choiceLabel: string,
+  receiptId: string,
+  options: CreateTelegramSourceOptions,
+): Promise<void> {
+  const locale = await options.localeFor?.(receiptId).catch(() => undefined);
+  const user =
+    callback.from.username === undefined ? callback.from.first_name : `@${callback.from.username}`;
+  try {
+    await settleTelegramChoice(options.api, {
+      chatId: String(callback.message?.chat.id ?? callback.from.id),
+      messageId: callback.message?.message_id ?? 0,
+      text: callback.message?.text ?? choiceLabel,
+      label: choiceLabel,
+      user,
+      locale,
+    });
+  } catch (error) {
+    reportCodeFailure(error, "telegram.choice_edit", "card edit");
+  }
+}
+
+function reportCodeFailure(error: unknown, operation: string, detail: string): void {
+  const code =
+    error instanceof Error && "code" in error && typeof error.code === "string"
+      ? error.code
+      : undefined;
+  reportFailure(new Error(`${operation} failed for ${detail}: ${code ?? "unknown"}`, { cause: error }), {
+    operation,
+    component: "triggers",
+    provider: "telegram",
+  });
+}
+
 async function dispatch(
   event: NormalizedTelegramMessageEvent,
   handlers: Set<TriggerHandler>,
   options: CreateTelegramSourceOptions,
-): Promise<void> {
+): Promise<string | undefined> {
   const deliveryId = `telegram-${event.chatId}-${event.messageId}-${event.id}`;
   let acceptance: ProviderEventAcceptance;
   try {
@@ -174,7 +208,7 @@ async function dispatch(
       component: "triggers",
       provider: "telegram",
     });
-    return;
+    return undefined;
   }
   logProviderEventIntake({
     provider: "telegram",
@@ -183,10 +217,11 @@ async function dispatch(
     resourceId: event.chatId,
     acceptance,
   });
-  if (acceptance.status !== "accepted") return;
+  if (acceptance.status !== "accepted") return undefined;
   for (const accepted of acceptance.events) {
     for (const handler of handlers) await handler(accepted);
   }
+  return acceptance.receiptId;
 }
 
 /** Converts a raw Telegram message into a normalized event. */

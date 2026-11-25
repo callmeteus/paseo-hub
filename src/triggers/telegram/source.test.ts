@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeMessage } from "./source.js";
+import { createTelegramSource, normalizeMessage } from "./source.js";
 import type { TelegramMessage } from "./events.js";
 
 function message(text: string, entities: TelegramMessage["entities"]): TelegramMessage {
@@ -61,6 +61,51 @@ describe("Telegram mention normalization", () => {
     const event = normalizeMessage(update, "e7kevinbot");
     expect(event?.content).toBe("@e7kevinbot");
     expect(event?.replyTo?.content).toContain(link);
+  });
+
+  it("keys a repeated tap by card and choice, not by callback id", async () => {
+    const deliveries: string[] = [];
+    const source = createTelegramSource({
+      getBotUsername: () => "kevin_bot",
+      api: {
+        getMe: async () => ({ id: 1, username: "kevin_bot", firstName: "Kevin" }),
+        setWebhook: async () => undefined,
+        deleteWebhook: async () => undefined,
+        sendMessage: async () => ({ messageId: 1, chatId: -1001 }),
+        sendChatAction: async () => undefined,
+        editMessageText: async () => undefined,
+        answerCallbackQuery: async () => undefined,
+        getFile: async () => undefined,
+      },
+      accept: async (input) => {
+        deliveries.push(input.deliveryId);
+        return {
+          status: "accepted",
+          receiptId: "receipt",
+          events: [],
+        };
+      },
+    });
+    const tap = (id: string) =>
+      new Request("https://hub.test/api/integrations/telegram/events", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          update_id: 1,
+          callback_query: {
+            id,
+            from: { id: 7, is_bot: false, first_name: "Gio", username: "giofoli" },
+            message: { message_id: 42, date: 1_700_000_000, chat: { id: -1001, type: "group" } },
+            data: "cve_plan",
+          },
+        }),
+      });
+    await source.handle(tap("first-tap"));
+    await source.handle(tap("late-duplicate-tap"));
+    expect(deliveries).toEqual([
+      "telegram--1001-42-callback-42-cve_plan",
+      "telegram--1001-42-callback-42-cve_plan",
+    ]);
   });
 
   it("keeps a text_link URL from the replied-to message when its text has no URL", () => {
