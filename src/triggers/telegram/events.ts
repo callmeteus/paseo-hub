@@ -23,7 +23,9 @@ export const TelegramEntitySchema = z
     type: z.string(),
     offset: z.number().int().nonnegative(),
     length: z.number().int().nonnegative(),
+    /** Bot API puts the mention text here and a text_link's target in `url`. */
     text: z.string().optional(),
+    url: z.string().optional(),
   })
   .passthrough();
 

@@ -222,7 +222,10 @@ function readRepliedContent(message: TelegramMessage): string | undefined {
   const text = replied.text ?? replied.caption ?? "";
   const urls = (replied.entities ?? replied.caption_entities ?? [])
     .filter((entity) => entity.type === "url" || entity.type === "text_link")
-    .map((entity) => entity.text ?? (entity.type === "url" ? sliceEntity(text, entity) : ""))
+    // text_link carries the address in `url`, not in `text`.
+    .map((entity) =>
+      entity.type === "text_link" ? (entity.url ?? "") : (entity.text ?? sliceEntity(text, entity)),
+    )
     .filter((url) => url.length > 0 && !text.includes(url));
   const content = [text, ...urls].filter((part) => part.length > 0).join("\n");
   return content.length > 0 ? content : undefined;

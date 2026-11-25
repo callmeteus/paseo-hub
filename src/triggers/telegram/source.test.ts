@@ -62,4 +62,26 @@ describe("Telegram mention normalization", () => {
     expect(event?.content).toBe("@e7kevinbot");
     expect(event?.replyTo?.content).toContain(link);
   });
+
+  it("keeps a text_link URL from the replied-to message when its text has no URL", () => {
+    const url = "https://cve.now/CVE-2026-99288";
+    const update = {
+      message_id: 348,
+      chat: { id: -5160361212, type: "supergroup" as const },
+      date: 1_764_077_040,
+      text: "@e7kevinbot",
+      entities: [{ type: "mention", offset: 0, length: 12 }],
+      reply_to_message: {
+        message_id: 347,
+        chat: { id: -5160361212, type: "supergroup" as const },
+        date: 1_764_077_035,
+        from: { id: 123, is_bot: true, first_name: "tl;dr CVE" },
+        text: "NoisyTCP",
+        entities: [{ type: "text_link", offset: 0, length: 8, url }],
+      },
+    };
+    const event = normalizeMessage(update, "e7kevinbot");
+    expect(event?.content).toBe("@e7kevinbot");
+    expect(event?.replyTo?.content).toContain(url);
+  });
 });
