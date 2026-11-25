@@ -143,15 +143,37 @@ export class OrganizationTriggerStore {
         });
         continue;
       }
-      for (const daemon of daemons) {
+      // An Any target can use whichever connected daemon answers. A daemon
+      // whose socket dropped is not a reason to reject the trigger while a
+      // sibling daemon can still validate the agent.
+      const verdicts = await Promise.all(
+        daemons.map(async (daemon) => {
+          try {
+            const verdict = await this.agentValidator.validateAgentConfiguration(daemon.id, agent);
+            return { daemon, verdict };
+          } catch {
+            return { daemon, verdict: undefined };
+          }
+        }),
+      );
+      const reachable = verdicts.filter((item) => item.verdict !== undefined);
+      if (reachable.length === 0) {
+        issues.push({
+          path: ["run", "target", "daemon"],
+          message: noReachableDaemon(daemons),
+        });
+        continue;
+      }
+      if (reachable.some((item) => item.verdict?.valid)) continue;
+      const first = reachable[0]!;
+      const verdict = first.verdict;
+      if ("issues" in verdict) {
         issues.push(
-          ...(await agentIssuesOnDaemon(
-            this.agentValidator,
-            daemon,
-            path,
-            agent,
-            daemons.length > 1,
-          )),
+          ...verdict.issues.map((issue) => ({
+            path: [...path, ...issue.path.map(authoredFieldName)],
+            message:
+              daemons.length > 1 ? `${first.daemon.slug}: ${issue.message}` : issue.message,
+          })),
         );
       }
     }
@@ -233,37 +255,13 @@ function authoredFieldName(segment: string | number): string | number {
   return segment;
 }
 
-async function agentIssuesOnDaemon(
-  validator: DaemonAgentConfigurationValidator,
-  daemon: { id: string; slug: string },
-  path: readonly (string | number)[],
-  agent: AuthoredAgent,
-  nameDaemon: boolean,
-): Promise<TriggerDocumentIssue[]> {
-  let verdict: Awaited<ReturnType<DaemonAgentConfigurationValidator["validateAgentConfiguration"]>>;
-  try {
-    verdict = await validator.validateAgentConfiguration(daemon.id, agent);
-  } catch (error) {
-    throw new TriggerDocumentError([
-      { path: ["run", "target", "daemon"], message: daemonUnavailable(daemon.slug, error) },
-    ]);
+function noReachableDaemon(daemons: readonly { slug: string }[]): string {
+  if (daemons.length === 0) {
+    return "No daemon is connected, so Hub cannot check this agent. Connect a daemon and save again.";
   }
-  if (verdict.valid) return [];
-  return verdict.issues.map((issue) => ({
-    path: [...path, ...issue.path.map(authoredFieldName)],
-    message: nameDaemon ? `${daemon.slug}: ${issue.message}` : issue.message,
-  }));
-}
-
-function daemonUnavailable(slug: string, error: unknown): string {
-  const reason = error instanceof Error ? error.message : String(error);
-  if (reason === "daemon_not_connected") {
-    return `"${slug}" is not connected, so Hub cannot check this agent against it. Connect the daemon and save again.`;
-  }
-  if (reason === "daemon_execution_not_allowed") {
-    return `"${slug}" cannot run Hub automations. Run \`paseo hub permissions grant hub.execute\` on it and save again.`;
-  }
-  return `"${slug}" could not check this agent: ${reason}`;
+  return `No connected daemon could validate this agent (${daemons
+    .map((daemon) => daemon.slug)
+    .join(", ")}). Connect one and save again.`;
 }
 
 /** Whether the daemon has anything new to say: the target or an agent differs from what runs now. */

@@ -42,6 +42,72 @@ describe("organization trigger store", () => {
     await assert.rejects(store.remove(saved.id), /organization trigger not found/u);
   });
 
+  it("validates an Any daemon target against connected daemons only", async () => {
+    const database = await enrolledDatabase();
+    await database.setDaemonPresence("daemon-00000000", "connected");
+    await database.issueEnrollmentToken({
+      id: "old-token",
+      verifier: "old-token-verifier",
+      organizationId: "org",
+      expiresAt: new Date("2026-08-29T22:00:00.000Z"),
+      consumedAt: null,
+    });
+    await database.enrollDaemon({
+      daemonId: "daemon-old",
+      idempotencyKey: "old-daemon-key",
+      suggestedSlug: "oldbox",
+      tokenVerifier: "old-token-verifier",
+      serverId: "old-server",
+      daemonPublicKey: "old-public-key",
+      credentialVerifier: "old-credential-verifier",
+      permissions: ["hub.execute"],
+      now: new Date("2026-08-29T21:00:00.000Z"),
+    });
+    await database.setDaemonPresence("daemon-old", "offline");
+    const store = new OrganizationTriggerStore(database, "org", acceptingAgentValidator());
+    const saved = await store.save({
+      yaml: triggerYaml(true).replace("daemon: devbox", 'daemon: "*"'),
+      userId: null,
+    });
+    assert.equal(saved.enabled, true);
+    assert.equal((await store.list()).length, 1);
+  });
+
+  it("an Any target skips a connected daemon whose socket cannot validate", async () => {
+    const database = await enrolledDatabase();
+    await database.setDaemonPresence("daemon-00000000", "connected");
+    await database.issueEnrollmentToken({
+      id: "dead-token",
+      verifier: "dead-token-verifier",
+      organizationId: "org",
+      expiresAt: new Date("2026-08-29T22:00:00.000Z"),
+      consumedAt: null,
+    });
+    await database.enrollDaemon({
+      daemonId: "daemon-dead",
+      idempotencyKey: "dead-daemon-key",
+      suggestedSlug: "ghostbox",
+      tokenVerifier: "dead-token-verifier",
+      serverId: "ghost-server",
+      daemonPublicKey: "ghost-public-key",
+      credentialVerifier: "ghost-credential-verifier",
+      permissions: ["hub.execute"],
+      now: new Date("2026-08-29T21:00:00.000Z"),
+    });
+    await database.setDaemonPresence("daemon-dead", "connected");
+    const store = new OrganizationTriggerStore(database, "org", {
+      validateAgentConfiguration: (daemonId, agent) =>
+        daemonId === "daemon-dead"
+          ? Promise.reject(new Error("daemon_not_connected"))
+          : acceptingAgentValidator().validateAgentConfiguration(daemonId, agent),
+    });
+    const saved = await store.save({
+      yaml: triggerYaml(true).replace("daemon: devbox", 'daemon: "*"'),
+      userId: null,
+    });
+    assert.equal(saved.enabled, true);
+  });
+
   it("fails validation before creating storage when the daemon is unknown", async () => {
     const database = createMemoryDatabase({ organizationIds: ["org"] });
     const store = new OrganizationTriggerStore(database, "org", acceptingAgentValidator());
@@ -158,7 +224,7 @@ describe("organization trigger store", () => {
 
     await assert.rejects(
       store.save({ yaml: triggerYaml(true), userId: null }),
-      /run\.target\.daemon: "devbox" is not connected, so Hub cannot check this agent against it/u,
+      /run\.target\.daemon: No connected daemon could validate this agent/u,
     );
   });
 
@@ -181,7 +247,7 @@ describe("organization trigger store", () => {
         yaml: triggerYaml(true).replace("mode: full-access", "mode: read-only"),
         userId: null,
       }),
-      /"devbox" is not connected/u,
+      /No connected daemon could validate this agent/u,
     );
   });
 
