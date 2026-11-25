@@ -2148,9 +2148,16 @@ async function buildCreateAgentOptions(
     ...(intent.agent.thinkingOptionId === undefined
       ? {}
       : { thinkingOptionId: intent.agent.thinkingOptionId }),
-    ...(intent.agent.options === undefined
+    ...(intent.agent.options === undefined && intent.deniedTools === undefined
       ? {}
-      : { providerOptions: structuredClone(intent.agent.options) }),
+      : {
+          providerOptions: {
+            ...structuredClone(intent.agent.options ?? {}),
+            ...(intent.deniedTools === undefined
+              ? {}
+              : { disallowedTools: [...intent.deniedTools] }),
+          },
+        }),
     cwd: intent.environment.cwd,
     env: buildAgentEnv(intent, materializedEnv),
     mcpServers: {
@@ -2162,6 +2169,7 @@ async function buildCreateAgentOptions(
       ...(intent.outputSchema === undefined ? {} : { outputSchema: intent.outputSchema }),
       loadInstructions: (intent.instructions?.length ?? 0) > 0,
       capabilities,
+      ...(intent.deniedTools === undefined ? {} : { deniedTools: intent.deniedTools }),
     }),
     // Nobody is at the keyboard. Auto-accept approves the ACP prompt once.
     // A question with several answers still waits.

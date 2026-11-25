@@ -66,6 +66,7 @@ export function compileTriggerDocument(yaml: string): CompiledTriggerDocument {
       >[number] = { type };
       if (output.max !== undefined) grant.max = output.max;
       if (output.required !== undefined) grant.required = output.required;
+      if (output.args_limit !== undefined) grant.args_limit = output.args_limit;
       allowOutputs.push(grant);
     }
   }
@@ -82,6 +83,9 @@ export function compileTriggerDocument(yaml: string): CompiledTriggerDocument {
       name: internalEventName(authored.name, index, named),
       on: event,
       max_runtime: authored.max_runtime ?? documentDeadline(authored, flattened),
+      ...(isFlowRun(authored.run) || authored.run.denied_tools === undefined
+        ? {}
+        : { denied_tools: authored.run.denied_tools }),
       filters: authoredFilters(event, definition),
       steps: flattened === undefined ? [legacyAgentStep(authored, allowOutputs)] : flattened.steps,
     };
@@ -149,7 +153,9 @@ function withAutomaticReply(trigger: CompiledTrigger): CompiledTrigger {
       return {
         ...step,
         allowOutputs: trigger.on.startsWith("telegram.")
-          ? withTelegramAgentOutputs(automaticAllowOutputs(step.allowOutputs, replyType, trigger.on))
+          ? withTelegramAgentOutputs(
+              automaticAllowOutputs(step.allowOutputs, replyType, trigger.on),
+            )
           : withSlackAgentOutputs(
               automaticAllowOutputs(step.allowOutputs, replyType, trigger.on),
               step.slackAgent,

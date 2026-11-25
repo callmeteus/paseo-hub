@@ -40,6 +40,17 @@ export const SlackAgentBlockSchema = z
       .optional(),
     feedback: z.boolean().optional(),
     assistant_text: SlackAgentAssistantTextSchema.optional(),
+    /**
+     * Reactions the Hub applies itself at execution boundaries. The agent never
+     * has to remember them; the names are data chosen by the trigger author.
+     */
+    lifecycle_reactions: z
+      .object({
+        on_start: z.string().min(1).optional(),
+        on_finish: z.string().min(1).optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
   .superRefine((block, context) => {

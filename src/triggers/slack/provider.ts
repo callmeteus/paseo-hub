@@ -485,6 +485,15 @@ export function createSlackTriggerProvider(options: {
       };
     },
     async onAgentExecutionStarted(context, outputContext) {
+      try {
+        await applyLifecycleReactions(options.client, context, outputContext, "start");
+      } catch (error) {
+        reportFailure(
+          error,
+          { operation: "slack.reaction.start", component: "triggers", provider: "slack" },
+          { diagnostic: { teamId: context.target.teamId, channelId: context.target.channelId } },
+        );
+      }
       const target = slackAgentTarget(context, outputContext);
       if (target === undefined) {
         await publishAssistantStatus(options.client, context, ASSISTANT_RUNNING_STATUS);
@@ -504,9 +513,11 @@ export function createSlackTriggerProvider(options: {
       }
     },
     async onAgentExecutionCompleted(context, outputContext) {
+      await applyFinishReactions(options.client, context, outputContext);
       await finishSlackAgentLifecycle(options.client, context, outputContext, "success");
     },
     async onAgentExecutionFailed(context, outputContext, reason) {
+      await applyFinishReactions(options.client, context, outputContext);
       await finishSlackAgentLifecycle(options.client, context, outputContext, "failure");
       if (
         reason === "stopped_by_user" ||
@@ -755,6 +766,58 @@ function slackAgentTarget(
  *
  * A failure of the new path clears the legacy indicator so "Working..." cannot sit for an hour.
  */
+/**
+ * Applies the reactions a trigger configured for the execution boundaries.
+ * The Hub does this itself so the model cannot forget it.
+ *
+ * @param client - Workspace bot
+ * @param context - Trigger context with the arrival that opened the thread
+ * @param outputContext - Output context carrying the configured block
+ * @param phase - Which boundary is closing
+ */
+async function applyLifecycleReactions(
+  client: SlackBotClient,
+  context: SlackTriggerContext,
+  outputContext: SlackOutputContext | undefined,
+  phase: "start" | "finish",
+): Promise<void> {
+  const block = outputContext?.slackAgent ?? context.target.slackAgent;
+  const name =
+    phase === "start"
+      ? block?.lifecycle_reactions?.on_start
+      : block?.lifecycle_reactions?.on_finish;
+  if (name === undefined) return;
+  const message = context.event.slack.trigger_message;
+  const timestamps = new Set([message.ts]);
+  const threadTs = message.thread?.ts;
+  if (threadTs !== undefined && threadTs !== message.ts) timestamps.add(threadTs);
+  for (const messageTs of timestamps) {
+    await client.addReaction({
+      organizationId: context.target.organizationId,
+      teamId: context.target.teamId,
+      channelId: message.channel.id,
+      messageTs,
+      name,
+    });
+  }
+}
+
+async function applyFinishReactions(
+  client: SlackBotClient,
+  context: SlackTriggerContext,
+  outputContext: SlackOutputContext | undefined,
+): Promise<void> {
+  try {
+    await applyLifecycleReactions(client, context, outputContext, "finish");
+  } catch (error) {
+    reportFailure(
+      error,
+      { operation: "slack.reaction.finish", component: "triggers", provider: "slack" },
+      { diagnostic: { teamId: context.target.teamId, channelId: context.target.channelId } },
+    );
+  }
+}
+
 async function finishSlackAgentLifecycle(
   client: SlackBotClient,
   context: SlackTriggerContext,

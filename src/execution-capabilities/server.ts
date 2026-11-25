@@ -267,6 +267,19 @@ function createMcpServer(
   return server;
 }
 
+function checkArgsLimit(
+  limits: Record<string, number> | undefined,
+  args: Record<string, unknown>,
+): string | undefined {
+  for (const [key, maximum] of Object.entries(limits ?? {})) {
+    const value = args[key];
+    if (typeof value === "number" && value > maximum) {
+      return `${key} exceeds the configured maximum of ${maximum}`;
+    }
+  }
+  return undefined;
+}
+
 async function callExecutionTool(
   options: Pick<
     ExecutionCapabilityOptions,
@@ -289,12 +302,20 @@ async function callExecutionTool(
     hasInstructionCatalog(execution),
   ).find((candidate) => candidate.name === resolvedToolName);
   if (!tool) return toolFailure(`Tool ${toolName} not found`);
+  if (execution.launchIntent?.deniedTools?.includes(resolvedToolName) === true) {
+    return toolFailure(`Tool ${resolvedToolName} is denied for this execution`);
+  }
   const contract =
     toolName === finishExecutionToolName
       ? finishExecutionContract(tool.inputSchema)
       : jsonSchemaContract(tool.inputSchema);
   const validation = contract.validate(args);
   if (!validation.valid) return toolFailure(validation.message);
+  const declaration = materializedOutputs.find(
+    (item) => item.capability.tool.name === resolvedToolName,
+  )?.declaration;
+  const limitFailure = checkArgsLimit(declaration?.args_limit, args);
+  if (limitFailure !== undefined) return toolFailure(limitFailure);
   if (toolName === clearHardDeadlineToolName) return clearHardDeadlineCall(options, execution);
   if (toolName === memorySaveToolName) return memorySaveCall(options, execution, args);
   if (toolName === memorySearchToolName) return memorySearchCall(options, execution, args);

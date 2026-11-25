@@ -113,6 +113,18 @@ describe("self-contained trigger documents", () => {
     );
   });
 
+  it("compiles optional tool denials and argument limits", () => {
+    const yaml = trigger.replace(
+      "    slack.reply:\n      max: 5",
+      "    slack.reply:\n      max: 5\n      args_limit:\n        content: 1000\n  denied_tools: [question]",
+    );
+    const compiled = compileTriggerDocument(yaml);
+    assert.deepEqual(compiled.events[0]?.deniedTools, ["question"]);
+    assert.deepEqual(compiled.events[0]?.steps[0]?.allowOutputs?.[0]?.args_limit, {
+      content: 1000,
+    });
+  });
+
   it("rejects a non-boolean background value", () => {
     assert.throws(
       () => parseTriggerDocument(trigger.replace("run:", 'run:\n  background: "true"')),

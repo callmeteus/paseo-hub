@@ -49,6 +49,8 @@ export interface LaunchMachineIntent {
   instructions?: readonly LaunchInstruction[];
   agent: TriggerAgentConfig;
   allowOutputs: readonly AllowedOutput[];
+  /** Tool names this run must not use, from the trigger's `denied_tools`. */
+  deniedTools?: readonly string[];
   timeoutMs?: number;
   startupTimeoutMs?: number;
   idleTimeoutMs?: number;
@@ -79,6 +81,7 @@ export function buildLaunchMachineIntent(input: {
   instructions?: readonly LaunchInstruction[];
   agent: TriggerAgentConfig;
   allowOutputs: readonly AllowedOutput[];
+  deniedTools?: readonly string[];
   timeoutMs?: number;
   startupTimeoutMs?: number;
   idleTimeoutMs?: number;
@@ -106,6 +109,7 @@ export function buildLaunchMachineIntent(input: {
       : { instructions: input.instructions }),
     agent: input.agent,
     allowOutputs: input.allowOutputs,
+    ...(input.deniedTools === undefined ? {} : { deniedTools: input.deniedTools }),
     ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
     ...(input.startupTimeoutMs === undefined ? {} : { startupTimeoutMs: input.startupTimeoutMs }),
     ...(input.idleTimeoutMs === undefined ? {} : { idleTimeoutMs: input.idleTimeoutMs }),

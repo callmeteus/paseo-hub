@@ -135,6 +135,7 @@ export const TriggerOutputSchema = z
   .object({
     max: z.number().int().positive().optional(),
     required: z.boolean().optional(),
+    args_limit: z.record(z.string(), z.number().int().positive()).optional(),
   })
   .strict();
 
@@ -219,6 +220,8 @@ const AgentReactionFields = {
     .strict()
     .optional(),
   outputs: z.record(z.string().regex(EVENT_NAME), TriggerOutputSchema).optional(),
+  /** Tool names the Hub must not grant to this run. */
+  denied_tools: z.array(z.string().min(1)).optional(),
   /** Opt-in Slack agent session. Absent keeps the legacy assistant status. */
   slack_agent: SlackAgentBlockSchema.optional(),
   auto_archive: z.boolean().default(true),

@@ -37,6 +37,9 @@ const RpcResponseSchema = z
   })
   .passthrough();
 const ToolResultSchema = z.object({ isError: z.boolean().optional() }).passthrough();
+const ToolTextResultSchema = ToolResultSchema.extend({
+  content: z.array(z.object({ type: z.literal("text"), text: z.string() })),
+});
 const ToolsListSchema = z
   .object({
     tools: z.array(z.object({ name: z.string(), inputSchema: z.unknown() }).passthrough()),
@@ -218,6 +221,90 @@ describe("execution capability MCP boundary", () => {
       (await fixture.database.findAgentExecutionById(fixture.executionId))?.outputEmissions,
       { "slack.reply": 3 },
     );
+  });
+
+  it("enforces a configured argument maximum on a tool call", async () => {
+    const limitedTool = {
+      ...replyOutputTool,
+      inputSchema: {
+        ...replyOutputTool.inputSchema,
+        properties: {
+          ...replyOutputTool.inputSchema.properties,
+          limit: { type: "integer" },
+        },
+      },
+    };
+    const fixture = await capabilityFixture(
+      undefined,
+      "succeeded",
+      null,
+      undefined,
+      false,
+      [],
+      limitedTool,
+      [],
+      { limit: 10 },
+    );
+
+    const allowed = ToolTextResultSchema.parse(
+      (
+        await fixture.call("tools/call", {
+          name: "reply",
+          arguments: { content: "ok", limit: 10 },
+        })
+      ).result,
+    );
+    assert.equal(allowed.isError, undefined);
+
+    const rejected = ToolTextResultSchema.parse(
+      (
+        await fixture.call("tools/call", {
+          name: "reply",
+          arguments: { content: "too much", limit: 20 },
+        })
+      ).result,
+    );
+    assert.equal(rejected.isError, true);
+    assert.match(rejected.content[0]?.text ?? "", /limit/u);
+  });
+
+  it("caps replies at the configured maximum", async () => {
+    const fixture = await capabilityFixture();
+    const first = ToolTextResultSchema.parse(
+      (await fixture.call("tools/call", { name: "reply", arguments: { content: "first" } })).result,
+    );
+    const second = ToolTextResultSchema.parse(
+      (await fixture.call("tools/call", { name: "reply", arguments: { content: "second" } }))
+        .result,
+    );
+    assert.equal(first.isError, undefined);
+    assert.equal(second.isError, true);
+    assert.match(second.content[0]?.text ?? "", /limit/u);
+  });
+
+  it("rejects a call to a denied tool", async () => {
+    const fixture = await capabilityFixture(
+      undefined,
+      "succeeded",
+      null,
+      undefined,
+      false,
+      [],
+      replyOutputTool,
+      [],
+      undefined,
+      ["reply"],
+    );
+    const result = ToolTextResultSchema.parse(
+      (
+        await fixture.call("tools/call", {
+          name: "reply",
+          arguments: { content: "blocked" },
+        })
+      ).result,
+    );
+    assert.equal(result.isError, true);
+    assert.match(result.content[0]?.text ?? "", /denied/u);
   });
 
   it("renders the structured execution MCP contract exposed by the server", async () => {
@@ -940,11 +1027,20 @@ async function capabilityFixture(
   requiredOutputTypes: readonly string[] = [],
   outputTool = replyOutputTool,
   additionalCapabilities: readonly OutputCapability[] = [],
+  argsLimit?: Record<string, number>,
+  deniedTools?: readonly string[],
 ) {
   const database = createMemoryDatabase();
   const executionId = randomUUID();
   const token = "token";
-  const intent = launchIntent(maxReplies, outputSchema, autoArchive, requiredOutputTypes);
+  const intent = launchIntent(
+    maxReplies,
+    outputSchema,
+    autoArchive,
+    requiredOutputTypes,
+    argsLimit,
+    deniedTools,
+  );
   await database.insertAgentExecution({
     id: executionId,
     organizationId: "org-1",
@@ -1087,6 +1183,8 @@ function launchIntent(
   outputSchema?: JsonValue,
   autoArchive = false,
   requiredOutputTypes: readonly string[] = [],
+  argsLimit?: Record<string, number>,
+  deniedTools?: readonly string[],
 ): LaunchMachineIntent {
   return {
     kind: "launch_machine",
@@ -1108,11 +1206,13 @@ function launchIntent(
         type: "slack.reply",
         ...(maxReplies === null ? {} : { max: maxReplies }),
         ...(requiredOutputTypes.includes("slack.reply") ? { required: true } : {}),
+        ...(argsLimit === undefined ? {} : { args_limit: argsLimit }),
       },
       ...requiredOutputTypes
         .filter((type) => type !== "slack.reply")
         .map((type) => ({ type, max: 1, required: true as const })),
     ],
+    ...(deniedTools === undefined ? {} : { deniedTools: [...deniedTools] }),
     autoArchive,
     background: false,
     triggerContext: { provider: "slack" },

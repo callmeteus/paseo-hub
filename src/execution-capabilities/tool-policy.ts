@@ -14,6 +14,7 @@ export function executionToolPolicy(input: {
   outputSchema?: JsonValue;
   loadInstructions?: boolean;
   capabilities: OutputExecutorRegistry;
+  deniedTools?: readonly string[];
 }): ToolPolicy {
   const materializedOutputs = input.capabilities.materialize(
     input.allowOutputs,
@@ -24,10 +25,12 @@ export function executionToolPolicy(input: {
       input.outputSchema,
       materializedOutputs,
       input.loadInstructions === true,
-    ).map((tool) => ({
-      kind: "mcp" as const,
-      server: HUB_MCP_SERVER,
-      tool: tool.name,
-    })),
+    )
+      .filter((tool) => !input.deniedTools?.includes(tool.name))
+      .map((tool) => ({
+        kind: "mcp" as const,
+        server: HUB_MCP_SERVER,
+        tool: tool.name,
+      })),
   };
 }

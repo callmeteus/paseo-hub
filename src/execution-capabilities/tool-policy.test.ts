@@ -4,6 +4,29 @@ import { OutputExecutorRegistry, replyOutputTool } from "./outputs.js";
 import { executionToolPolicy } from "./tool-policy.js";
 
 describe("execution tool policy", () => {
+  it("omits configured tool names from the granted set", () => {
+    const capabilities = new OutputExecutorRegistry();
+    capabilities.register({
+      type: "discord.reply",
+      tool: replyOutputTool,
+      available: (context) =>
+        typeof context === "object" && context !== null && Reflect.get(context, "reply") === true,
+      execute: async () => undefined,
+    });
+
+    const policy = executionToolPolicy({
+      allowOutputs: [{ type: "discord.reply", max: 1 }],
+      outputContext: { reply: true },
+      capabilities,
+      deniedTools: ["reply"],
+    });
+
+    assert.equal(
+      policy.preapproved.some((grant) => grant.tool === "reply"),
+      false,
+    );
+  });
+
   it("preapproves finish plus exactly the materialized execution capabilities", () => {
     const capabilities = new OutputExecutorRegistry();
     capabilities.register({

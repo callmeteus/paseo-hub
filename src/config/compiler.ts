@@ -95,6 +95,7 @@ const AllowOutputSchema = z
     type: z.string().regex(EVENT_NAME),
     max: z.number().int().nonnegative().optional(),
     required: z.boolean().optional(),
+    args_limit: z.record(z.string(), z.number().int().positive()).optional(),
   })
   .strict()
   .superRefine((output, context) => {
@@ -319,6 +320,8 @@ const AuthoredTriggerSchema = z
     steps: z.array(StepSchema).min(1),
     inputs: z.record(z.string(), AuthoredInputSchema).optional(),
     values: z.record(z.string(), z.string().min(1)).optional(),
+    /** Tool names the Hub must not grant or accept in this trigger's executions. */
+    denied_tools: z.array(z.string().min(1)).optional(),
     filters: AuthoredTriggerFilterSchema.optional(),
     /** Locale of the system messages this trigger posts. Absent reads as English. */
     locale: LocaleSchema.optional(),
@@ -407,7 +410,12 @@ export interface CompiledStep {
   github?: CompiledGitHubAuthority | undefined;
   condition?: Expression | undefined;
   output?: { schema: JsonValue } | undefined;
-  allowOutputs: readonly { type: string; max?: number | undefined; required: boolean }[];
+  allowOutputs: readonly {
+    type: string;
+    max?: number | undefined;
+    required: boolean;
+    args_limit?: Record<string, number> | undefined;
+  }[];
   /** Present when this step opted into the Slack agent surface. */
   slackAgent?: SlackAgentBlock | undefined;
   autoArchive: boolean;
@@ -492,6 +500,8 @@ export interface CompiledTrigger {
   steps: CompiledSteps;
   inputs: Readonly<Record<string, CompiledInput>>;
   values: Readonly<Record<string, Expression>>;
+  /** Tool names withheld from every execution of this trigger. */
+  deniedTools?: readonly string[] | undefined;
   filters?: CompiledTriggerFilter | undefined;
   /** Rails enforced when this run sends a message. Absent means no extra restriction. */
   guardrails?: readonly Guardrail[] | undefined;
@@ -798,6 +808,7 @@ function compileTrigger(
     steps,
     inputs,
     values,
+    ...(trigger.denied_tools === undefined ? {} : { deniedTools: trigger.denied_tools }),
     ...(trigger.filters === undefined
       ? {}
       : { filters: migrateSlackTextFilter({ on: trigger.on, filters: trigger.filters }).filters }),
@@ -995,11 +1006,16 @@ function compileStep(
     ...(condition === undefined ? {} : { condition }),
     ...(outputDeclaration === undefined ? {} : { output: outputDeclaration }),
     ...authoredSlackAgent(step),
-    allowOutputs: (step.allow_outputs ?? []).map((allowOutput) => ({
-      type: allowOutput.type,
-      max: allowOutput.max ?? 1,
-      required: allowOutput.required ?? false,
-    })),
+    allowOutputs: (step.allow_outputs ?? []).map((allowOutput) =>
+      Object.assign(
+        {
+          type: allowOutput.type,
+          max: allowOutput.max ?? 1,
+          required: allowOutput.required ?? false,
+        },
+        allowOutput.args_limit === undefined ? {} : { args_limit: allowOutput.args_limit },
+      ),
+    ),
     autoArchive: step.auto_archive ?? false,
     background: step.background ?? false,
   };

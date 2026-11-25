@@ -11,6 +11,8 @@ export interface AllowedOutput {
   /** Absent for the event-native reply capability exposed by single-run triggers. */
   max?: number | undefined;
   required?: boolean;
+  /** Per-argument numeric maxima the Hub enforces before the tool runs. */
+  args_limit?: Record<string, number> | undefined;
 }
 
 export interface OutputToolSchemaNode {

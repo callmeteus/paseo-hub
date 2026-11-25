@@ -1232,6 +1232,12 @@ export class DurableWorkflowEngine {
   }
 }
 
+function deniedToolsInput(trigger: { deniedTools?: readonly string[] | undefined }): {
+  deniedTools?: readonly string[];
+} {
+  return trigger.deniedTools === undefined ? {} : { deniedTools: trigger.deniedTools };
+}
+
 async function buildStepIntent(
   configuration: CompiledProjectConfiguration,
   triggerName: string,
@@ -1295,6 +1301,7 @@ async function buildStepIntent(
       ...(composed.instructions.length === 0 ? {} : { instructions: composed.instructions }),
       agent,
       allowOutputs: slackReactGrant(step.allowOutputs, run.outputContext),
+      ...deniedToolsInput(trigger),
       timeoutMs: step.maxRuntimeMs,
       idleTimeoutMs: step.idleTimeoutMs,
       ...(step.startupTimeoutMs === undefined ? {} : { startupTimeoutMs: step.startupTimeoutMs }),
