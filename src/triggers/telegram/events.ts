@@ -15,6 +15,7 @@ export const TelegramFromSchema = z
     is_bot: z.boolean().optional(),
     first_name: z.string(),
     username: z.string().optional(),
+    language_code: z.string().optional(),
   })
   .passthrough();
 
@@ -43,6 +44,22 @@ export const TelegramAttachmentSchema = z.object({
   size: z.number().int().nonnegative(),
 });
 
+export const TelegramReplyMarkupSchema = z
+  .object({
+    inline_keyboard: z.array(
+      z.array(
+        z
+          .object({
+            text: z.string(),
+            callback_data: z.string().optional(),
+            url: z.string().optional(),
+          })
+          .passthrough(),
+      ),
+    ),
+  })
+  .passthrough();
+
 export const TelegramReplyToSchema = z
   .object({
     message_id: z.number().int(),
@@ -65,6 +82,7 @@ export const TelegramMessageSchema = z
     entities: z.array(TelegramEntitySchema).optional(),
     caption_entities: z.array(TelegramEntitySchema).optional(),
     reply_to_message: TelegramReplyToSchema.optional(),
+    reply_markup: TelegramReplyMarkupSchema.optional(),
     photo: z.array(TelegramPhotoSizeSchema).optional(),
     document: z
       .object({

@@ -158,6 +158,27 @@ describe("Slack interactivity", () => {
     assert.equal(settled, undefined);
   });
 
+  it("passes the button label and the trigger locale to the card settlement", async () => {
+    const settled: SettleSlackPlanDecisionInput[] = [];
+    const endpoint = source(
+      (input) =>
+        Promise.resolve(
+          acceptance({
+            ...input,
+            source: "slack.message",
+            payload: input.payload,
+          }),
+        ),
+      async (input) => {
+        settled.push(input);
+      },
+      () => Promise.resolve("pt-BR"),
+    );
+    await endpoint.handle(formRequest(blockActions("paseo_choice_0", "ship", "Gerar plano")));
+    assert.equal(settled[0]?.label, "Gerar plano");
+    assert.equal(settled[0]?.locale, "pt-BR");
+  });
+
   it("names who clicked in the context line, in the trigger locale", () => {
     const blocks = decisionInput().blocks;
     const updated = blocksAfterChoice(blocks, "Ship it", "<@U123>", "pt-BR");
@@ -201,6 +222,7 @@ function source(
     input: Parameters<Parameters<typeof createSlackInteractivitySource>[0]["accept"]>[0],
   ) => Promise<ProviderEventAcceptance>,
   settle?: (input: SettleSlackPlanDecisionInput) => Promise<void>,
+  localeFor?: (receiptId: string) => Promise<string | undefined>,
 ) {
   return createSlackInteractivitySource({
     appId: APP_ID,
@@ -208,6 +230,7 @@ function source(
     now: () => NOW,
     accept,
     ...(settle === undefined ? {} : { settlePlanDecision: settle }),
+    ...(localeFor === undefined ? {} : { localeFor }),
   });
 }
 

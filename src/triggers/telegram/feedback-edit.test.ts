@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TelegramBotApi } from "../../providers/telegram/client.js";
-import { settleTelegramChoice } from "./feedback.js";
+import { settleTelegramChoice, telegramChoiceLabelFromMarkup } from "./feedback.js";
 
 function apiWithEdits(): {
   api: TelegramBotApi;
@@ -32,6 +32,23 @@ function apiWithEdits(): {
   });
   return { api, edits, acks };
 }
+
+describe("telegram button label", () => {
+  it("reads the button text from the clicked message markup", () => {
+    const markup = {
+      inline_keyboard: [
+        [{ text: "Gerar plano", callback_data: "cve_plan" }],
+        [{ text: "Nada por agora", callback_data: "cve_close" }],
+      ],
+    };
+    expect(telegramChoiceLabelFromMarkup(markup, "cve_plan")).toBe("Gerar plano");
+    expect(telegramChoiceLabelFromMarkup(markup, "cve_close")).toBe("Nada por agora");
+  });
+
+  it("falls back to the callback value when the message has no markup", () => {
+    expect(telegramChoiceLabelFromMarkup(undefined, "cve_plan")).toBe("cve_plan");
+  });
+});
 
 describe("telegram button settlement", () => {
   it("replaces the keyboard with the translated chooser line", async () => {

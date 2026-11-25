@@ -13,7 +13,12 @@ import {
   type TelegramMessage,
   type TelegramUpdate,
 } from "./events.js";
-import { settleTelegramChoice, telegramChoiceArrival } from "./feedback.js";
+import { localeFromLanguageCode } from "../../i18n/messages.js";
+import {
+  settleTelegramChoice,
+  telegramChoiceArrival,
+  telegramChoiceLabelFromMarkup,
+} from "./feedback.js";
 
 const MAX_BODY_BYTES = 1_048_576;
 
@@ -117,7 +122,10 @@ async function handleTelegramCallback(
   options: CreateTelegramSourceOptions,
 ): Promise<void> {
   if (callback.data === undefined) return;
-  const choiceLabel = options.choiceLabel?.(callback.data) ?? callback.data;
+  const choiceLabel = telegramChoiceLabelFromMarkup(
+    callback.message?.reply_markup,
+    callback.data,
+  );
   const arrival = telegramChoiceArrival({ label: choiceLabel, value: callback.data });
   // Acknowledging the tap is cosmetic. A stale or replayed callback id must not
   // stop the choice from reaching the agent, but a real failure goes to the log.
@@ -157,7 +165,9 @@ async function settleCallbackCard(
   receiptId: string,
   options: CreateTelegramSourceOptions,
 ): Promise<void> {
-  const locale = await options.localeFor?.(receiptId).catch(() => undefined);
+  // Trigger locale first, then the language the clicker set on their client.
+  const configured = await options.localeFor?.(receiptId).catch(() => undefined);
+  const locale = configured ?? localeFromLanguageCode(callback.from.language_code);
   const user =
     callback.from.username === undefined ? callback.from.first_name : `@${callback.from.username}`;
   try {

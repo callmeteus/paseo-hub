@@ -54,6 +54,21 @@ export async function settleTelegramChoice(
   });
 }
 
+/**
+ * The text of the button that was clicked. The Bot API carries the buttons of
+ * the clicked message in `reply_markup`; `callback_data` is only the stable
+ * value, not what the person read on the button.
+ */
+export function telegramChoiceLabelFromMarkup(
+  markup:
+    | { inline_keyboard: readonly (readonly { text: string; callback_data?: string | undefined }[])[] }
+    | undefined,
+  value: string,
+): string {
+  const button = markup?.inline_keyboard.flat().find((item) => item.callback_data === value);
+  return button?.text ?? value;
+}
+
 /** Renders choices as one row of inline-keyboard buttons. */
 export function telegramChoiceKeyboard(choices: readonly TelegramChoice[]): TelegramInlineKeyboard {
   return {

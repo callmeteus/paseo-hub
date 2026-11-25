@@ -136,6 +136,18 @@ export function localeOf(value: string | undefined): Locale {
 }
 
 /**
+ * A person's language tag mapped to a shipped locale. `pt` and `pt-br` are the
+ * common tags Telegram sends; anything else falls back to the default.
+ */
+export function localeFromLanguageCode(value: string | undefined): Locale {
+  const normalized = value?.toLowerCase();
+  if (normalized === "pt" || normalized === "pt-br") {
+    return "pt-BR";
+  }
+  return DEFAULT_LOCALE;
+}
+
+/**
  * One system sentence, in the requested locale and falling back to `en`.
  *
  * @param locale - Locale of the trigger, or undefined for the default

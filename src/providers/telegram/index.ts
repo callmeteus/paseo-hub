@@ -114,7 +114,9 @@ export function createTelegramRegistration(
     choiceLabel: (value) => choiceLabels.get(value),
     localeFor: async (receiptId) => {
       const runs = await database.findTriggerRunsByProviderEventReceiptId(receiptId);
-      const context = runs[0]?.outputContext;
+      // Telegram keeps the trigger locale on the trigger context; Slack also
+      // copies it onto the output context.
+      const context = runs[0]?.triggerContext ?? runs[0]?.outputContext;
       if (typeof context !== "object" || context === null) return undefined;
       if (!("locale" in context)) return undefined;
       const locale: unknown = context.locale;

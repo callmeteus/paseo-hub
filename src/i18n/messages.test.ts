@@ -6,6 +6,7 @@ import {
   MESSAGE_KEYS,
   catalogs,
   localeOf,
+  localeFromLanguageCode,
   message,
   SUPPORTED_LOCALES,
 } from "./messages.js";
@@ -24,6 +25,15 @@ describe("message catalog", () => {
       message("pt-BR", "failure.machine"),
       "Não consegui começar agora porque a máquina que me roda está fora. Avise quem cuida do Hub.",
     );
+  });
+
+  it("maps a person's language code to a shipped locale", () => {
+    assert.equal(localeFromLanguageCode("pt-br"), "pt-BR");
+    assert.equal(localeFromLanguageCode("pt-BR"), "pt-BR");
+    assert.equal(localeFromLanguageCode("pt"), "pt-BR");
+    assert.equal(localeFromLanguageCode("en"), "en");
+    assert.equal(localeFromLanguageCode("en-US"), "en");
+    assert.equal(localeFromLanguageCode(undefined), DEFAULT_LOCALE);
   });
 
   it("falls back to English for an unknown locale", () => {
