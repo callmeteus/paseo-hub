@@ -1336,6 +1336,65 @@ describe("Slack Phase 1 trigger provider", () => {
 
     assert.deepEqual(client.reactions, ["org-1:T1:add:eyes", "org-1:T1:add:white_check_mark"]);
   });
+
+  it("does not apply on_finish when the execution fails", async () => {
+    const base = configuration();
+    const step: Record<string, unknown> = base.triggers[0]!.steps[0]!;
+    step["slack_agent"] = {
+      display: "timeline",
+      lifecycle_reactions: { on_finish: "white_check_mark" },
+    };
+    const database = createMemoryDatabase();
+    const { project, revision, store } = await createActiveProjectConfiguration(database, base, {
+      organizationId: "org-1",
+    });
+    const client = new RecordingSlackClient();
+    const provider = createSlackTriggerProvider({
+      configurationStoreForProject: () => store,
+      botUserIdForWorkspace: () => Promise.resolve("UBOT"),
+      client,
+      billingUrlForOrganization: async () => "https://hub.test/billing",
+    });
+    const result = await provider.match(external(project.id, revision.id));
+    const match = result[0];
+    if (!isAcceptedTriggerProviderMatch(match)) throw new Error("expected accepted match");
+
+    await provider.onAgentExecutionFailed?.(match.triggerContext, match.outputContext, "boom");
+
+    assert.deepEqual(client.reactions, []);
+  });
+
+  it("applies on_failure only when the execution fails", async () => {
+    const base = configuration();
+    const step: Record<string, unknown> = base.triggers[0]!.steps[0]!;
+    step["slack_agent"] = {
+      display: "timeline",
+      lifecycle_reactions: { on_finish: "eyes", on_failure: "warning" },
+    };
+    const database = createMemoryDatabase();
+    const { project, revision, store } = await createActiveProjectConfiguration(database, base, {
+      organizationId: "org-1",
+    });
+    const client = new RecordingSlackClient();
+    const provider = createSlackTriggerProvider({
+      configurationStoreForProject: () => store,
+      botUserIdForWorkspace: () => Promise.resolve("UBOT"),
+      client,
+      billingUrlForOrganization: async () => "https://hub.test/billing",
+    });
+    const result = await provider.match(external(project.id, revision.id));
+    const match = result[0];
+    if (!isAcceptedTriggerProviderMatch(match)) throw new Error("expected accepted match");
+
+    await provider.onAgentExecutionCompleted?.(match.triggerContext, match.outputContext, {
+      status: "succeeded",
+    });
+    assert.deepEqual(client.reactions, ["org-1:T1:add:eyes"]);
+
+    client.reactions.length = 0;
+    await provider.onAgentExecutionFailed?.(match.triggerContext, match.outputContext, "boom");
+    assert.deepEqual(client.reactions, ["org-1:T1:add:warning"]);
+  });
 });
 
 function configuration() {

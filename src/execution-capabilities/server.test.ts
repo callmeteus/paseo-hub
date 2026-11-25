@@ -268,6 +268,31 @@ describe("execution capability MCP boundary", () => {
     assert.match(rejected.content[0]?.text ?? "", /limit/u);
   });
 
+  it("rejects a final reply after a plan reply in the same execution with max 1", async () => {
+    const fixture = await capabilityFixture(undefined, "succeeded", 1);
+
+    const plan = ToolTextResultSchema.parse(
+      (
+        await fixture.call("tools/call", {
+          name: "reply",
+          arguments: { content: "Plan ready: four cases covered." },
+        })
+      ).result,
+    );
+    assert.equal(plan.isError, undefined);
+
+    const final = ToolTextResultSchema.parse(
+      (
+        await fixture.call("tools/call", {
+          name: "reply",
+          arguments: { content: "Final: PR <https://example.test/pull/1|1> is open." },
+        })
+      ).result,
+    );
+    assert.equal(final.isError, true);
+    assert.match(final["content"][0]?.text ?? "", /limit/u);
+  });
+
   it("caps replies at the configured maximum", async () => {
     const fixture = await capabilityFixture();
     const first = ToolTextResultSchema.parse(

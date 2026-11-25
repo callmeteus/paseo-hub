@@ -48,6 +48,7 @@ export const SlackAgentBlockSchema = z
       .object({
         on_start: z.string().min(1).optional(),
         on_finish: z.string().min(1).optional(),
+        on_failure: z.string().min(1).optional(),
       })
       .strict()
       .optional(),

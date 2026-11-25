@@ -513,11 +513,11 @@ export function createSlackTriggerProvider(options: {
       }
     },
     async onAgentExecutionCompleted(context, outputContext) {
-      await applyFinishReactions(options.client, context, outputContext);
+      await applyBoundaryReactions(options.client, context, outputContext, "finish");
       await finishSlackAgentLifecycle(options.client, context, outputContext, "success");
     },
     async onAgentExecutionFailed(context, outputContext, reason) {
-      await applyFinishReactions(options.client, context, outputContext);
+      await applyBoundaryReactions(options.client, context, outputContext, "failure");
       await finishSlackAgentLifecycle(options.client, context, outputContext, "failure");
       if (
         reason === "stopped_by_user" ||
@@ -538,6 +538,7 @@ export function createSlackTriggerProvider(options: {
       return null;
     },
     async onMachineTerminated(context, reason, reactionState) {
+      await applyBoundaryReactions(options.client, context, context.target, "failure");
       await finishSlackAgentLifecycle(options.client, context, context.target, "failure");
       if (reason === "launch_failed" || reason === "daemon_disconnected") {
         await failWithNotice(
@@ -779,13 +780,14 @@ async function applyLifecycleReactions(
   client: SlackBotClient,
   context: SlackTriggerContext,
   outputContext: SlackOutputContext | undefined,
-  phase: "start" | "finish",
+  phase: "start" | "finish" | "failure",
 ): Promise<void> {
   const block = outputContext?.slackAgent ?? context.target.slackAgent;
-  const name =
-    phase === "start"
-      ? block?.lifecycle_reactions?.on_start
-      : block?.lifecycle_reactions?.on_finish;
+  const reactions = block?.lifecycle_reactions;
+  let name: string | undefined;
+  if (phase === "start") name = reactions?.on_start;
+  else if (phase === "finish") name = reactions?.on_finish;
+  else name = reactions?.on_failure;
   if (name === undefined) return;
   const message = context.event.slack.trigger_message;
   const timestamps = new Set([message.ts]);
@@ -802,17 +804,18 @@ async function applyLifecycleReactions(
   }
 }
 
-async function applyFinishReactions(
+async function applyBoundaryReactions(
   client: SlackBotClient,
   context: SlackTriggerContext,
   outputContext: SlackOutputContext | undefined,
+  phase: "finish" | "failure",
 ): Promise<void> {
   try {
-    await applyLifecycleReactions(client, context, outputContext, "finish");
+    await applyLifecycleReactions(client, context, outputContext, phase);
   } catch (error) {
     reportFailure(
       error,
-      { operation: "slack.reaction.finish", component: "triggers", provider: "slack" },
+      { operation: `slack.reaction.${phase}`, component: "triggers", provider: "slack" },
       { diagnostic: { teamId: context.target.teamId, channelId: context.target.channelId } },
     );
   }
