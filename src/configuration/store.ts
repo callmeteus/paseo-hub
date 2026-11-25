@@ -654,6 +654,7 @@ async function compileTriggers(
   const issues: { path: readonly (string | number)[]; message: string }[] = [];
 
   for (const trigger of triggers) {
+    issues.push(...githubAuthorityIssues(trigger, usage));
     const provider = providerForEvent(trigger.on);
     if (provider === undefined) {
       compiled.push(trigger);
@@ -734,6 +735,27 @@ async function compileTriggers(
     }
   }
   return { triggers: compiled, routes, issues };
+}
+
+/** Step-level GitHub authority is minted at dispatch; catch an unknown slug at install. */
+function githubAuthorityIssues(
+  trigger: CompiledTrigger,
+  usage: Awaited<ReturnType<Database["organizationConnectionUsage"]>>,
+): { path: readonly (string | number)[]; message: string }[] {
+  const issues: { path: readonly (string | number)[]; message: string }[] = [];
+  const connections = usage.github ?? [];
+  for (const step of trigger.steps) {
+    const slug = step.github?.connection;
+    if (typeof slug !== "string" || connections.some((item) => item.slug === slug)) continue;
+    issues.push({
+      path: [trigger.sourceFile ?? ".paseo/workflows", "steps", step.id, "github", "connection"],
+      message: `"${slug}" does not match any GitHub connection (${formatConnectionCandidates(
+        "github",
+        connections,
+      )})`,
+    });
+  }
+  return issues;
 }
 
 function providerForEvent(eventName: string): ConnectionProvider | undefined {

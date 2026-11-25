@@ -339,6 +339,55 @@ describe("ProjectConfigurationStore resource compilation", () => {
     });
   });
 
+  it("rejects a step GitHub connection that does not exist at install time", async () => {
+    const database = createMemoryDatabase();
+    await enrollTestDaemon(database);
+    database.organizationConnectionUsage = () =>
+      Promise.resolve({ github: [], slack: [], discord: [], linear: [], telegram: [] });
+    const project = await database.createProject({
+      organizationId: "org_1",
+      name: "GitHub authority project",
+      slug: "github-authority-project",
+      createdByUserId: "user-1",
+    });
+    const store = new ProjectConfigurationStore(database, project.id);
+    const configuration = {
+      environments: [{ name: "runner", kind: "daemon", daemon: TEST_DAEMON_SLUG, cwd: "/repo" }],
+      triggers: [
+        {
+          name: "ingest",
+          on: "slack.message",
+          max_runtime: "1h",
+          filters: { from_users: ["*"] },
+          steps: [
+            {
+              id: "run",
+              environment: "runner",
+              max_runtime: "30m",
+              idle_timeout: "5m",
+              agent: { provider: "test", mode: "default" },
+              github: { connection: "missing-github", repositories: ["even7hq/even7-sre"] },
+              prompt: [{ text: "Triage the log" }],
+            },
+          ],
+        },
+      ],
+    };
+    const revision = await store.insertManualBundleRevision({
+      files: configurationBundleFixture(dump(configuration)),
+      userId: "user-1",
+    });
+    assert.deepEqual(revision.validationErrors, {
+      formErrors: [],
+      issues: [
+        {
+          path: [".paseo/workflows/ingest.yml", "steps", "run", "github", "connection"],
+          message: '"missing-github" does not match any GitHub connection (connected: none)',
+        },
+      ],
+    });
+  });
+
   it("reports an unknown Discord slug with the connected guild candidates", async () => {
     const database = createMemoryDatabase();
     await enrollTestDaemon(database);
