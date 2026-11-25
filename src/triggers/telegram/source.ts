@@ -184,6 +184,17 @@ export function normalizeMessage(
     entities.some((entity) => entity.type === "mention" || entity.type === "text_mention");
   const type: "message" | "mention" =
     message.chat.type !== "private" && mentionedBot ? "mention" : "message";
+  const repliedContent = readRepliedContent(message);
+  const replyTo =
+    message.reply_to_message === undefined || repliedContent === undefined
+      ? undefined
+      : {
+          messageId: message.reply_to_message.message_id,
+          content: repliedContent,
+          ...(message.reply_to_message.from === undefined
+            ? {}
+            : { author: message.reply_to_message.from }),
+        };
   return NormalizedTelegramMessageEventSchema.parse({
     type,
     id: `${message.chat.id}:${message.message_id}`,
@@ -198,9 +209,27 @@ export function normalizeMessage(
       isBot: message.from?.is_bot ?? false,
     },
     mentionedBot,
+    ...(replyTo === undefined ? {} : { replyTo }),
     createdAt: new Date(message.date * 1000).toISOString(),
     attachments: normalizeAttachments(message),
   });
+}
+
+/** Text and links of the message this update replied to, for the agent's prompt. */
+function readRepliedContent(message: TelegramMessage): string | undefined {
+  const replied = message.reply_to_message;
+  if (replied === undefined) return undefined;
+  const text = replied.text ?? replied.caption ?? "";
+  const urls = (replied.entities ?? replied.caption_entities ?? [])
+    .filter((entity) => entity.type === "url" || entity.type === "text_link")
+    .map((entity) => entity.text ?? (entity.type === "url" ? sliceEntity(text, entity) : ""))
+    .filter((url) => url.length > 0 && !text.includes(url));
+  const content = [text, ...urls].filter((part) => part.length > 0).join("\n");
+  return content.length > 0 ? content : undefined;
+}
+
+function sliceEntity(text: string, entity: { offset: number; length: number }): string {
+  return text.slice(entity.offset, entity.offset + entity.length);
 }
 
 function normalizeAttachments(message: TelegramMessage): TelegramAttachment[] {

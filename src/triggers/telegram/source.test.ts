@@ -40,4 +40,26 @@ describe("Telegram mention normalization", () => {
     );
     expect(event?.mentionedBot).toBe(true);
   });
+
+  it("keeps the replied-to message link when the reply text is only @e7kevinbot", () => {
+    const link = "https://x.com/tldrcve/status/2125131518389657720";
+    const update = {
+      message_id: 347,
+      chat: { id: -5160361212, type: "supergroup" as const },
+      date: 1_764_077_030,
+      text: "@e7kevinbot",
+      entities: [{ type: "mention", offset: 0, length: 12 }],
+      reply_to_message: {
+        message_id: 346,
+        chat: { id: -5160361212, type: "supergroup" as const },
+        date: 1_764_077_000,
+        from: { id: 123, is_bot: true, first_name: "tl;dr CVE" },
+        text: link,
+        entities: [{ type: "url", offset: 0, length: link.length }],
+      },
+    };
+    const event = normalizeMessage(update, "e7kevinbot");
+    expect(event?.content).toBe("@e7kevinbot");
+    expect(event?.replyTo?.content).toContain(link);
+  });
 });

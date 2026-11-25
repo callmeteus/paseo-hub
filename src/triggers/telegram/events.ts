@@ -41,6 +41,17 @@ export const TelegramAttachmentSchema = z.object({
   size: z.number().int().nonnegative(),
 });
 
+export const TelegramReplyToSchema = z
+  .object({
+    message_id: z.number().int(),
+    from: TelegramFromSchema.optional(),
+    text: z.string().optional(),
+    caption: z.string().optional(),
+    entities: z.array(TelegramEntitySchema).optional(),
+    caption_entities: z.array(TelegramEntitySchema).optional(),
+  })
+  .passthrough();
+
 export const TelegramMessageSchema = z
   .object({
     message_id: z.number().int(),
@@ -51,7 +62,7 @@ export const TelegramMessageSchema = z
     caption: z.string().optional(),
     entities: z.array(TelegramEntitySchema).optional(),
     caption_entities: z.array(TelegramEntitySchema).optional(),
-    reply_to_message: z.unknown().optional(),
+    reply_to_message: TelegramReplyToSchema.optional(),
     photo: z.array(TelegramPhotoSizeSchema).optional(),
     document: z
       .object({
@@ -114,6 +125,17 @@ export const NormalizedTelegramMessageEventSchema = z.object({
     isBot: z.boolean(),
   }),
   mentionedBot: z.boolean(),
+  /**
+   * Content of the message this one replied to. Telegram puts CVE links in the
+   * replied-to message while the mention itself can be just "@bot".
+   */
+  replyTo: z
+    .object({
+      messageId: z.number().int(),
+      content: z.string(),
+      author: TelegramFromSchema.optional(),
+    })
+    .optional(),
   createdAt: z.string(),
   attachments: z.array(TelegramAttachmentSchema),
 });

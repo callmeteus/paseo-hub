@@ -37,6 +37,8 @@ export interface TelegramMergeData {
       author: { id: string; username?: string; first_name: string; is_bot: boolean };
       created_at: string;
       chat: { id: string };
+      /** Content of the replied-to message, when this update is a reply. */
+      reply_to?: { content: string; author?: { username?: string; first_name: string } };
     };
     trigger_thread_context: { status: "not_applicable" };
   };
@@ -151,6 +153,23 @@ function buildMergeData(
         },
         created_at: event.createdAt,
         chat: { id: event.chatId },
+        ...(event.replyTo === undefined
+          ? {}
+          : {
+              reply_to: {
+                content: event.replyTo.content,
+                ...(event.replyTo.author === undefined
+                  ? {}
+                  : {
+                      author: {
+                        ...(event.replyTo.author.username === undefined
+                          ? {}
+                          : { username: event.replyTo.author.username }),
+                        first_name: event.replyTo.author.first_name,
+                      },
+                    }),
+              },
+            }),
       },
       trigger_thread_context: { status: "not_applicable" },
     },
