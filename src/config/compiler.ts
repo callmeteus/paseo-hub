@@ -96,6 +96,13 @@ const AllowOutputSchema = z
     max: z.number().int().nonnegative().optional(),
     required: z.boolean().optional(),
     args_limit: z.record(z.string(), z.number().int().positive()).optional(),
+    contract: z
+      .object({
+        require: z.array(z.string().min(1)).min(1),
+        state_enum: z.array(z.string().min(1)).min(1),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
   .superRefine((output, context) => {
@@ -322,6 +329,11 @@ const AuthoredTriggerSchema = z
     values: z.record(z.string(), z.string().min(1)).optional(),
     /** Tool names the Hub must not grant or accept in this trigger's executions. */
     denied_tools: z.array(z.string().min(1)).optional(),
+    /** A regex over newer thread messages that stops a reply before it is sent. */
+    reply_guard: z
+      .object({ matches_regex: z.string().min(1) })
+      .strict()
+      .optional(),
     filters: AuthoredTriggerFilterSchema.optional(),
     /** Locale of the system messages this trigger posts. Absent reads as English. */
     locale: LocaleSchema.optional(),
@@ -415,6 +427,7 @@ export interface CompiledStep {
     max?: number | undefined;
     required: boolean;
     args_limit?: Record<string, number> | undefined;
+    contract?: { required: readonly string[]; stateEnum: readonly string[] } | undefined;
   }[];
   /** Present when this step opted into the Slack agent surface. */
   slackAgent?: SlackAgentBlock | undefined;
@@ -502,6 +515,7 @@ export interface CompiledTrigger {
   values: Readonly<Record<string, Expression>>;
   /** Tool names withheld from every execution of this trigger. */
   deniedTools?: readonly string[] | undefined;
+  replyGuard?: { matchesRegex: string } | undefined;
   filters?: CompiledTriggerFilter | undefined;
   /** Rails enforced when this run sends a message. Absent means no extra restriction. */
   guardrails?: readonly Guardrail[] | undefined;
@@ -809,6 +823,9 @@ function compileTrigger(
     inputs,
     values,
     ...(trigger.denied_tools === undefined ? {} : { deniedTools: trigger.denied_tools }),
+    ...(trigger.reply_guard === undefined
+      ? {}
+      : { replyGuard: { matchesRegex: trigger.reply_guard.matches_regex } }),
     ...(trigger.filters === undefined
       ? {}
       : { filters: migrateSlackTextFilter({ on: trigger.on, filters: trigger.filters }).filters }),
@@ -1014,6 +1031,14 @@ function compileStep(
           required: allowOutput.required ?? false,
         },
         allowOutput.args_limit === undefined ? {} : { args_limit: allowOutput.args_limit },
+        allowOutput.contract === undefined
+          ? {}
+          : {
+              contract: {
+                required: allowOutput.contract.require,
+                stateEnum: allowOutput.contract.state_enum,
+              },
+            },
       ),
     ),
     autoArchive: step.auto_archive ?? false,

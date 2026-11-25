@@ -1395,6 +1395,83 @@ describe("Slack Phase 1 trigger provider", () => {
     await provider.onAgentExecutionFailed?.(match.triggerContext, match.outputContext, "boom");
     assert.deepEqual(client.reactions, ["org-1:T1:add:warning"]);
   });
+
+  it("matches a newer thread message against the configured reply guard", async () => {
+    const client = new RecordingSlackClient({
+      threadMessages: [
+        {
+          ts: "1700000010.000001",
+          author: { id: "U2" },
+          content: "The customer confirmed and closed the case",
+          createdAt: "2026-01-01T00:00:10Z",
+          attachments: [],
+        },
+      ],
+      threadComplete: true,
+    });
+    const provider = createSlackTriggerProvider({
+      configurationStoreForProject: () => {
+        throw new Error("not used");
+      },
+      botUserIdForWorkspace: () => Promise.resolve("UBOT"),
+      client,
+    });
+    const database = createMemoryDatabase();
+    const id = "00000000-0000-4000-8000-0000000000f5";
+    await database.insertAgentExecution({
+      id,
+      organizationId: "org-1",
+      projectId: "project-1",
+      machineId: null,
+      daemonId: "d",
+      triggerContext: {
+        provider: "slack",
+        target: {
+          provider: "slack",
+          organizationId: "org-1",
+          teamId: "T1",
+          channelId: "C1",
+          threadTs: "1700000000.000001",
+          messageTs: "1700000000.000001",
+        },
+        event: {
+          slack: {
+            trigger_message: {
+              ts: "1700000000.000001",
+              channel: { id: "C1" },
+              thread: { ts: "1700000000.000001" },
+              author: { id: "U1" },
+            },
+            team: { id: "T1" },
+          },
+        },
+      },
+      outputContext: { provider: "slack", organizationId: "org-1", teamId: "T1" },
+      configurationRevisionId: "r",
+    });
+    const execution = (await database.findAgentExecutionById(id))!;
+    execution.launchIntent = {
+      kind: "launch_machine",
+      organizationId: "org-1",
+      projectId: "project-1",
+      triggerRunId: "run",
+      triggerName: "slack-run",
+      environmentName: "env",
+      environment: { kind: "daemon", daemonId: "d", authoredSlug: "env", cwd: "/repo" },
+      prompt: "reply",
+      agent: { provider: "codex", mode: "full-access" },
+      allowOutputs: [],
+      autoArchive: false,
+      background: false,
+      triggerContext: execution.triggerContext,
+      outputContext: execution.outputContext,
+      configurationRevisionId: "r",
+      hubConfig: { environments: [], triggers: [] },
+      replyGuard: { matchesRegex: "confirmed and closed" },
+    };
+
+    assert.deepEqual(await provider.checkReplyGuard?.({ execution }), { matched: true });
+  });
 });
 
 function configuration() {

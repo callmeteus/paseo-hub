@@ -35,6 +35,19 @@ import {
 } from "./match.js";
 import { defaultInputs, matchesInputFilters, parseInvocation } from "../invocation.js";
 
+const ReplyGuardContextSchema = z.object({
+  event: z.object({
+    slack: z.object({
+      trigger_message: z.object({
+        ts: z.string().min(1),
+        channel: z.object({ id: z.string().min(1) }),
+        thread: z.object({ ts: z.string().min(1) }).optional(),
+      }),
+      team: z.object({ id: z.string().min(1) }),
+    }),
+  }),
+});
+
 const SlackThreadSignalSchema = z
   .object({
     type: z.literal("message"),
@@ -536,6 +549,36 @@ export function createSlackTriggerProvider(options: {
         ),
       );
       return null;
+    },
+    async checkReplyGuard({ execution }) {
+      const guard = execution.launchIntent?.replyGuard;
+      if (guard === undefined) return { matched: false };
+      const parsed = ReplyGuardContextSchema.safeParse(execution.triggerContext);
+      if (!parsed.success) return { matched: false };
+      const context = parsed.data;
+      const message = context.event.slack.trigger_message;
+      const threadTs = message.thread?.ts ?? message.ts;
+      const afterTs = message.ts;
+      const beforeTs = `${Math.floor(Date.now() / 1000) + 60}.000000`;
+      if (options.client.readThreadMessages === undefined) return { matched: false };
+      let history;
+      try {
+        history = await options.client.readThreadMessages({
+          organizationId: execution.organizationId,
+          teamId: context.event.slack.team.id,
+          channelId: message.channel.id,
+          threadTs,
+          beforeTs,
+          afterTs,
+        });
+      } catch {
+        return { matched: false };
+      }
+      const expression = guard.matchesRegex.replace(/^\(\?i\)/u, "");
+      const pattern = new RegExp(expression, "iu");
+      return {
+        matched: history.messages.some((item) => item.ts !== afterTs && pattern.test(item.content)),
+      };
     },
     async onMachineTerminated(context, reason, reactionState) {
       await applyBoundaryReactions(options.client, context, context.target, "failure");

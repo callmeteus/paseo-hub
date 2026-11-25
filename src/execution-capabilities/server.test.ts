@@ -40,6 +40,9 @@ const ToolResultSchema = z.object({ isError: z.boolean().optional() }).passthrou
 const ToolTextResultSchema = ToolResultSchema.extend({
   content: z.array(z.object({ type: z.literal("text"), text: z.string() })),
 });
+function textOf(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
 const ToolsListSchema = z
   .object({
     tools: z.array(z.object({ name: z.string(), inputSchema: z.unknown() }).passthrough()),
@@ -305,6 +308,121 @@ describe("execution capability MCP boundary", () => {
     assert.equal(first.isError, undefined);
     assert.equal(second.isError, true);
     assert.match(second.content[0]?.text ?? "", /limit/u);
+  });
+
+  it("enforces a final reply contract without blocking intermediate replies", async () => {
+    const contract = {
+      require: ["content", "pr_links", "state", "evidence"],
+      stateEnum: ["open", "awaiting_review", "merged", "deployed"],
+    };
+    const en = await capabilityFixture(
+      undefined,
+      "succeeded",
+      10,
+      undefined,
+      false,
+      [],
+      replyOutputTool,
+      [],
+      undefined,
+      undefined,
+      contract,
+      "en",
+    );
+
+    const intermediate = ToolTextResultSchema.parse(
+      (
+        await en.call("tools/call", {
+          name: "reply",
+          arguments: { content: "Plan ready: four cases covered." },
+        })
+      ).result,
+    );
+    assert.equal(intermediate.isError, undefined);
+
+    const missing = ToolTextResultSchema.parse(
+      (
+        await en.call("tools/call", {
+          name: "final_reply",
+          arguments: { content: "Pronto: the site is live." },
+        })
+      ).result,
+    );
+    assert.equal(missing.isError, true);
+    assert.match(missing["content"][0]?.text ?? "", /missing/i);
+
+    const accepted = ToolTextResultSchema.parse(
+      (
+        await en.call("tools/call", {
+          name: "final_reply",
+          arguments: {
+            content: "The change is in a pull request.",
+            pr_links: ["https://example.test/pull/1"],
+            state: "awaiting_review",
+            evidence: "no production read",
+          },
+        })
+      ).result,
+    );
+    assert.equal(accepted.isError, undefined);
+    assert.match(textOf(en.outbound[1]?.args["content"]), /State: awaiting_review/u);
+    assert.match(textOf(en.outbound[1]?.args["content"]), /example\.test\/pull\/1/u);
+
+    const pt = await capabilityFixture(
+      undefined,
+      "succeeded",
+      10,
+      undefined,
+      false,
+      [],
+      replyOutputTool,
+      [],
+      undefined,
+      undefined,
+      contract,
+      "pt-BR",
+    );
+    await pt.call("tools/call", {
+      name: "final_reply",
+      arguments: {
+        content: "A mudança está em uma pull request.",
+        pr_links: ["https://example.test/pull/1"],
+        state: "awaiting_review",
+        evidence: "sem leitura em produção",
+      },
+    });
+    assert.match(textOf(pt.outbound[0]?.args["content"]), /Estado: awaiting_review/u);
+  });
+
+  it("refuses a reply and ends the execution when the guard matches", async () => {
+    const fixture = await capabilityFixture(
+      undefined,
+      "succeeded",
+      10,
+      undefined,
+      false,
+      [],
+      replyOutputTool,
+      [],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      true,
+    );
+
+    const result = ToolTextResultSchema.parse(
+      (
+        await fixture.call("tools/call", {
+          name: "reply",
+          arguments: { content: "Final answer" },
+        })
+      ).result,
+    );
+    assert.equal(result.isError, true);
+    assert.match(result["content"][0]?.text ?? "", /not sent/u);
+    assert.deepEqual(fixture.completions, [{ executionId: fixture.executionId, token: "token" }]);
+    assert.deepEqual(fixture.outbound, []);
   });
 
   it("rejects a call to a denied tool", async () => {
@@ -1054,6 +1172,9 @@ async function capabilityFixture(
   additionalCapabilities: readonly OutputCapability[] = [],
   argsLimit?: Record<string, number>,
   deniedTools?: readonly string[],
+  replyContract?: { require: string[]; stateEnum: string[] },
+  locale?: string,
+  guardMatched = false,
 ) {
   const database = createMemoryDatabase();
   const executionId = randomUUID();
@@ -1065,6 +1186,7 @@ async function capabilityFixture(
     requiredOutputTypes,
     argsLimit,
     deniedTools,
+    replyContract,
   );
   await database.insertAgentExecution({
     id: executionId,
@@ -1072,7 +1194,10 @@ async function capabilityFixture(
     projectId: "project-1",
     machineId: null,
     triggerContext: { provider: "slack" },
-    outputContext: slackOutputContext,
+    outputContext: {
+      ...slackOutputContext,
+      ...(locale === undefined ? {} : { locale }),
+    },
     configurationRevisionId: randomUUID(),
     completionTokenHash: hashAgentExecutionCompletionToken(token),
     launchIntent: intent,
@@ -1096,6 +1221,7 @@ async function capabilityFixture(
   const server = createExecutionCapabilityServer({
     database,
     outputs,
+    ...(guardMatched ? { checkReplyGuard: () => Promise.resolve({ matched: true }) } : {}),
     async completeExecution(input) {
       completions.push(input);
       return (
@@ -1210,6 +1336,7 @@ function launchIntent(
   requiredOutputTypes: readonly string[] = [],
   argsLimit?: Record<string, number>,
   deniedTools?: readonly string[],
+  replyContract?: { require: string[]; stateEnum: string[] },
 ): LaunchMachineIntent {
   return {
     kind: "launch_machine",
@@ -1232,6 +1359,14 @@ function launchIntent(
         ...(maxReplies === null ? {} : { max: maxReplies }),
         ...(requiredOutputTypes.includes("slack.reply") ? { required: true } : {}),
         ...(argsLimit === undefined ? {} : { args_limit: argsLimit }),
+        ...(replyContract === undefined
+          ? {}
+          : {
+              contract: {
+                required: replyContract.require,
+                stateEnum: replyContract.stateEnum,
+              },
+            }),
       },
       ...requiredOutputTypes
         .filter((type) => type !== "slack.reply")

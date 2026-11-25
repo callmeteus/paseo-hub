@@ -38,6 +38,13 @@ export interface MessageCatalog {
   "outbound.rawUserId": (params: MessageParams) => string;
   /** Line replacing a button card after someone clicks one of its buttons. */
   "choice.chosen": (params: MessageParams) => string;
+  /** State line the Hub appends to a final reply from configured structured fields. */
+  "contract.stateLine": (params: MessageParams) => string;
+  /** Agent-facing guidance when a final reply is missing configured fields. */
+  "contract.missingFields": (params: MessageParams) => string;
+  "contract.invalidState": (params: MessageParams) => string;
+  /** Agent-facing refusal when a thread guard matched before a reply. */
+  "reply.guard": (params: MessageParams) => string;
 }
 
 export type MessageKey = keyof MessageCatalog;
@@ -73,6 +80,14 @@ export const en: MessageCatalog = {
   "outbound.rawUserId": (params) =>
     `The id ${text(params, "id")} is loose in the text. Use the person's name or the mention <@${text(params, "id")}>.`,
   "choice.chosen": (params) => `${text(params, "user")} chose "${text(params, "choice")}"`,
+  "contract.stateLine": (params) =>
+    `State: ${String(params["state"] ?? "")}. Pull requests: ${String(params["links"] ?? "")}. Evidence: ${String(params["evidence"] ?? "")}.`,
+  "contract.missingFields": (params) =>
+    `The final reply is missing ${String(params["fields"] ?? "")}. Add them and call final_reply again.`,
+  "contract.invalidState": (params) =>
+    `State must be one of ${String(params["states"] ?? "")}. Rewrite the final reply.`,
+  "reply.guard": () =>
+    "A newer message in the thread matched the configured condition. The reply was not sent and the execution ended.",
 };
 
 export const ptBR: MessageCatalog = {
@@ -99,6 +114,14 @@ export const ptBR: MessageCatalog = {
   "outbound.rawUserId": (params) =>
     `O id ${text(params, "id")} está solto no texto. Use o nome da pessoa ou a menção <@${text(params, "id")}>.`,
   "choice.chosen": (params) => `${text(params, "user")} escolheu "${text(params, "choice")}"`,
+  "contract.stateLine": (params) =>
+    `Estado: ${String(params["state"] ?? "")}. Pull requests: ${String(params["links"] ?? "")}. Evidência: ${String(params["evidence"] ?? "")}.`,
+  "contract.missingFields": (params) =>
+    `A reply final está sem ${String(params["fields"] ?? "")}. Inclua e chame final_reply de novo.`,
+  "contract.invalidState": (params) =>
+    `O estado precisa ser um de ${String(params["states"] ?? "")}. Reescreva a reply final.`,
+  "reply.guard": () =>
+    "Uma mensagem mais nova na thread casou com a condição configurada. A reply não foi enviada e a execução terminou.",
 };
 
 export const catalogs: Readonly<Record<Locale, MessageCatalog>> = {
@@ -120,6 +143,10 @@ export const MESSAGE_KEYS: readonly MessageKey[] = [
   "outbound.invalidMention",
   "outbound.rawUserId",
   "choice.chosen",
+  "contract.stateLine",
+  "contract.missingFields",
+  "contract.invalidState",
+  "reply.guard",
 ];
 
 /**

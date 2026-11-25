@@ -1,4 +1,4 @@
-import type { DurableProviderEvent } from "../db/types.js";
+import type { AgentExecutionRecord, DurableProviderEvent } from "../db/types.js";
 import type { JsonValue } from "../config/compiler.js";
 import type { WorktreeTarget } from "../config/index.js";
 import type { InvocationParseResult } from "./invocation.js";
@@ -211,6 +211,8 @@ export interface TriggerProvider<
     reason: string,
     reactionState?: TriggerProviderReactionState,
   ): Promise<TriggerProviderReactionResult>;
+  /** Thread-aware pre-reply check. Providers that own a thread can implement it. */
+  checkReplyGuard?(input: { execution: AgentExecutionRecord }): Promise<{ matched: boolean }>;
 }
 
 function isJsonValue(value: unknown): value is JsonValue {

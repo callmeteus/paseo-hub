@@ -1238,6 +1238,12 @@ function deniedToolsInput(trigger: { deniedTools?: readonly string[] | undefined
   return trigger.deniedTools === undefined ? {} : { deniedTools: trigger.deniedTools };
 }
 
+function replyGuardInput(trigger: { replyGuard?: { matchesRegex: string } | undefined }): {
+  replyGuard?: { matchesRegex: string };
+} {
+  return trigger.replyGuard === undefined ? {} : { replyGuard: trigger.replyGuard };
+}
+
 async function buildStepIntent(
   configuration: CompiledProjectConfiguration,
   triggerName: string,
@@ -1302,6 +1308,7 @@ async function buildStepIntent(
       agent,
       allowOutputs: slackReactGrant(step.allowOutputs, run.outputContext),
       ...deniedToolsInput(trigger),
+      ...replyGuardInput(trigger),
       timeoutMs: step.maxRuntimeMs,
       idleTimeoutMs: step.idleTimeoutMs,
       ...(step.startupTimeoutMs === undefined ? {} : { startupTimeoutMs: step.startupTimeoutMs }),

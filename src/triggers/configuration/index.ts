@@ -67,6 +67,7 @@ export function compileTriggerDocument(yaml: string): CompiledTriggerDocument {
       if (output.max !== undefined) grant.max = output.max;
       if (output.required !== undefined) grant.required = output.required;
       if (output.args_limit !== undefined) grant.args_limit = output.args_limit;
+      if (output.contract !== undefined) grant.contract = output.contract;
       allowOutputs.push(grant);
     }
   }
@@ -83,9 +84,8 @@ export function compileTriggerDocument(yaml: string): CompiledTriggerDocument {
       name: internalEventName(authored.name, index, named),
       on: event,
       max_runtime: authored.max_runtime ?? documentDeadline(authored, flattened),
-      ...(isFlowRun(authored.run) || authored.run.denied_tools === undefined
-        ? {}
-        : { denied_tools: authored.run.denied_tools }),
+      ...deniedToolsFor(authored.run),
+      ...replyGuardFor(authored.run),
       filters: authoredFilters(event, definition),
       steps: flattened === undefined ? [legacyAgentStep(authored, allowOutputs)] : flattened.steps,
     };
@@ -198,6 +198,16 @@ function automaticReplyType(event: string): string | undefined {
     provider === "telegram"
     ? `${provider}.reply`
     : undefined;
+}
+
+function deniedToolsFor(run: TriggerDocument["run"]): { denied_tools?: string[] } {
+  if (isFlowRun(run) || run.denied_tools === undefined) return {};
+  return { denied_tools: run.denied_tools };
+}
+
+function replyGuardFor(run: TriggerDocument["run"]): { reply_guard?: { matches_regex: string } } {
+  if (isFlowRun(run) || run.reply_guard === undefined) return {};
+  return { reply_guard: run.reply_guard };
 }
 
 function authoredFilters(

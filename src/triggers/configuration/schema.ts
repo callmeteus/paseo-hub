@@ -136,6 +136,13 @@ export const TriggerOutputSchema = z
     max: z.number().int().positive().optional(),
     required: z.boolean().optional(),
     args_limit: z.record(z.string(), z.number().int().positive()).optional(),
+    contract: z
+      .object({
+        require: z.array(z.string().min(1)).min(1),
+        state_enum: z.array(z.string().min(1)).min(1),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -222,6 +229,11 @@ const AgentReactionFields = {
   outputs: z.record(z.string().regex(EVENT_NAME), TriggerOutputSchema).optional(),
   /** Tool names the Hub must not grant to this run. */
   denied_tools: z.array(z.string().min(1)).optional(),
+  /** A regex over newer thread messages that stops a reply before it is sent. */
+  reply_guard: z
+    .object({ matches_regex: z.string().min(1) })
+    .strict()
+    .optional(),
   /** Opt-in Slack agent session. Absent keeps the legacy assistant status. */
   slack_agent: SlackAgentBlockSchema.optional(),
   auto_archive: z.boolean().default(true),

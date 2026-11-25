@@ -21,6 +21,7 @@ import {
   executionToolDefinitions,
   clearHardDeadlineToolName,
   finishExecutionToolName,
+  finalReplyToolName,
   loadInstructionToolName,
   memorySaveToolName,
   memorySearchToolName,
@@ -38,6 +39,7 @@ import { SlackAgentSurfaceError } from "../triggers/slack/agent-surface.js";
 import { SlackOutboundTextError } from "../triggers/slack/outbound.js";
 import { SlackReadMessagesError } from "../triggers/slack/read-messages.js";
 import { GuardrailRefusal } from "../workflows/guardrails.js";
+import { message } from "../i18n/messages.js";
 
 type JsonSchema = OutputToolSchema;
 
@@ -55,6 +57,8 @@ interface ExecutionCapabilityOptions {
     token: string;
     output?: unknown;
   }): Promise<AgentExecutionRecord>;
+  /** Generic pre-reply check supplied by the provider that owns the thread. */
+  checkReplyGuard?(input: { execution: AgentExecutionRecord }): Promise<{ matched: boolean }>;
   now?: () => Date;
   /** Re-arms the in-process timer after the hard deadline row is cleared. */
   onHardDeadlineCleared?: (execution: AgentExecutionRecord) => void;
@@ -280,10 +284,139 @@ function checkArgsLimit(
   return undefined;
 }
 
+function executionLocale(execution: AgentExecutionRecord): string | undefined {
+  const context: unknown = execution.outputContext;
+  if (typeof context !== "object" || context === null) return undefined;
+  const parsed = z.object({ locale: z.string().optional() }).safeParse(context);
+  return parsed.success ? parsed.data.locale : undefined;
+}
+
+function finalReplyFailure(
+  args: Record<string, unknown>,
+  contract: { required: readonly string[]; stateEnum: readonly string[] },
+  locale: string | undefined,
+): string | undefined {
+  const missing = contract.required.filter((field) => {
+    const value = args[field];
+    if (typeof value === "string") return value.trim().length === 0;
+    if (Array.isArray(value)) return value.length === 0;
+    return value === undefined || value === null;
+  });
+  if (missing.length > 0) {
+    return message(locale, "contract.missingFields", { fields: missing.join(", ") });
+  }
+  if (!contract.stateEnum.includes(textOf(args["state"]))) {
+    return message(locale, "contract.invalidState", { states: contract.stateEnum.join(", ") });
+  }
+  return undefined;
+}
+
+function textOf(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(textOf).join(", ");
+  return "";
+}
+
+function appendStateLine(
+  args: Record<string, unknown>,
+  locale: string | undefined,
+): Record<string, unknown> {
+  const stateLine = message(locale, "contract.stateLine", {
+    state: textOf(args["state"]),
+    links: textOf(args["pr_links"]),
+    evidence: textOf(args["evidence"]),
+  });
+  return { ...args, content: `${textOf(args["content"])}\n\n${stateLine}` };
+}
+
+function prepareFinalReply(
+  args: Record<string, unknown>,
+  materializedOutputs: readonly MaterializedOutputCapability[],
+  locale: string | undefined,
+): { args?: Record<string, unknown>; failure?: string } {
+  const contract = materializedOutputs.find((output) => output.capability.tool.name === "reply")
+    ?.declaration.contract;
+  if (contract === undefined) return { failure: "No final reply contract is configured" };
+  const failure = finalReplyFailure(args, contract, locale);
+  if (failure !== undefined) return { failure };
+  return { args: appendStateLine(args, locale) };
+}
+
+async function applyReplyGuard(
+  options: Pick<ExecutionCapabilityOptions, "checkReplyGuard" | "completeExecution">,
+  execution: AgentExecutionRecord,
+  token: string,
+  toolName: string,
+): Promise<string | undefined> {
+  if (
+    options.checkReplyGuard === undefined ||
+    !(toolName === "reply" || toolName === "telegram_reply" || toolName === finalReplyToolName)
+  )
+    return undefined;
+  const guard = await options.checkReplyGuard({ execution });
+  if (!guard.matched) return undefined;
+  await options.completeExecution({ executionId: execution.id, token });
+  return message(executionLocale(execution), "reply.guard", {});
+}
+
+function resolveToolName(
+  toolName: string,
+  materializedOutputs: readonly MaterializedOutputCapability[],
+): string {
+  if (
+    toolName === "reply" &&
+    materializedOutputs.some((output) => output.capability.tool.name === "telegram_reply")
+  )
+    return "telegram_reply";
+  return toolName;
+}
+
+async function callSpecialTool(
+  options: Pick<
+    ExecutionCapabilityOptions,
+    | "database"
+    | "outputs"
+    | "completeExecution"
+    | "now"
+    | "onHardDeadlineCleared"
+    | "checkReplyGuard"
+  >,
+  execution: AgentExecutionRecord,
+  token: string,
+  toolName: string,
+  args: Record<string, unknown>,
+  materializedOutputs: readonly MaterializedOutputCapability[],
+): Promise<
+  | { handled: true; result: ReturnType<typeof toolSuccess> | ReturnType<typeof toolFailure> }
+  | { handled: false }
+> {
+  if (toolName === clearHardDeadlineToolName)
+    return { handled: true, result: await clearHardDeadlineCall(options, execution) };
+  if (toolName === memorySaveToolName)
+    return { handled: true, result: await memorySaveCall(options, execution, args) };
+  if (toolName === memorySearchToolName)
+    return { handled: true, result: await memorySearchCall(options, execution, args) };
+  if (toolName === feedbackSearchToolName)
+    return { handled: true, result: await feedbackSearchCall(options, execution, args) };
+  if (toolName === loadInstructionToolName)
+    return { handled: true, result: await loadInstructionCall(execution, args) };
+  if (toolName === finishExecutionToolName)
+    return {
+      handled: true,
+      result: await finishExecutionCall(options, execution, token, args, materializedOutputs),
+    };
+  return { handled: false };
+}
+
 async function callExecutionTool(
   options: Pick<
     ExecutionCapabilityOptions,
-    "database" | "outputs" | "completeExecution" | "now" | "onHardDeadlineCleared"
+    | "database"
+    | "outputs"
+    | "completeExecution"
+    | "now"
+    | "onHardDeadlineCleared"
+    | "checkReplyGuard"
   >,
   execution: AgentExecutionRecord,
   token: string,
@@ -291,16 +424,23 @@ async function callExecutionTool(
   toolName: string,
   args: Record<string, unknown>,
 ) {
-  const resolvedToolName =
-    toolName === "reply" &&
-    materializedOutputs.some((output) => output.capability.tool.name === "telegram_reply")
-      ? "telegram_reply"
-      : toolName;
+  let resolvedToolName = resolveToolName(toolName, materializedOutputs);
+  let effectiveArgs = args;
+  if (toolName === finalReplyToolName) {
+    const prepared = prepareFinalReply(args, materializedOutputs, executionLocale(execution));
+    if (prepared.failure !== undefined) return toolFailure(prepared.failure);
+    if (prepared.args === undefined) return toolFailure("Final reply could not be prepared");
+    effectiveArgs = prepared.args;
+    resolvedToolName = "reply";
+  }
   const tool = executionToolDefinitions(
     execution.launchIntent?.outputSchema,
     materializedOutputs,
     hasInstructionCatalog(execution),
-  ).find((candidate) => candidate.name === resolvedToolName);
+  ).find(
+    (candidate) =>
+      candidate.name === (toolName === finalReplyToolName ? finalReplyToolName : resolvedToolName),
+  );
   if (!tool) return toolFailure(`Tool ${toolName} not found`);
   if (execution.launchIntent?.deniedTools?.includes(resolvedToolName) === true) {
     return toolFailure(`Tool ${resolvedToolName} is denied for this execution`);
@@ -309,24 +449,28 @@ async function callExecutionTool(
     toolName === finishExecutionToolName
       ? finishExecutionContract(tool.inputSchema)
       : jsonSchemaContract(tool.inputSchema);
-  const validation = contract.validate(args);
+  const validation = contract.validate(effectiveArgs);
   if (!validation.valid) return toolFailure(validation.message);
   const declaration = materializedOutputs.find(
     (item) => item.capability.tool.name === resolvedToolName,
   )?.declaration;
-  const limitFailure = checkArgsLimit(declaration?.args_limit, args);
+  const limitFailure = checkArgsLimit(declaration?.args_limit, effectiveArgs);
   if (limitFailure !== undefined) return toolFailure(limitFailure);
-  if (toolName === clearHardDeadlineToolName) return clearHardDeadlineCall(options, execution);
-  if (toolName === memorySaveToolName) return memorySaveCall(options, execution, args);
-  if (toolName === memorySearchToolName) return memorySearchCall(options, execution, args);
-  if (toolName === feedbackSearchToolName) return feedbackSearchCall(options, execution, args);
-  if (toolName === loadInstructionToolName) return loadInstructionCall(execution, args);
-  if (toolName === finishExecutionToolName)
-    return finishExecutionCall(options, execution, token, args, materializedOutputs);
+  const guardFailure = await applyReplyGuard(options, execution, token, toolName);
+  if (guardFailure !== undefined) return toolFailure(guardFailure);
+  const special = await callSpecialTool(
+    options,
+    execution,
+    token,
+    toolName,
+    args,
+    materializedOutputs,
+  );
+  if (special.handled) return special.result;
   const output = materializedOutputs.find((item) => item.capability.tool.name === resolvedToolName);
   return output === undefined
     ? toolFailure(`Tool ${toolName} not found`)
-    : executeOutputCall(options, execution, toolName, output, args);
+    : executeOutputCall(options, execution, toolName, output, effectiveArgs);
 }
 
 function hasInstructionCatalog(execution: AgentExecutionRecord): boolean {

@@ -177,6 +177,7 @@ export function createHubApplication(options: HubRuntimeOptions): HubApplication
     options,
     daemonModule,
     outputRegistry,
+    providers,
   );
   const registration =
     options.database === null || daemons === null
@@ -475,6 +476,7 @@ function createAppExecutionCapabilityServer(
   options: HubRuntimeOptions,
   daemonModule: DaemonModule | null,
   outputRegistry: OutputExecutorRegistry,
+  providers: readonly TriggerProvider[],
 ) {
   if (options.database === null || daemonModule === null) {
     return null;
@@ -487,6 +489,13 @@ function createAppExecutionCapabilityServer(
     outputs: outputRegistry,
     completeExecution: (input) =>
       daemonModule.lifecycle.completeAgentExecutionFromCallback(input, { deferHubAction: true }),
+    checkReplyGuard: async ({ execution }) => {
+      for (const provider of providers) {
+        const result = await provider.checkReplyGuard?.({ execution });
+        if (result?.matched === true) return { matched: true };
+      }
+      return { matched: false };
+    },
     onHardDeadlineCleared: (execution) => daemonModule.lifecycle.noteHardDeadlineCleared(execution),
   });
 }

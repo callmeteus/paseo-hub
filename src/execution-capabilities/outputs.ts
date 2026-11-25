@@ -6,6 +6,12 @@ import {
   type Guardrail,
 } from "../workflows/guardrails.js";
 
+/** Structured fields the Hub requires before it accepts a closing reply. */
+export interface ReplyContract {
+  required: readonly string[];
+  stateEnum: readonly string[];
+}
+
 export interface AllowedOutput {
   type: string;
   /** Absent for the event-native reply capability exposed by single-run triggers. */
@@ -13,6 +19,8 @@ export interface AllowedOutput {
   required?: boolean;
   /** Per-argument numeric maxima the Hub enforces before the tool runs. */
   args_limit?: Record<string, number> | undefined;
+  /** Optional closing-reply contract, configured by the trigger author. */
+  contract?: ReplyContract | undefined;
 }
 
 export interface OutputToolSchemaNode {
@@ -68,6 +76,8 @@ export const finishExecutionToolName = "finish_execution" as const;
 export const clearHardDeadlineToolName = "clear_hard_deadline" as const;
 export const loadInstructionToolName = "load_instruction" as const;
 export const readSlackMessagesToolName = "read_slack_messages" as const;
+/** Closing reply with a Hub-enforced structured contract. Absent unless configured. */
+export const finalReplyToolName = "final_reply" as const;
 export const memorySaveToolName = "memory_save" as const;
 export const memorySearchToolName = "memory_search" as const;
 export const feedbackSearchToolName = "feedback_search" as const;
@@ -269,6 +279,38 @@ export class OutputExecutorRegistry {
   }
 }
 
+/**
+ * The separate tool for a closing reply. Keeping it distinct from `reply` lets
+ * intermediate plan and finding replies pass unchanged while the Hub validates
+ * the structured fields of the final one.
+ *
+ * @param contract - Fields and states the trigger author requires
+ * @returns The tool definition
+ */
+export function finalReplyTool(contract: ReplyContract): OutputToolDefinition {
+  return {
+    name: finalReplyToolName,
+    description:
+      "Sends the closing reply. Structured fields are required by the trigger and the Hub appends a state line.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        content: { type: "string", minLength: 1 },
+        ...Object.fromEntries(
+          contract.required.map((field) => [
+            field,
+            field === "pr_links"
+              ? { type: "array", items: { type: "string", minLength: 1 } }
+              : { type: "string", minLength: 1 },
+          ]),
+        ),
+      },
+      required: ["content", ...contract.required.filter((field) => field !== "content")],
+      additionalProperties: false,
+    },
+  };
+}
+
 export function executionToolDefinitions(
   outputSchema: JsonValue | undefined,
   materializedOutputs: readonly MaterializedOutputCapability[],
@@ -277,7 +319,11 @@ export function executionToolDefinitions(
   const telegramReply = materializedOutputs.find(
     (output) => output.capability.tool.name === "telegram_reply",
   );
+  const replyContract = materializedOutputs.find(
+    (output) => output.capability.tool.name === "reply",
+  )?.declaration.contract;
   return [
+    ...(replyContract === undefined ? [] : [finalReplyTool(replyContract)]),
     {
       name: finishExecutionToolName,
       description: finishExecutionToolDescription(outputSchema),
