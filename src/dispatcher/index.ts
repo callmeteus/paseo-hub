@@ -27,6 +27,7 @@ export interface DispatcherOptions {
   onWorkflowRunStarted?: DurableWorkflowEngineOptions["onWorkflowRunStarted"];
   onWorkflowRunTerminal?: DurableWorkflowEngineOptions["onWorkflowRunTerminal"];
   postSlackMessage?: DurableWorkflowEngineOptions["postSlackMessage"];
+  interruptActiveConversationExecutions?: DurableWorkflowEngineOptions["interruptActiveConversationExecutions"];
   fetch?: DurableWorkflowEngineOptions["fetch"];
 }
 
@@ -76,6 +77,9 @@ export function createDispatcherWithEngine(options: DispatcherOptions): {
     ...(options.postSlackMessage === undefined
       ? {}
       : { postSlackMessage: options.postSlackMessage }),
+    ...(options.interruptActiveConversationExecutions === undefined
+      ? {}
+      : { interruptActiveConversationExecutions: options.interruptActiveConversationExecutions }),
     ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
   };
   return createDurableWorkflowHandler(engineOptions);

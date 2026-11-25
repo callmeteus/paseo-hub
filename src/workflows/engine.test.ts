@@ -1938,6 +1938,39 @@ run:
     assert.equal(intents[0]?.environment.daemonId, "daemon-alpha");
     assert.equal(intents[0]?.environment.authoredSlug, "alpha");
   });
+
+  it("interrupts the running execution in the same conversation when a trigger opts in", async () => {
+    const fixture = await workflowFixture({ rawConfiguration: interruptConfiguration() });
+    const originalProvider = providerMatch(fixture.configuration, fixture.revisionId);
+    const provider = {
+      ...originalProvider,
+      async match(external: Parameters<typeof originalProvider.match>[0]) {
+        const matches = await originalProvider.match(external);
+        return matches.map((match) =>
+          Object.assign({}, match, {
+            conversation: { key: "slack-thread-1", label: "Slack thread" },
+          }),
+        );
+      },
+    } satisfies import("../triggers/index.js").TriggerProvider;
+    const seen: Array<{ projectId: string; conversationKey: string }> = [];
+    const { handler } = createDurableWorkflowHandler({
+      database: fixture.database,
+      entitlements: fixture.entitlements,
+      providers: [provider],
+      interruptActiveConversationExecutions: async (input) => {
+        seen.push(input);
+        return [];
+      },
+      dispatchLaunchMachineIntent: async () => {
+        throw new Error("no agent should start before the running one is interrupted");
+      },
+    });
+
+    await handler(fixture.trigger("repo=hub work"));
+
+    assert.deepEqual(seen, [{ projectId: fixture.projectId, conversationKey: "slack-thread-1" }]);
+  });
 });
 
 interface Fixture {
@@ -2519,6 +2552,31 @@ function providerMatch(configuration: CompiledHubConfig, revisionId: string) {
       ];
     },
   } satisfies import("../triggers/index.js").TriggerProvider;
+}
+
+function interruptConfiguration(): Record<string, unknown> {
+  return {
+    environments: [{ name: "runner", kind: "daemon", daemon: "runner", cwd: "/workspace" }],
+    triggers: [
+      {
+        name: "route-request",
+        on: "manual.run",
+        max_runtime: "1h",
+        filters: { interrupt_active_thread_execution: true },
+        inputs: { repo: { type: "string", choices: ["hub"] } },
+        steps: [
+          {
+            id: "work-hub",
+            environment: "runner",
+            max_runtime: "10m",
+            idle_timeout: "1m",
+            agent: { provider: "codex" },
+            prompt: [{ text: "Work hub" }],
+          },
+        ],
+      },
+    ],
+  };
 }
 
 function baseConfiguration(options: { unavailableValue?: boolean }): Record<string, unknown> {

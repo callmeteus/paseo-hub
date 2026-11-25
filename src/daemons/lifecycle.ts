@@ -194,6 +194,30 @@ export class DaemonDispatchLifecycle {
     }
   }
 
+  /**
+   * Stops runs still working in one conversation, using the continuation key that
+   * the provider gave every event in that conversation. Nothing is posted by the
+   * Hub: a stopped turn ends quietly, as `stopped_by_user` does.
+   *
+   * @param projectId - Project that owns the conversation
+   * @param conversationKey - Continuation key shared by the conversation's runs
+   * @returns The execution ids that were actually stopped
+   */
+  async interruptActiveConversationExecutions(
+    projectId: string,
+    conversationKey: string,
+  ): Promise<string[]> {
+    const session = await this.options.database.findAgentSessionByKey(projectId, conversationKey);
+    if (session === undefined) return [];
+    const executions = await this.options.database.listAgentSessionExecutions(session.id);
+    const active = executions
+      .filter((execution) => !isTerminalExecutionStatus(execution.status))
+      .map((execution) => execution.id);
+    if (active.length === 0) return [];
+    await this.interruptAgentExecutions(active);
+    return active;
+  }
+
   async stop(): Promise<void> {
     this.stopping = true;
     for (const unsubscribe of this.executionSubscriptions.values()) unsubscribe();

@@ -111,6 +111,14 @@ export interface DurableWorkflowEngineOptions {
   onWorkflowRunTerminal?: (run: TriggerRunRecord) => Promise<JsonValue | null | void>;
   /** Posts a Slack reply without launching an agent. */
   postSlackMessage?: (outputContext: unknown, content: string) => Promise<void>;
+  /**
+   * Stops runs still working in the conversation a matching event belongs to.
+   * Returns the execution ids that were actually stopped.
+   */
+  interruptActiveConversationExecutions?: (input: {
+    projectId: string;
+    conversationKey: string;
+  }) => Promise<readonly string[]>;
   /** Reads a prompt include. The default reads a file inside the automation directory. */
   readPromptInstruction?: PromptInstructionReader;
   fetch?: typeof fetch;
@@ -214,6 +222,19 @@ export class DurableWorkflowEngine {
         );
         if (compiledTrigger === undefined)
           throw new Error(`compiled trigger not found: ${acceptedMatch.triggerName}`);
+        if (
+          compiledTrigger.filters?.interrupt_active_thread_execution === true &&
+          acceptedMatch.conversation !== null &&
+          acceptedMatch.conversation !== undefined &&
+          this.options.interruptActiveConversationExecutions !== undefined
+        ) {
+          const interrupted = await this.options.interruptActiveConversationExecutions({
+            projectId: trigger.projectId,
+            conversationKey: acceptedMatch.conversation.key,
+          });
+          // A stopped conversation must not race a second agent in the same thread.
+          if (interrupted.length > 0) return;
+        }
         const runDeadline = new Date(createdAt.getTime() + compiledTrigger.maxRuntimeMs);
         // Accepting a trigger reserves nothing: a trigger can skip every step, and multi-step
         // workflows create several executions. Metering happens per execution, at creation time

@@ -86,6 +86,8 @@ export const TriggerFilterSchema = z
     direct_messages: z.boolean().optional(),
     /** When true, a Slack message from another app can run this trigger. Off when omitted. */
     include_bots: z.boolean().optional(),
+    /** When true, a matching event stops any running execution in the same conversation. */
+    interrupt_active_thread_execution: z.boolean().optional(),
     webhook_secret: z.string().min(32).optional(),
     inputs: z.record(z.string(), InputValueSchema).optional(),
   })

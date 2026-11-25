@@ -269,6 +269,14 @@ export function createHubApplication(options: HubRuntimeOptions): HubApplication
           },
           onWorkflowRunTerminal: (run: TriggerRunRecord) =>
             daemonModule.lifecycle.notifyWorkflowRunTerminal(run),
+          interruptActiveConversationExecutions: async (input: {
+            projectId: string;
+            conversationKey: string;
+          }) =>
+            daemonModule.lifecycle.interruptActiveConversationExecutions(
+              input.projectId,
+              input.conversationKey,
+            ),
         }),
   };
   const { handler: workflowDispatcher, engine: workflowEngine } = createDispatcherWithEngine({

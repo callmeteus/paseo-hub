@@ -453,6 +453,76 @@ describe("durable Hub action acknowledgement state", () => {
     assert.deepEqual(reasons, ["stopped_by_user"]);
     await lifecycle.stop();
   });
+
+  it("scopes an interruption to the one conversation that matched", async () => {
+    const database = createMemoryDatabase();
+    const inThread = "00000000-0000-4000-8000-0000000000f3";
+    const otherThread = "00000000-0000-4000-8000-0000000000f4";
+    const inThreadKey = '["slack","team","channel","111"]';
+    const reasons: string[] = [];
+    const provider: TriggerProvider = {
+      name: "slack",
+      eventNames: ["slack.message"],
+      match: () => Promise.resolve([]),
+      onAgentExecutionFailed: async (_context, _output, reason) => {
+        reasons.push(reason);
+      },
+    };
+    const session = (id: string, continuationKey: string) => ({
+      id,
+      organizationId: "org-stop",
+      projectId: "project-stop",
+      continuationKey,
+      daemonId: DAEMON_ID,
+      agentId: AGENT_ID,
+      workspaceId: "workspace",
+      compatibility: "test",
+      capabilityTokenHash: "test",
+      tools: [],
+      creationOptions: {
+        provider: "codex" as const,
+        cwd: "/workspace",
+        env: {},
+        toolPolicy: { preapproved: [] },
+      },
+    });
+    await database.saveAgentSession(session("session-thread", inThreadKey));
+    await database.saveAgentSession(session("session-other", '["slack","team","channel","222"]'));
+    for (const id of [inThread, otherThread]) {
+      await database.insertAgentExecution({
+        id,
+        organizationId: "org-stop",
+        projectId: "project-stop",
+        machineId: null,
+        daemonId: DAEMON_ID,
+        triggerContext: { provider: "slack" },
+        outputContext: { provider: "slack" },
+        configurationRevisionId: "revision-stop",
+      });
+      await database.attachAgentToExecution(id, DAEMON_ID, AGENT_ID);
+    }
+    await database.attachExecutionToSession(inThread, "session-thread");
+    await database.attachExecutionToSession(otherThread, "session-other");
+    const connection = new AcknowledgementConnection();
+    const lifecycle = createDaemonDispatchLifecycle({
+      database,
+      publicBaseUrl: "http://hub.test",
+      completionTokenSecret: "test-secret",
+      providers: [provider],
+      connectionForDaemon: (daemonId) => (daemonId === DAEMON_ID ? connection : undefined),
+    });
+
+    const stopped = await lifecycle.interruptActiveConversationExecutions(
+      "project-stop",
+      inThreadKey,
+    );
+
+    assert.deepEqual(stopped, [inThread]);
+    assert.equal((await database.findAgentExecutionById(inThread))?.status, "failed");
+    assert.notEqual((await database.findAgentExecutionById(otherThread))?.status, "failed");
+    assert.deepEqual(reasons, ["stopped_by_user"]);
+    await lifecycle.stop();
+  });
 });
 
 async function acknowledgementFixture() {
