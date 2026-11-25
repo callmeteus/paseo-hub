@@ -34,8 +34,10 @@ export function toTelegramHtml(text: string): string {
   out = out
     .split("\n")
     .map((line) => {
-      const bullet = /^(\s*)[*+-]\s+(.*)$/u.exec(line);
-      if (bullet !== null) return keep(`${bullet[1]}• ${bullet[2]}`);
+      const bullet = /^(\s*)[*+-]\s+/u.exec(line);
+      if (bullet !== null) {
+        return `${keep(`${bullet[1]}• `)}${line.slice(bullet[0].length)}`;
+      }
       const heading = /^(\s*)#{1,3}\s+(.*)$/u.exec(line);
       if (heading !== null) return keep(`${heading[1]}<b>${escapeHtml(heading[2] ?? "")}</b>`);
       return line;

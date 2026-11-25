@@ -49,6 +49,15 @@ describe("telegram markdown to HTML", () => {
     expect(toTelegramHtml("*x*")).toBe("<i>x</i>");
     expect(toTelegramHtml("**x**")).toBe("<b>x</b>");
   });
+
+  it("converts emphasis with accented letters inside bullets", () => {
+    expect(toTelegramHtml("- passo 1 com *ênfase*\n- passo 2")).toBe(
+      "• passo 1 com <i>ênfase</i>\n• passo 2",
+    );
+    expect(toTelegramHtml("*ação* e _ação_ e **atenção**")).toBe(
+      "<i>ação</i> e <i>ação</i> e <b>atenção</b>",
+    );
+  });
 });
 
 describe("telegram text delivery", () => {
