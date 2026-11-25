@@ -57,6 +57,7 @@ describe("hosted outputs", () => {
       (code) => new Error(code),
     );
     assert.equal(outputs[0]?.tool.name, "telegram_reply");
+    assert.ok(outputs.some((output) => output.type === "telegram.typing"));
   });
 
   it("does not expose Slack react on another provider and rejects a retired registration", async () => {

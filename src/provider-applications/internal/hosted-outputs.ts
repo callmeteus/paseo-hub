@@ -49,6 +49,22 @@ export function hostedOutputs<Active extends HostedActive>(
     );
   }
 
+  // The Hub fires this internal output at run acceptance to show the typing
+  // indicator while the agent works. It must be exposed by the hosted wrapper
+  // too, otherwise the runtime has no executor for it.
+  if (provider === "telegram") {
+    outputs.push(
+      hostedOutput(
+        provider,
+        slot,
+        "telegram.typing",
+        telegramAgentTool("telegram.typing"),
+        withLease,
+        unavailable,
+      ),
+    );
+  }
+
   return outputs;
 }
 
