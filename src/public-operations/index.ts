@@ -244,6 +244,16 @@ export function createPublicOperations(
         return storageUnavailableOrThrow(error);
       }
     },
+    async revokeDaemon(authorization, input) {
+      try {
+        const outcome = await repository.revokeDaemon(authorization.organizationId, input.daemonId);
+        return outcome.status === "revoked"
+          ? { status: "revoked", daemonId: input.daemonId, slug: outcome.slug }
+          : outcome;
+      } catch (error) {
+        return storageUnavailableOrThrow(error);
+      }
+    },
   };
 }
 

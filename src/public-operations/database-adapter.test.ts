@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "vitest";
 import { createMemoryDatabase } from "../db/memory.js";
 import { acceptingAgentValidator } from "../test-utils/agent-validator.js";
-import { enrollTestDaemon } from "../test-utils/project-configuration.js";
+import { enrollTestDaemon, TEST_DAEMON_ID } from "../test-utils/project-configuration.js";
 import { OrganizationTriggerStore } from "../triggers/store.js";
 import { createDatabasePublicOperationRepository } from "./database-adapter.js";
 
@@ -72,3 +72,43 @@ run:
   prompt: Handle it
 `;
 }
+
+describe("public daemon revocation", () => {
+  it("revokes an offline daemon of the organization", async () => {
+    const database = createMemoryDatabase({ organizationIds: ["org"] });
+    await enrollTestDaemon(database, "org");
+    const repository = createDatabasePublicOperationRepository(database);
+
+    const enrolled = await database.findDaemonForOrganization("org", TEST_DAEMON_ID);
+    assert.deepEqual(await repository.revokeDaemon("org", TEST_DAEMON_ID), {
+      status: "revoked",
+      slug: enrolled?.slug,
+    });
+    assert.equal(
+      (await database.findDaemonForOrganization("org", TEST_DAEMON_ID))?.status,
+      "revoked",
+    );
+  });
+
+  it("refuses a connected daemon and a daemon from another organization", async () => {
+    const database = createMemoryDatabase({ organizationIds: ["org", "other"] });
+    await enrollTestDaemon(database, "org");
+    await database.setDaemonPresence(TEST_DAEMON_ID, "connected");
+    const repository = createDatabasePublicOperationRepository(database);
+
+    assert.deepEqual(await repository.revokeDaemon("org", TEST_DAEMON_ID), {
+      status: "daemon_online",
+    });
+    assert.equal(
+      (await database.findDaemonForOrganization("org", TEST_DAEMON_ID))?.status,
+      "active",
+    );
+
+    assert.deepEqual(await repository.revokeDaemon("other", TEST_DAEMON_ID), {
+      status: "not_found",
+    });
+    assert.deepEqual(await repository.revokeDaemon("org", "20000000-0000-4000-8000-000000000002"), {
+      status: "not_found",
+    });
+  });
+});

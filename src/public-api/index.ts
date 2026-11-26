@@ -15,12 +15,14 @@ import type {
   PublicAuthorization,
   PublicOperations,
   ReadSlackMessagesResult,
+  RevokeDaemonResult,
   ValidateConfigurationResult,
   ValidateTriggerResult,
 } from "../public-operations/index.js";
 import {
   DispatchedManualRunSchema,
   EnrollmentTokenSchema,
+  RevokedDaemonSchema,
   InstalledConfigurationSchema,
   InstalledTriggerSchema,
   ProjectListSchema,
@@ -65,7 +67,8 @@ type PublicOperationResult =
   | ValidateConfigurationResult
   | InstallConfigurationResult
   | DispatchManualRunResult
-  | IssueEnrollmentTokenResult;
+  | IssueEnrollmentTokenResult
+  | RevokeDaemonResult;
 
 export interface PublicApi {
   handle(request: Request): Promise<Response>;
@@ -253,6 +256,10 @@ async function execute(
     if (!isSlackMessagesResult(result)) throw new Error("invalid slack messages result");
     return slackMessagesResponse(requestId, result);
   }
+  if (definition.resultMapping === "daemon-revocation") {
+    if (!isRevokeDaemonResult(result)) throw new Error("invalid daemon revocation result");
+    return daemonRevocationResponse(requestId, result);
+  }
   return operationResponse(definition.resultMapping, requestId, result);
 }
 
@@ -282,7 +289,7 @@ function readQuery(request: Request): Record<string, string> {
 function operationResponse(
   mapping: Exclude<
     PublicOperationDefinition["resultMapping"],
-    "triggers" | "slack-channels" | "slack-messages"
+    "triggers" | "slack-channels" | "slack-messages" | "daemon-revocation"
   >,
   requestId: string,
   result: PublicOperationResult,
@@ -683,6 +690,42 @@ function isManualRunResult(result: PublicOperationResult): result is DispatchMan
 
 function isEnrollmentResult(result: PublicOperationResult): result is IssueEnrollmentTokenResult {
   return ["issued", "credential_revoked", "infrastructure_unavailable"].includes(result.status);
+}
+
+function isRevokeDaemonResult(result: PublicOperationResult): result is RevokeDaemonResult {
+  return ["revoked", "not_found", "daemon_online", "infrastructure_unavailable"].includes(
+    result.status,
+  );
+}
+
+function daemonRevocationResponse(requestId: string, result: RevokeDaemonResult): Response {
+  switch (result.status) {
+    case "revoked":
+      return success(requestId, 200, RevokedDaemonSchema, {
+        daemonId: result.daemonId,
+        slug: result.slug,
+        revoked: true,
+      });
+    case "not_found":
+      return problem(
+        requestId,
+        404,
+        "daemon_not_found",
+        "Daemon not found",
+        "Check the daemon id against the daemons of this organization.",
+      );
+    case "daemon_online":
+      return problem(
+        requestId,
+        409,
+        "daemon_online",
+        "Daemon is connected",
+        "A connected daemon revokes itself with its own credential.",
+      );
+    case "infrastructure_unavailable":
+      return infrastructureProblem(requestId);
+  }
+  return assertNever(result);
 }
 
 export { publicOpenApiDocument } from "./openapi.js";

@@ -361,6 +361,7 @@ describe("generated public OpenAPI", () => {
       "/api/v1/configurations/install",
       "/api/v1/configurations/validate",
       "/api/v1/daemons/enrollment-tokens",
+      "/api/v1/daemons/revoke",
       "/api/v1/manual-runs",
       "/api/v1/projects",
       "/api/v1/setup-resources",
@@ -399,6 +400,10 @@ describe("generated public OpenAPI", () => {
         ["200", "400", "401", "403", "404", "409", "500", "503"],
       ],
       "/api/v1/daemons/enrollment-tokens": ["daemons:enroll", ["201", "401", "403", "500", "503"]],
+      "/api/v1/daemons/revoke": [
+        "daemons:enroll",
+        ["200", "400", "401", "403", "404", "409", "500", "503"],
+      ],
     } as const;
     for (const [path, [scope, statuses]] of Object.entries(expectations)) {
       const operation =
@@ -585,6 +590,8 @@ function successfulOperations(): PublicOperations {
         token: "a".repeat(43),
         expiresAt: new Date("2026-08-06T18:10:00.000Z"),
       }),
+    revokeDaemon: (_authorization, input) =>
+      Promise.resolve({ status: "revoked", daemonId: input.daemonId, slug: "runner-1" }),
     listSlackChannels: () =>
       Promise.resolve({
         status: "channels",
