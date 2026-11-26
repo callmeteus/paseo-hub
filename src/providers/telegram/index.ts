@@ -267,6 +267,7 @@ async function completeConnection(
       membershipId,
       chatId: String(identity.id),
       chatName: `@${identity.username}`,
+      providerApplicationId: String(identity.id),
     });
     return Response.redirect(
       new URL("/connections?provider=telegram&result=connected", options.callbackOrigin),

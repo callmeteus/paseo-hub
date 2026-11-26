@@ -55,10 +55,14 @@ describe("connections declared by the environment", () => {
       },
     ]);
 
-    const telegram = await database.query<{ chat_id: string; chat_name: string }>(
-      "select chat_id, chat_name from telegram_connections",
-    );
-    assert.deepEqual(telegram.rows, [{ chat_id: "-1001", chat_name: "Acme ops" }]);
+    const telegram = await database.query<{
+      chat_id: string;
+      chat_name: string;
+      provider_application_id: string;
+    }>("select chat_id, chat_name, provider_application_id from telegram_connections");
+    assert.deepEqual(telegram.rows, [
+      { chat_id: "-1001", chat_name: "Acme ops", provider_application_id: "9067" },
+    ]);
 
     state.botToken = "xoxb-second";
     state.chatTitle = "Acme ops renamed";
@@ -260,6 +264,12 @@ class FakeProviders {
         { ok: true, team_id: "T-ACME", team: "Acme", user_id: "U-BOT", bot_id: "B-ACME" },
         { headers: { "x-oauth-scopes": this.scopes.join(",") } },
       );
+    }
+    if (url.endsWith("/getMe")) {
+      return Response.json({
+        ok: true,
+        result: { id: 9067, is_bot: true, first_name: "Bot", username: "acme_bot" },
+      });
     }
     if (url.endsWith("/getChat")) {
       const body = z

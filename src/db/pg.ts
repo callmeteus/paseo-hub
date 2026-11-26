@@ -4503,9 +4503,19 @@ class PgDatabase implements Database {
     await this.pool.query(
       `insert into telegram_connections
          (organization_id, chat_id, slug, chat_name, provider_application_id, connected_by_user_id)
-       values ($1, $2, $3, $4, 'telegram', $5)
-       on conflict (chat_id) do update set chat_name = excluded.chat_name, updated_at = now()`,
-      [input.organizationId, input.chatId, slug, input.chatName, input.membershipId],
+       values ($1, $2, $3, $4, $6, $5)
+       on conflict (chat_id) do update set
+         chat_name = excluded.chat_name,
+         provider_application_id = excluded.provider_application_id,
+         updated_at = now()`,
+      [
+        input.organizationId,
+        input.chatId,
+        slug,
+        input.chatName,
+        input.membershipId,
+        input.providerApplicationId,
+      ],
     );
   }
 

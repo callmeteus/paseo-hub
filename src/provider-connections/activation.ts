@@ -141,6 +141,19 @@ async function activateTelegramConnection(
     token: application.botToken,
     ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
   });
+  // The connection binds the bot identity, exactly like the provider application, so the row
+  // cannot look like it belongs to another app on the next boot.
+  let bot: Awaited<ReturnType<typeof api.getMe>>;
+  try {
+    bot = await api.getMe();
+  } catch (error) {
+    return connection.chats.map((chat) => ({
+      provider: "telegram" as const,
+      organization: connection.organization,
+      resource: chat,
+      error,
+    }));
+  }
   const failures: ProviderConnectionActivationFailure[] = [];
   for (const chat of connection.chats) {
     try {
@@ -151,15 +164,17 @@ async function activateTelegramConnection(
       await options.database.query(
         `insert into telegram_connections
            (organization_id, chat_id, slug, chat_name, provider_application_id, updated_at)
-         values ($1, $2, $3, $4, 'telegram', now())
+         values ($1, $2, $3, $4, $5, now())
          on conflict (chat_id) do update set
            chat_name = excluded.chat_name,
+           provider_application_id = excluded.provider_application_id,
            updated_at = now()`,
         [
           organizationId,
           String(identity.id),
           connectionSlug(chatName, String(identity.id)),
           chatName,
+          String(bot.id),
         ],
       );
     } catch (error) {

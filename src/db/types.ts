@@ -657,6 +657,8 @@ export interface BindTelegramConnectionInput {
   membershipId: string;
   chatId: string;
   chatName: string;
+  /** The bot identity the connection belongs to, so the row matches the provider application. */
+  providerApplicationId: string;
 }
 
 export interface BindSlackConnectionInput extends ReadConnectionAttemptInput {
