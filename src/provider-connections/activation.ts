@@ -42,16 +42,19 @@ export async function activateProviderConnectionsAtStartup(
 ): Promise<readonly ProviderConnectionActivationFailure[]> {
   const failures: ProviderConnectionActivationFailure[] = [];
   for (const connection of options.connections) {
-    const organizationId = await organizationIdForSlug(
-      options.database,
-      connection.organization,
-    ).catch(() => undefined);
+    let organizationId: string | undefined;
+    let lookupError: unknown;
+    try {
+      organizationId = await organizationIdForReference(options.database, connection.organization);
+    } catch (error) {
+      lookupError = error;
+    }
     if (organizationId === undefined) {
       failures.push({
         provider: connection.provider,
         organization: connection.organization,
         resource: connection.provider === "slack" ? "slack" : connection.chats.join(","),
-        error: new Error(`organization ${connection.organization} does not exist`),
+        error: lookupError ?? new Error(`organization ${connection.organization} does not exist`),
       });
       continue;
     }
@@ -171,15 +174,32 @@ async function activateTelegramConnection(
   return failures;
 }
 
-async function organizationIdForSlug(
+/**
+ * Resolves a declaration to the organization it names.
+ *
+ * A slug is what links and the panel use, but a provisioned organization carries an id suffix, so
+ * an operator who only knows the configured name would have to open the panel to learn it. The
+ * reference therefore accepts the slug, the id, or a name that matches exactly one organization.
+ */
+async function organizationIdForReference(
   database: DatabaseRuntime,
-  slug: string,
+  reference: string,
 ): Promise<string | undefined> {
-  const result = await database.query<QueryRow & { id: string }>(
-    "select id from organization where slug = $1",
-    [slug],
+  for (const column of ["slug", "id"] as const) {
+    const result = await database.query<QueryRow & { id: string }>(
+      `select id from organization where ${column} = $1`,
+      [reference],
+    );
+    if (result.rows[0] !== undefined) return result.rows[0].id;
+  }
+  const byName = await database.query<QueryRow & { id: string }>(
+    "select id from organization where lower(name) = lower($1) limit 2",
+    [reference],
   );
-  return result.rows[0]?.id;
+  if (byName.rows.length > 1) {
+    throw new Error(`organization ${reference} is ambiguous; declare its slug or id`);
+  }
+  return byName.rows[0]?.id;
 }
 
 function connectionSlug(name: string, externalId: string): string {

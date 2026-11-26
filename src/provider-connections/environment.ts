@@ -8,12 +8,14 @@ export const PROVIDER_CONNECTIONS_FILE_ENVIRONMENT_VARIABLE = "PASEO_HUB_CONNECT
 
 export interface ConfiguredSlackConnection {
   provider: "slack";
+  /** Organization slug, id, or a name that matches exactly one organization. */
   organization: string;
   botToken: string;
 }
 
 export interface ConfiguredTelegramConnection {
   provider: "telegram";
+  /** Organization slug, id, or a name that matches exactly one organization. */
   organization: string;
   chats: readonly string[];
 }
