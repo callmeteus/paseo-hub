@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { DatabaseRuntime, QueryRow } from "../../db/runtime/index.js";
 import type { Locks } from "../../db/runtime/locks/index.js";
 import type { Database } from "../../db/types.js";
+import { slackConnectionSlug } from "../../providers/slack/client.js";
 import type {
   Provider,
   ProviderApplicationConfiguration,
@@ -256,7 +257,7 @@ export function createProviderApplicationStore(
               input.organizationId,
               input.installation.teamId,
               input.installation.teamName,
-              `slack-${input.installation.teamId.toLowerCase()}`,
+              slackConnectionSlug(input.installation.teamId),
               input.installation.botUserId,
               input.installation.botAccessToken,
               JSON.stringify(input.installation.scopes),
