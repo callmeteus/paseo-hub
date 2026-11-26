@@ -44,6 +44,10 @@ import {
   resolveCallbackOrigin,
 } from "./provider-applications/index.js";
 import { createSlackSocketInstallationVerifier } from "./providers/slack/installation.js";
+import {
+  activateProviderConnectionsAtStartup,
+  readConfiguredConnections,
+} from "./provider-connections/index.js";
 import { resolveHubDataDirectory } from "./data-directory.js";
 import { createInvitationMailer } from "./invitations/index.js";
 import { composeEmailDelivery } from "./email/index.js";
@@ -176,6 +180,29 @@ async function createProductionRuntime(): Promise<ApplicationRuntime> {
       reportFailure(error, {
         operation: "provider_application.activate_at_startup",
         component: "provider_applications",
+        provider,
+      });
+    }
+    // Connections declared in the environment are re-applied on every boot. A malformed
+    // declaration is reported and skipped: a config typo must not keep the instance down.
+    const configuredConnections = await readConfiguredConnections(process.env).catch(
+      (error: unknown) => {
+        reportFailure(error, {
+          operation: "provider_connection.read_environment",
+          component: "provider_connections",
+        });
+        return [];
+      },
+    );
+    const connectionFailures = await activateProviderConnectionsAtStartup({
+      database: runtime,
+      connections: configuredConnections,
+      applications: providerEnvironment,
+    });
+    for (const { provider, error } of connectionFailures) {
+      reportFailure(error, {
+        operation: "provider_connection.activate_at_startup",
+        component: "provider_connections",
         provider,
       });
     }

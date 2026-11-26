@@ -12,6 +12,7 @@ function fakeApi(): {
   const actions: Array<{ chatId: string | number; action: string }> = [];
   const api: TelegramBotApi = {
     getMe: async () => ({ id: 1, username: "bot", firstName: "Bot" }),
+    getChat: async (chatId) => ({ id: Number(chatId), type: "group" }),
     setWebhook: async () => undefined,
     deleteWebhook: async () => undefined,
     sendChatAction: async (chatId, action) => {
