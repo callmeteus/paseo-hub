@@ -3478,7 +3478,7 @@ class MemoryDatabase implements Database {
       slug: `${input.chatName.toLowerCase().replace(/[^a-z0-9]+/gu, "-") || "telegram"}-${input.chatId}`,
       chatId: input.chatId,
       chatName: input.chatName,
-      providerApplicationId: "telegram",
+      providerApplicationId: input.providerApplicationId,
     };
     this.telegramConnections.set(input.chatId, record);
   }
