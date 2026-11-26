@@ -55,6 +55,20 @@ const SlackAuthTestResponseSchema = SlackApiResponseSchema.extend({
   user_id: z.string().min(1).optional(),
 });
 
+/**
+ * Slug a Slack connection is stored under, derived from the workspace id.
+ *
+ * The workspace id is the external identity, so it is also the stable part of the slug: two
+ * flows that save the same workspace (the panel connect flow and the environment declaration)
+ * must agree on it, otherwise a trigger authored against one of them cannot see the connection.
+ *
+ * @param teamId - Slack workspace id, as returned by `auth.test`
+ * @returns Connection slug such as `slack-t0123456789`
+ */
+export function slackConnectionSlug(teamId: string): string {
+  return `slack-${teamId.toLowerCase()}`.slice(0, 120);
+}
+
 export interface SlackInstallation {
   appId: string;
   teamId: string;

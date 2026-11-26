@@ -20,7 +20,20 @@ export interface ConfiguredTelegramConnection {
   chats: readonly string[];
 }
 
-export type ConfiguredConnection = ConfiguredSlackConnection | ConfiguredTelegramConnection;
+export interface ConfiguredGitHubConnection {
+  provider: "github";
+  /** Organization slug, id, or a name that matches exactly one organization. */
+  organization: string;
+  /** Installation the App already has on the account. GitHub numbers it, so it is declared. */
+  installationId: string;
+  /** Optional slug the triggers reference. Defaults to `<account>-github`, as the panel saves it. */
+  slug?: string;
+}
+
+export type ConfiguredConnection =
+  | ConfiguredSlackConnection
+  | ConfiguredTelegramConnection
+  | ConfiguredGitHubConnection;
 
 const slackSchema = z
   .object({
@@ -35,6 +48,21 @@ const telegramSchema = z
     provider: z.literal("telegram"),
     organization: z.string().trim().min(1),
     chats: z.array(z.union([z.string(), z.number().int()])).min(1),
+  })
+  .strict();
+
+const githubSchema = z
+  .object({
+    provider: z.literal("github"),
+    organization: z.string().trim().min(1),
+    installationId: z.union([z.string().regex(/^[1-9]\d*$/u), z.number().int().positive()]),
+    slug: z
+      .string()
+      .trim()
+      .min(1)
+      .max(120)
+      .regex(/^[a-z0-9][a-z0-9-]*$/u)
+      .optional(),
   })
   .strict();
 
@@ -99,6 +127,16 @@ export function parseConfiguredConnections(document: unknown): readonly Configur
   return root.data.connections.map((entry) => {
     const slack = slackSchema.safeParse(entry);
     if (slack.success) return slack.data;
+    const github = githubSchema.safeParse(entry);
+    if (github.success) {
+      const declared: ConfiguredGitHubConnection = {
+        provider: "github",
+        organization: github.data.organization,
+        installationId: String(github.data.installationId),
+      };
+      if (github.data.slug !== undefined) declared.slug = github.data.slug;
+      return declared;
+    }
     const telegram = telegramSchema.safeParse(entry);
     if (telegram.success) {
       return {
@@ -108,7 +146,7 @@ export function parseConfiguredConnections(document: unknown): readonly Configur
       };
     }
     throw new ProviderConnectionConfigurationError(
-      "connection entry must declare provider slack with botToken, or provider telegram with chats",
+      "connection entry must declare provider github with installationId, provider slack with botToken, or provider telegram with chats",
     );
   });
 }

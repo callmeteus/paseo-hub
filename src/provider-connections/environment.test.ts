@@ -42,6 +42,45 @@ describe("provider connections declared by the environment", () => {
     ]);
   });
 
+  it("normalizes a declared GitHub installation and keeps an optional slug", () => {
+    assert.deepEqual(
+      parseConfiguredConnections({
+        connections: [
+          { provider: "github", organization: "acme", installationId: 178294978 },
+          {
+            provider: "github",
+            organization: "acme",
+            installationId: "178294979",
+            slug: "acme-app",
+          },
+        ],
+      }),
+      [
+        { provider: "github", organization: "acme", installationId: "178294978" },
+        {
+          provider: "github",
+          organization: "acme",
+          installationId: "178294979",
+          slug: "acme-app",
+        },
+      ],
+    );
+  });
+
+  it("refuses a GitHub declaration without an installation or with an unusable slug", () => {
+    for (const entry of [
+      { provider: "github", organization: "acme" },
+      { provider: "github", organization: "acme", installationId: 0 },
+      { provider: "github", organization: "acme", installationId: "abc" },
+      { provider: "github", organization: "acme", installationId: "1", slug: "Acme App" },
+    ]) {
+      assert.throws(
+        () => parseConfiguredConnections({ connections: [entry] }),
+        ProviderConnectionConfigurationError,
+      );
+    }
+  });
+
   it("reads the same document from a file", async () => {
     const root = await mkdtemp(join(tmpdir(), "hub-provider-connections-"));
     roots.push(root);
