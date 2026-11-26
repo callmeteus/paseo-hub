@@ -201,6 +201,11 @@ export class ActiveDaemonRegistry {
     });
   }
 
+  /** Whether this process currently holds a socket for the daemon. */
+  has(daemonId: string): boolean {
+    return this.active.has(daemonId);
+  }
+
   updatePermissions(daemon: DaemonRecord): void {
     const active = this.active.get(daemon.id);
     if (active) active.daemon = daemon;

@@ -328,6 +328,7 @@ export function createHubApplication(options: HubRuntimeOptions): HubApplication
     manualSource,
     storeForProject,
     agentValidator,
+    daemons,
   );
   const publicApi = createPublicApi(options.publicApi, publicOperations);
   const operations: HubOperations = {
@@ -407,13 +408,17 @@ function createAppPublicOperations(
   manualSource: ReturnType<typeof createManualTriggerSource> | undefined,
   configurationForProject: (projectId: string) => ProjectConfigurationStore,
   daemonAgentValidator: DaemonAgentConfigurationValidator | null,
+  activeDaemons: ActiveDaemonRegistry | null,
 ) {
   if (options.database === null || manualSource === undefined || daemonAgentValidator === null) {
     return null;
   }
   const database = options.database;
   return createPublicOperations(
-    createDatabasePublicOperationRepository(database),
+    createDatabasePublicOperationRepository(
+      database,
+      (daemonId) => activeDaemons?.has(daemonId) === true,
+    ),
     {
       triggerForOrganization: (organizationId) => {
         const store = new OrganizationTriggerStore(database, organizationId, daemonAgentValidator);

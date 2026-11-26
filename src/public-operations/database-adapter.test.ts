@@ -74,9 +74,11 @@ run:
 }
 
 describe("public daemon revocation", () => {
-  it("revokes an offline daemon of the organization", async () => {
+  it("revokes a daemon that has no socket, even when the stored presence says connected", async () => {
     const database = createMemoryDatabase({ organizationIds: ["org"] });
     await enrollTestDaemon(database, "org");
+    // A daemon killed while the Hub was down keeps the column at connected with no socket behind.
+    await database.setDaemonPresence(TEST_DAEMON_ID, "connected");
     const repository = createDatabasePublicOperationRepository(database);
 
     const enrolled = await database.findDaemonForOrganization("org", TEST_DAEMON_ID);
@@ -94,7 +96,10 @@ describe("public daemon revocation", () => {
     const database = createMemoryDatabase({ organizationIds: ["org", "other"] });
     await enrollTestDaemon(database, "org");
     await database.setDaemonPresence(TEST_DAEMON_ID, "connected");
-    const repository = createDatabasePublicOperationRepository(database);
+    const repository = createDatabasePublicOperationRepository(
+      database,
+      (daemonId) => daemonId === TEST_DAEMON_ID,
+    );
 
     assert.deepEqual(await repository.revokeDaemon("org", TEST_DAEMON_ID), {
       status: "daemon_online",
