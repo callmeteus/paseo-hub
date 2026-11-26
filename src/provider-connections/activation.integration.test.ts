@@ -103,6 +103,50 @@ describe("connections declared by the environment", () => {
     );
   });
 
+  it("resolves the organization by name when the declaration does not carry the slug", async () => {
+    const { database } = await freshDatabase();
+    const state = new FakeProviders();
+    await database.query("insert into organization (id, name, slug) values ($1, $2, $3)", [
+      "10000000-0000-4000-8000-000000000001",
+      "Acme Prod",
+      "acme-prod-10000000",
+    ]);
+
+    const failures = await activateProviderConnectionsAtStartup({
+      database,
+      connections: [{ provider: "telegram", organization: "acme prod", chats: ["-1001"] }],
+      applications: state.applications,
+      fetch: state.fetch,
+    });
+
+    assert.deepEqual(failures, []);
+    assert.equal(
+      (await database.query<{ name: string }>("select chat_name as name from telegram_connections"))
+        .rows[0]?.name,
+      "Acme ops",
+    );
+  });
+
+  it("refuses an organization name that matches more than one organization", async () => {
+    const { database } = await freshDatabase();
+    const state = new FakeProviders();
+    await database.query(
+      `insert into organization (id, name, slug) values
+         ('10000000-0000-4000-8000-000000000001', 'Twin', 'twin-10000000'),
+         ('20000000-0000-4000-8000-000000000001', 'Twin', 'twin-20000000')`,
+    );
+
+    const failures = await activateProviderConnectionsAtStartup({
+      database,
+      connections: [{ provider: "telegram", organization: "Twin", chats: ["-1001"] }],
+      applications: state.applications,
+      fetch: state.fetch,
+    });
+
+    assert.equal(failures.length, 1);
+    assert.match(String(failures[0]?.error), /does not exist|ambiguous/u);
+  });
+
   it("reports a declaration it cannot apply and leaves the instance usable", async () => {
     const { database } = await freshDatabase("acme");
     const state = new FakeProviders();
