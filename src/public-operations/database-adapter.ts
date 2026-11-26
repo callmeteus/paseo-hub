@@ -137,6 +137,15 @@ export function createDatabasePublicOperationRepository(
       });
       return issued ? "issued" : "credential_revoked";
     },
+    async revokeDaemon(organizationId, daemonId) {
+      const daemon = await database.findDaemonForOrganization(organizationId, daemonId);
+      if (daemon === undefined) return { status: "not_found" };
+      // A connected daemon holds a socket; only the daemon itself can close it with its own
+      // credential, so revoking one here would leave a live process without a row.
+      if (daemon.presence === "connected") return { status: "daemon_online" };
+      const revoked = await database.revokeDaemon(daemon.id);
+      return revoked ? { status: "revoked", slug: daemon.slug } : { status: "not_found" };
+    },
   };
 }
 

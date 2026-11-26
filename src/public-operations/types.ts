@@ -123,6 +123,12 @@ export type IssueEnrollmentTokenResult =
   | { status: "credential_revoked" }
   | InfrastructureUnavailable;
 
+export type RevokeDaemonResult =
+  | { status: "revoked"; daemonId: string; slug: string }
+  | { status: "not_found" }
+  | { status: "daemon_online" }
+  | InfrastructureUnavailable;
+
 export interface DomainIssue {
   path: readonly (string | number)[];
   message: string;
@@ -260,6 +266,10 @@ export interface PublicOperations {
     input: DispatchManualRunInput,
   ): Promise<DispatchManualRunResult>;
   issueEnrollmentToken(authorization: PublicAuthorization): Promise<IssueEnrollmentTokenResult>;
+  revokeDaemon(
+    authorization: PublicAuthorization,
+    input: { daemonId: string },
+  ): Promise<RevokeDaemonResult>;
 }
 
 export interface PublicOperationRepository {
@@ -293,6 +303,12 @@ export interface PublicOperationRepository {
     authorization: PublicAuthorization,
     input: { token: string; expiresAt: Date },
   ): Promise<"issued" | "credential_revoked" | "infrastructure_unavailable">;
+  revokeDaemon(
+    organizationId: string,
+    daemonId: string,
+  ): Promise<
+    { status: "revoked"; slug: string } | { status: "not_found" } | { status: "daemon_online" }
+  >;
 }
 
 export interface PublicOperationCapabilities {

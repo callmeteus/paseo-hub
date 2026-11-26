@@ -2,6 +2,7 @@ import type { ApiKeyScope } from "../auth/api-key-contract.js";
 import type {
   DispatchManualRunResult,
   InstallConfigurationResult,
+  RevokeDaemonResult,
   InstallTriggerResult,
   IssueEnrollmentTokenResult,
   ListConfigurationResourcesResult,
@@ -22,6 +23,8 @@ import {
   InstalledConfigurationSchema,
   InstalledTriggerSchema,
   ProjectListSchema,
+  RevokeDaemonRequestSchema,
+  RevokedDaemonSchema,
   TriggerListSchema,
   ConfigurationResourcesSchema,
   SetupResourcesSchema,
@@ -35,6 +38,7 @@ import {
 } from "./contracts.js";
 
 export type PublicOperationId =
+  | "revokeDaemon"
   | "listTriggers"
   | "listSlackChannels"
   | "readSlackMessages"
@@ -56,6 +60,7 @@ export interface PublicOperationDefinition {
   requestSchema?:
     | typeof InstallConfigurationRequestSchema
     | typeof DispatchManualRunRequestSchema
+    | typeof RevokeDaemonRequestSchema
     | typeof TriggerYamlRequestSchema;
   querySchema?: typeof SlackChannelsQuerySchema | typeof SlackMessagesQuerySchema;
   successSchema:
@@ -70,7 +75,8 @@ export interface PublicOperationDefinition {
     | typeof SlackChannelListSchema
     | typeof SlackMessageListSchema
     | typeof DispatchedManualRunSchema
-    | typeof EnrollmentTokenSchema;
+    | typeof EnrollmentTokenSchema
+    | typeof RevokedDaemonSchema;
   successStatus: 200 | 201;
   resultMapping:
     | "trigger-validation"
@@ -84,7 +90,8 @@ export interface PublicOperationDefinition {
     | "validation"
     | "configuration"
     | "manual-run"
-    | "enrollment-token";
+    | "enrollment-token"
+    | "daemon-revocation";
   summary: string;
   description: string;
   tag: "Triggers" | "Projects" | "Configurations" | "Runs" | "Daemons";
@@ -106,6 +113,7 @@ export interface PublicOperationDefinition {
     | InstallConfigurationResult
     | DispatchManualRunResult
     | IssueEnrollmentTokenResult
+    | RevokeDaemonResult
   >;
 }
 
@@ -393,6 +401,32 @@ export const publicOperationManifest: readonly PublicOperationDefinition[] = [
       503: "Hub authentication or storage is unavailable.",
     },
     invoke: (operations, authorization) => operations.issueEnrollmentToken(authorization),
+  },
+  {
+    id: "revokeDaemon",
+    method: "post",
+    path: "/api/v1/daemons/revoke",
+    scope: "daemons:enroll",
+    requestSchema: RevokeDaemonRequestSchema,
+    successSchema: RevokedDaemonSchema,
+    successStatus: 200,
+    resultMapping: "daemon-revocation",
+    summary: "Revoke a daemon",
+    description:
+      "Revokes an offline daemon of the authenticated organization. A connected daemon has to revoke itself with its own credential, so a live process never loses its row behind its back.",
+    tag: "Daemons",
+    responses: {
+      200: "The daemon is revoked.",
+      400: "The JSON request is invalid.",
+      401: "The bearer credential is missing, malformed, or revoked.",
+      403: "The bearer credential lacks daemons:enroll.",
+      404: "The daemon does not belong to this organization.",
+      409: "The daemon is connected and has to revoke itself.",
+      500: "The operation failed unexpectedly.",
+      503: "Hub authentication or storage is unavailable.",
+    },
+    invoke: (operations, authorization, input) =>
+      operations.revokeDaemon(authorization, RevokeDaemonRequestSchema.parse(input)),
   },
 ];
 

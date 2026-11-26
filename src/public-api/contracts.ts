@@ -325,6 +325,29 @@ export const EnrollmentTokenSchema = z
     },
   });
 
+export const RevokeDaemonRequestSchema = z
+  .object({ daemonId: z.string().uuid() })
+  .strict()
+  .openapi("RevokeDaemonRequest", {
+    description: "The daemon to revoke. It has to belong to the authenticated organization.",
+    example: { daemonId: "84af3583-23ff-4fcc-9838-ed3262499be2" },
+  });
+
+export const RevokedDaemonSchema = z
+  .object({
+    daemonId: z.string().uuid(),
+    slug: z.string(),
+    revoked: z.literal(true),
+  })
+  .strict()
+  .openapi("RevokedDaemon", {
+    example: {
+      daemonId: "84af3583-23ff-4fcc-9838-ed3262499be2",
+      slug: "runner-1",
+      revoked: true,
+    },
+  });
+
 export const SlackChannelsQuerySchema = z
   .object({
     connection: z.string().trim().min(1).max(100).optional(),
