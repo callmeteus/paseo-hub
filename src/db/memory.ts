@@ -1148,7 +1148,13 @@ class MemoryDatabase implements Database {
   }
 
   async acceptTelegramEvent(input: AcceptTelegramEventInput): Promise<ProviderEventAcceptance> {
-    const binding = this.telegramConnections.get(input.chatId);
+    // A Telegram connection is the bot identity, not a chat. With one bot bound, the chat is the
+    // resource and the trigger filters decide which of its chats dispatch.
+    const binding =
+      this.telegramConnections.get(input.chatId) ??
+      (this.telegramConnections.size === 1
+        ? Array.from(this.telegramConnections.values())[0]
+        : undefined);
     return this.acceptMemoryEvent(
       input,
       binding?.organizationId,

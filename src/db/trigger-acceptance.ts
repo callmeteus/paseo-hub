@@ -611,7 +611,18 @@ async function findConnection(
       .from(schema.telegramConnections)
       .where(eq(schema.telegramConnections.chatId, String(externalId)))
       .limit(1);
-    return row;
+    if (row !== undefined) return row;
+    // A Telegram connection is the bot identity, not a chat: the provider application is
+    // instance-wide and the chat is only the resource. When exactly one bot is bound, every chat
+    // that bot serves resolves to that binding, and the trigger filters narrow the chats.
+    const bots = await transaction
+      .select({
+        id: schema.telegramConnections.id,
+        organizationId: schema.telegramConnections.organizationId,
+      })
+      .from(schema.telegramConnections)
+      .limit(2);
+    return bots.length === 1 ? bots[0] : undefined;
   }
   const [row] = await transaction
     .select({
