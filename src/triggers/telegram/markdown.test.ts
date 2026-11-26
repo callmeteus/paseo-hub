@@ -65,6 +65,7 @@ describe("telegram text delivery", () => {
     const sent: Record<string, unknown>[] = [];
     const base = {
       getMe: async () => ({ id: 1, username: "bot", firstName: "Bot" }),
+      getChat: async (chatId: string | number) => ({ id: Number(chatId), type: "group" }),
       setWebhook: async () => undefined,
       deleteWebhook: async () => undefined,
       sendChatAction: async () => undefined,

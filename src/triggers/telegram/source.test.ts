@@ -69,6 +69,7 @@ describe("Telegram mention normalization", () => {
       getBotUsername: () => "kevin_bot",
       api: {
         getMe: async () => ({ id: 1, username: "kevin_bot", firstName: "Kevin" }),
+        getChat: async (chatId) => ({ id: Number(chatId), type: "group" }),
         setWebhook: async () => undefined,
         deleteWebhook: async () => undefined,
         sendMessage: async () => ({ messageId: 1, chatId: -1001 }),

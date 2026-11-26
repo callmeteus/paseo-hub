@@ -11,6 +11,7 @@ function apiWithEdits(): {
   const acks: string[] = [];
   const base = {
     getMe: async () => ({ id: 1, username: "e7kevinbot", firstName: "Kevin" }),
+    getChat: async (chatId: string | number) => ({ id: Number(chatId), type: "group" }),
     setWebhook: async () => undefined,
     deleteWebhook: async () => undefined,
     sendMessage: async () => ({ messageId: 1, chatId: -100 }),
@@ -65,7 +66,7 @@ describe("telegram button settlement", () => {
     expect(edits[0]).toMatchObject({
       chatId: -5160361212,
       messageId: 990130,
-      text: "CVE-2026-99288 afeta 250 instâncias.\n\n@giofoli escolheu \"Ver plano completo\"",
+      text: 'CVE-2026-99288 afeta 250 instâncias.\n\n@giofoli escolheu "Ver plano completo"',
       replyMarkup: { inline_keyboard: [] },
     });
   });

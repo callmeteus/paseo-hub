@@ -17,6 +17,14 @@ export interface TelegramBotIdentity {
   firstName: string;
 }
 
+/** The chat a bot is asked about. `title` is set for groups and channels, `username` for handles. */
+export interface TelegramChatIdentity {
+  id: number;
+  type: string;
+  title?: string;
+  username?: string;
+}
+
 export interface TelegramMessageInput {
   chatId: string | number;
   text: string;
@@ -43,6 +51,7 @@ export interface TelegramMessageResult {
 /** A Telegram Bot API client. All calls use the bot token issued by BotFather. */
 export interface TelegramBotApi {
   getMe(): Promise<TelegramBotIdentity>;
+  getChat(chatId: string | number): Promise<TelegramChatIdentity>;
   setWebhook(url: string, secretToken?: string): Promise<void>;
   deleteWebhook(): Promise<void>;
   sendMessage(input: TelegramMessageInput): Promise<TelegramMessageResult>;
@@ -66,6 +75,14 @@ const SendResultSchema = z.object({
   chat: z.object({ id: z.number().int() }),
 });
 const FileResultSchema = z.object({ file_path: z.string().optional() });
+const ChatResultSchema = z
+  .object({
+    id: z.number().int(),
+    type: z.string(),
+    title: z.string().optional(),
+    username: z.string().optional(),
+  })
+  .passthrough();
 
 export interface CreateTelegramBotApiOptions {
   token: string;
@@ -113,6 +130,15 @@ export function createTelegramBotApi(options: CreateTelegramBotApiOptions): Tele
         id: result.id,
         username: result.username ?? `bot${result.id}`,
         firstName: result.first_name,
+      };
+    },
+    async getChat(chatId) {
+      const result = await post("getChat", { chat_id: chatId }, ChatResultSchema);
+      return {
+        id: result.id,
+        type: result.type,
+        ...(result.title === undefined ? {} : { title: result.title }),
+        ...(result.username === undefined ? {} : { username: result.username }),
       };
     },
     async setWebhook(url, secretToken) {
