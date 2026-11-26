@@ -68,6 +68,64 @@ describe("trigger acceptance persistence", () => {
     await database.close();
   }, 120_000);
 
+  it("resolves a Telegram chat through the bound bot when no chat row matches", async () => {
+    const database = await createDatabase(databaseUrl);
+    const client = await createPostgresQueryRuntime(databaseUrl);
+    const organizationId = "telegram-bot-org";
+    const projectId = "50000000-0000-4000-8000-000000000001";
+    const connectionId = "50000000-0000-4000-8000-000000000002";
+
+    await client.query(`
+      insert into organization (id, name, slug)
+      values ('${organizationId}', 'Telegram Bot', 'telegram-bot');
+      insert into projects (id, organization_id, name, slug)
+      values ('${projectId}', '${organizationId}', 'Default', 'default');
+      insert into telegram_connections
+        (id, organization_id, chat_id, slug, chat_name, provider_application_id)
+      values ('${connectionId}', '${organizationId}', '9001', 'bot-9001', '@bot', 'telegram');
+    `);
+    const revision = await database.insertProjectConfigurationRevision({
+      projectId,
+      sourceKind: "manual",
+      sourceEvidence: { kind: "test" },
+      normalizedConfiguration: { environments: [], triggers: [] },
+      contentHash: "telegram-bot-config",
+    });
+    await database.activateProjectConfigurationRevision(projectId, revision.id, [
+      { provider: "telegram", connectionId, resourceId: null, triggerName: "telegram-mention" },
+    ]);
+
+    const accepted = await database.acceptTelegramEvent({
+      chatId: "-100777",
+      source: "telegram.mention",
+      deliveryId: "telegram-group-mention",
+      payload: {},
+      receivedAt: new Date(0),
+    });
+    assert.equal(accepted.status, "accepted");
+    if (accepted.status !== "accepted") throw new Error("expected the bound bot to accept it");
+    assert.equal(accepted.events[0]?.projectId, projectId);
+
+    // A second bot makes the binding ambiguous again: the chat has to name its own row.
+    await client.query(
+      `insert into telegram_connections
+         (organization_id, chat_id, slug, chat_name, provider_application_id)
+       values ('${organizationId}', '9002', 'bot-9002', '@other-bot', 'telegram')`,
+    );
+    const ambiguous = await database.acceptTelegramEvent({
+      chatId: "-100778",
+      source: "telegram.mention",
+      deliveryId: "telegram-group-ambiguous",
+      payload: {},
+      receivedAt: new Date(1),
+    });
+    assert.equal(ambiguous.status, "dropped");
+    if (ambiguous.status === "dropped") assert.equal(ambiguous.reason, "telegram_unbound");
+
+    await client.close();
+    await database.close();
+  }, 120_000);
+
   it("lists only receipts with a committed bounded drop reason", async () => {
     const database = await createDatabase(databaseUrl);
     const client = await createPostgresQueryRuntime(databaseUrl);
