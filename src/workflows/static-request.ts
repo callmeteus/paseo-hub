@@ -1,3 +1,4 @@
+import { PACKAGE_VERSION } from "../version.js";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -209,7 +210,12 @@ export async function callDeployHttp(input: {
       method: input.step.method,
       headers: {
         accept: "application/json",
-        ...input.headers,
+        // Cloudflare blocks the default undici User-Agent on some routes. Send an
+        // identifiable one; a YAML header can override it when a route needs one.
+        "user-agent": `paseo-hub/${PACKAGE_VERSION}`,
+        ...Object.fromEntries(
+          Object.entries(input.headers).map(([name, value]) => [name.toLowerCase(), value]),
+        ),
         "x-sanddbox-actor": actor,
       },
       signal: AbortSignal.timeout(15_000),

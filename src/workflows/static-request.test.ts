@@ -105,6 +105,34 @@ describe("deploy request step", () => {
     assert.equal(taken.output["assignee"], " e foi assumido por <@U9>");
   });
 
+  it("sends an identifiable User-Agent and lets the YAML override it", async () => {
+    const seen: string[] = [];
+    await callDeployHttp({
+      step: STEP,
+      prompt: "Deploy Request #848 por <@U1>",
+      triggerContext: { event: { slack: { bot: { id: "UBOT" } } } },
+      ...SENT,
+      fetch: async (_url, init) => {
+        seen.push(new Headers(init?.headers).get("user-agent") ?? "");
+        return Response.json({ status: "AWAITING", assignedTo: null, buildAreas: ["proxy"] });
+      },
+    });
+    assert.match(seen[0] ?? "", /^paseo-hub\//u);
+
+    await callDeployHttp({
+      step: STEP,
+      prompt: "Deploy Request #848 por <@U1>",
+      triggerContext: { event: { slack: { bot: { id: "UBOT" } } } },
+      headers: { authorization: "Bearer test-key", "User-Agent": "custom-agent/1.0" },
+      secrets: ["test-key"],
+      fetch: async (_url, init) => {
+        seen.push(new Headers(init?.headers).get("user-agent") ?? "");
+        return Response.json({ status: "AWAITING", assignedTo: null, buildAreas: ["proxy"] });
+      },
+    });
+    assert.equal(seen[1], "custom-agent/1.0");
+  });
+
   it("treats HTTP 409 on assign as someone else taking the deploy", async () => {
     const result = await callDeployHttp({
       step: { ...STEP, method: "POST", path: "assign" },
