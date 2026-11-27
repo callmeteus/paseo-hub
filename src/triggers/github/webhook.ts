@@ -113,6 +113,16 @@ async function handleVerifiedWebhook(
   handlers: Set<TriggerHandler>,
 ): Promise<Response> {
   const { body, deliveryId, eventType, signatureHash } = verified;
+
+  // GitHub sends `ping` to verify the webhook URL. It is not a trigger
+  // delivery: the App sends it before any installation exists, so it has no
+  // installation id and no repository. Signature and headers were verified
+  // above; acknowledge it without persisting or dispatching anything.
+  if (eventType === "ping") {
+    logger.info({ deliveryId, eventType }, "acknowledging GitHub ping delivery");
+    return new Response("OK", { status: 200 });
+  }
+
   const installationId = body.installation?.id;
   if (typeof installationId !== "number") {
     reportGitHubRejection("installation_id_missing", 400);
