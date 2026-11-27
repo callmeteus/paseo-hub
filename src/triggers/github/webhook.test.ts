@@ -80,6 +80,25 @@ describe("normalizeWebhookEvent", () => {
 });
 
 describe("GitHub webhook", () => {
+  it("accepts a signed ping event without an installation id", async () => {
+    const received: string[] = [];
+    const endpoint = createWebhookSource(SECRET, {
+      ...webhookOptions((input) => {
+        received.push(input.source);
+        return Promise.resolve(accepted(input));
+      }),
+    });
+    const github = new GitHubWebhook(endpoint);
+
+    assert.equal(
+      await github.deliver("ping-123", { zen: "Keep it logically awesome." }, "ping"),
+      200,
+    );
+    // A ping is a connectivity check, not a trigger delivery: it must not be
+    // persisted or fanned out, and it must not require an App installation.
+    assert.deepEqual(received, []);
+  });
+
   it("requires an installation id after authenticating the signed body", async () => {
     const github = GitHubWebhook.fanout(undefined);
     assert.equal(await github.deliver("missing-installation", { action: "ping" }), 400);
