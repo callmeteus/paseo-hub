@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { createGitHubAuth } from "../auth/github.js";
 import type { DatabaseRuntime, QueryRow } from "../db/runtime/index.js";
+import { resolveOrganizationId } from "../organizations/resolution.js";
 import type { ProviderApplicationConfiguration, Provider } from "../provider-applications/index.js";
 import { slugify } from "../slug.js";
 import { hasRequiredSlackScopes, slackConnectionSlug } from "../providers/slack/client.js";
@@ -48,7 +49,7 @@ export async function activateProviderConnectionsAtStartup(
     let organizationId: string | undefined;
     let lookupError: unknown;
     try {
-      organizationId = await organizationIdForReference(options.database, connection.organization);
+      organizationId = await resolveOrganizationId(options.database, connection.organization);
     } catch (error) {
       lookupError = error;
     }
@@ -292,34 +293,6 @@ async function activateTelegramConnection(
     }
   }
   return failures;
-}
-
-/**
- * Resolves a declaration to the organization it names.
- *
- * A slug is what links and the panel use, but a provisioned organization carries an id suffix, so
- * an operator who only knows the configured name would have to open the panel to learn it. The
- * reference therefore accepts the slug, the id, or a name that matches exactly one organization.
- */
-async function organizationIdForReference(
-  database: DatabaseRuntime,
-  reference: string,
-): Promise<string | undefined> {
-  for (const column of ["slug", "id"] as const) {
-    const result = await database.query<QueryRow & { id: string }>(
-      `select id from organization where ${column} = $1`,
-      [reference],
-    );
-    if (result.rows[0] !== undefined) return result.rows[0].id;
-  }
-  const byName = await database.query<QueryRow & { id: string }>(
-    "select id from organization where lower(name) = lower($1) limit 2",
-    [reference],
-  );
-  if (byName.rows.length > 1) {
-    throw new Error(`organization ${reference} is ambiguous; declare its slug or id`);
-  }
-  return byName.rows[0]?.id;
 }
 
 /**

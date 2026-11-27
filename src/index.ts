@@ -48,6 +48,10 @@ import {
   activateProviderConnectionsAtStartup,
   readConfiguredConnections,
 } from "./provider-connections/index.js";
+import {
+  activateAutomationGitSyncsAtStartup,
+  readConfiguredAutomationGitSyncs,
+} from "./automation-sync/index.js";
 import { resolveHubDataDirectory } from "./data-directory.js";
 import { createInvitationMailer } from "./invitations/index.js";
 import { composeEmailDelivery } from "./email/index.js";
@@ -204,6 +208,31 @@ async function createProductionRuntime(): Promise<ApplicationRuntime> {
         operation: "provider_connection.activate_at_startup",
         component: "provider_connections",
         provider,
+      });
+    }
+    // The automation git sync declaration is applied after the connections, because it resolves
+    // the GitHub connection by slug and a connection created earlier in this boot is the one it
+    // must point at.
+    const configuredSyncs = await readConfiguredAutomationGitSyncs(process.env).catch(
+      (error: unknown) => {
+        reportFailure(error, {
+          operation: "automation_git_sync.read_environment",
+          component: "automation_sync",
+        });
+        return [];
+      },
+    );
+    const syncFailures = await activateAutomationGitSyncsAtStartup({
+      database: runtime,
+      syncs: configuredSyncs,
+      applications: providerEnvironment,
+    });
+    for (const { organization, connection, error } of syncFailures) {
+      reportFailure(error, {
+        operation: "automation_git_sync.activate_at_startup",
+        component: "automation_sync",
+        organizationSlug: organization,
+        connectionSlug: connection,
       });
     }
     const receiptRetention = new ReceiptRetention(runtime);
