@@ -5,6 +5,7 @@ export {
   parseConfiguredConnections,
   readConfiguredConnections,
   type ConfiguredConnection,
+  type ConfiguredGitHubConnection,
   type ConfiguredSlackConnection,
   type ConfiguredTelegramConnection,
 } from "./environment.js";

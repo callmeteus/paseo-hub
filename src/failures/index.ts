@@ -29,6 +29,7 @@ export interface FailureContext {
   status?: number;
   organizationSlug?: string;
   organizationId?: string;
+  connectionSlug?: string;
   projectSlug?: string;
   projectId?: string;
   daemonId?: string;
