@@ -131,6 +131,7 @@ export class DaemonAgents implements AgentConnection {
           toolPolicy: options.toolPolicy,
           ...(options.featureValues === undefined ? {} : { featureValues: options.featureValues }),
         },
+        ...(options.modelRouterId === undefined ? {} : { modelRouterId: options.modelRouterId }),
         env: options.env,
         worktree: options.worktree,
         background: options.background,

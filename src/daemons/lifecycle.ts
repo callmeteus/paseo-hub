@@ -2145,6 +2145,7 @@ async function buildCreateAgentOptions(
     workspaceTitle: executionWorkspaceTitle(intent, hubExecutionEnv.executionId),
     ...(intent.agent.mode === undefined ? {} : { mode: intent.agent.mode }),
     ...(intent.agent.model === undefined ? {} : { model: intent.agent.model }),
+    ...(intent.agent.router === undefined ? {} : { modelRouterId: intent.agent.router }),
     ...(intent.agent.thinkingOptionId === undefined
       ? {}
       : { thinkingOptionId: intent.agent.thinkingOptionId }),
