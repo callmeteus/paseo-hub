@@ -586,7 +586,11 @@ export class DurableWorkflowEngine {
     stepId: string,
     reason: string,
   ): Promise<void> {
-    this.report(new Error(reason), "workflow.static.fail", { triggerRunId: run.id, stepId });
+    this.report(new Error(reason), "workflow.static.fail", {
+      triggerRunId: run.id,
+      stepId,
+      reason,
+    });
     const failed = await database.failWorkflowRun(run.id, "failed", reason, stepId);
     if (failed?.transitioned === true) await this.notifyWorkflowRunTerminal(failed.run);
   }
