@@ -238,6 +238,29 @@ test("a retry after a released agent creates with a key of its own", async () =>
   expect(keys[0]).toMatch(/:1$/u);
 });
 
+test("a new agent for an existing session follows the current model and router", async () => {
+  const f = await fixture();
+  const first = await f.arrival("conversation", "daemon", {}, "hello", {
+    agent: { provider: "opencode", model: "opencode/old-model" },
+  });
+  const created = await first.dispatch();
+  expect(f.connection.creates.at(-1)?.model).toBe("opencode/old-model");
+  const originalGet = f.connection.get.bind(f.connection);
+  f.connection.get = async (id: string) => {
+    if (id === created.agentId)
+      throw new Error("Continuation agent was deleted; use a new key or choose a new agent");
+    return originalGet(id);
+  };
+  const second = await f.arrival("conversation", "daemon", {}, "hello", {
+    agent: { provider: "opencode", model: "e7-router/coding-auto", router: "agent-model-fallback" },
+  });
+  const again = await second.dispatch();
+  expect(again.action).toBe("created");
+  const options = f.connection.creates.at(-1);
+  expect(options?.model).toBe("e7-router/coding-auto");
+  expect(options?.modelRouterId).toBe("agent-model-fallback");
+});
+
 test("session tools keep each arrival's destination and reject stale or foreign execution IDs", async () => {
   const f = await fixture();
   const first = await f.arrival();
