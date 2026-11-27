@@ -58,6 +58,13 @@ function isMissingAgentError(error: unknown): boolean {
   return error instanceof Error && error.message.includes("Continuation agent was deleted");
 }
 
+/** The daemon finished that idempotency key once and its agent is gone; the key cannot complete. */
+function isCompletedCreationError(error: unknown): boolean {
+  return (
+    error instanceof Error && error.message.includes("Previously created agent no longer exists")
+  );
+}
+
 /** Owns session selection, delivery, and cleanup under the same existing database lock. */
 export class AgentSessions {
   constructor(
@@ -177,7 +184,8 @@ export class AgentSessions {
       await this.database.attachExecutionToSession(input.executionId, id);
       let action: "created" | "continued" | "restored" = "continued";
       if (session.agentId === null) {
-        const agent = await input.connection.create(id, session.creationOptions, startupTimeoutMs);
+        const agent = await this.createSessionAgent(input, session, id, attempt, startupTimeoutMs);
+        if (agent === undefined) return undefined;
         session = { ...session, agentId: agent.id, workspaceId: agent.workspaceId };
         await this.database.saveAgentSession(session);
         action = "created";
@@ -205,6 +213,31 @@ export class AgentSessions {
       }
     });
     return dispatched ?? this.dispatch(input, attempt + 1);
+  }
+
+  /**
+   * Creates the agent a session points at.
+   *
+   * The daemon remembers completed idempotency keys, and a key whose agent was deleted can never
+   * complete again. A retry therefore creates with its own key: the session id still names the MCP
+   * endpoint, and the key only deduplicates this one create.
+   *
+   * @returns The new agent, or undefined when the caller has to retry
+   */
+  private async createSessionAgent(
+    input: DispatchInput,
+    session: AgentSessionRecord,
+    id: string,
+    attempt: number,
+    startupTimeoutMs: number,
+  ): Promise<AgentSnapshot | undefined> {
+    const createKey = attempt === 0 ? id : `${id}:${String(attempt)}`;
+    try {
+      return await input.connection.create(createKey, session.creationOptions, startupTimeoutMs);
+    } catch (error) {
+      if (attempt === 0 && isCompletedCreationError(error)) return undefined;
+      throw error;
+    }
   }
 
   /**
