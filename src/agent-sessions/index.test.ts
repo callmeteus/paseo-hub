@@ -214,6 +214,30 @@ test("a continuation whose agent the daemon no longer knows starts a new agent",
   expect(again.action).toBe("created");
 });
 
+test("a retry after a released agent creates with a key of its own", async () => {
+  const f = await fixture();
+  const first = await f.arrival();
+  const created = await first.dispatch();
+  const originalGet = f.connection.get.bind(f.connection);
+  f.connection.get = async (id: string) => {
+    if (id === created.agentId)
+      throw new Error("Continuation agent was deleted; use a new key or choose a new agent");
+    return originalGet(id);
+  };
+  const originalCreate = f.connection.create.bind(f.connection);
+  const keys: string[] = [];
+  f.connection.create = async (key: string, options: DaemonCreateAgentOptions) => {
+    keys.push(key);
+    return originalCreate(key, options);
+  };
+  const second = await f.arrival();
+  const again = await second.dispatch();
+  expect(again.action).toBe("created");
+  expect(keys).toHaveLength(1);
+  // The retry must not reuse the session id, whose completed creation the daemon still remembers.
+  expect(keys[0]).toMatch(/:1$/u);
+});
+
 test("session tools keep each arrival's destination and reject stale or foreign execution IDs", async () => {
   const f = await fixture();
   const first = await f.arrival();
