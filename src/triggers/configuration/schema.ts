@@ -105,6 +105,8 @@ export const TriggerAgentSchema = z
   .object({
     provider: z.string().min(1),
     model: z.string().min(1).optional(),
+    /** Daemon model router the chat is bound to; it owns the fallback order. */
+    router: z.string().min(1).optional(),
     mode: z.string().min(1).optional(),
     thinkingOptionId: z.string().min(1).optional(),
     // ACP feature values. Cursor Fast is the string "false" or "true".

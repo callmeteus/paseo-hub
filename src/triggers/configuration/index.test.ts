@@ -113,6 +113,44 @@ describe("self-contained trigger documents", () => {
     );
   });
 
+  it("keeps the daemon model router on the agent and rejects an unknown key", () => {
+    const document = [
+      "name: router-demo",
+      "enabled: true",
+      "on:",
+      "  telegram.mention:",
+      "    filters:",
+      '      from_users: ["*"]',
+      "run:",
+      "  target:",
+      '    daemon: "*"',
+      "    cwd: /workspace",
+      "  agent:",
+      "    provider: opencode",
+      "    mode: build",
+      "    model: opencode/deepseek-v4.1-flash-free",
+      "    router: agent-model-fallback",
+      "  idle_timeout: 10m",
+      "  prompt: |",
+      "    oi",
+      "",
+    ].join("\n");
+    const compiled = compileTriggerDocument(document);
+    const inline = singleAgentRun(compiled.authored.run).agent;
+    assert.ok(!("select" in inline));
+    assert.equal(inline.router, "agent-model-fallback");
+    const reparsed = singleAgentRun(
+      parseTriggerDocument(serializeTriggerDocument(compiled.authored)).run,
+    ).agent;
+    assert.ok(!("select" in reparsed));
+    assert.equal(reparsed.router, "agent-model-fallback");
+    assert.throws(() =>
+      parseTriggerDocument(
+        document.replace("    router: agent-model-fallback", "    routers: nope"),
+      ),
+    );
+  });
+
   it("compiles optional tool denials and argument limits", () => {
     const yaml = trigger.replace(
       "    slack.reply:\n      max: 5",
