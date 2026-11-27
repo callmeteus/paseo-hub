@@ -66,6 +66,11 @@ const AgentSchema = z
   .object({
     provider: z.string().min(1),
     model: z.string().min(1).optional(),
+    /**
+     * Daemon model router the chat is bound to. The router owns the fallback order, so the
+     * trigger names one id instead of repeating providers and models here.
+     */
+    router: z.string().min(1).optional(),
     mode: z.string().min(1).optional(),
     thinkingOptionId: z.string().min(1).optional(),
     // ACP feature values. Cursor Fast is the string "false" or "true".
@@ -387,6 +392,8 @@ export function staticPromptText(block: CompiledPromptBlock): string {
 export interface CompiledAgent {
   provider: string;
   model?: string | undefined;
+  /** Model router bound to the chat, so the daemon can fall back across its targets. */
+  router?: string | undefined;
   mode?: string | undefined;
   thinkingOptionId?: string | undefined;
   features?: Readonly<Record<string, string>> | undefined;
@@ -573,6 +580,7 @@ const CompiledAgentSchema: z.ZodType<CompiledAgent> = z
   .object({
     provider: z.string().min(1),
     model: z.string().min(1).optional(),
+    router: z.string().min(1).optional(),
     mode: z.string().min(1).optional(),
     thinkingOptionId: z.string().min(1).optional(),
     features: z.record(z.string().min(1), z.string().min(1)).optional(),

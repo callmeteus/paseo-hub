@@ -36,6 +36,8 @@ export interface TriggerAgentConfig {
   provider: string;
   mode?: string | undefined;
   model?: string | undefined;
+  /** Daemon model router bound to the chat; the router owns the fallback order. */
+  router?: string | undefined;
   thinkingOptionId?: string | undefined;
   features?: Readonly<Record<string, string>> | undefined;
   options?: Readonly<Record<string, JsonValue>> | undefined;
@@ -46,6 +48,7 @@ export function cleanTriggerAgent(agent: TriggerAgentConfig): TriggerAgentConfig
     provider: agent.provider,
     ...(agent.mode === undefined ? {} : { mode: agent.mode }),
     ...(agent.model === undefined ? {} : { model: agent.model }),
+    ...(agent.router === undefined ? {} : { router: agent.router }),
     ...(agent.thinkingOptionId === undefined ? {} : { thinkingOptionId: agent.thinkingOptionId }),
     ...(agent.features === undefined ? {} : { features: { ...agent.features } }),
     ...(agent.options === undefined ? {} : { options: structuredClone(agent.options) }),

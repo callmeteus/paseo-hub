@@ -15,6 +15,8 @@ export interface DaemonCreateAgentOptions {
   background?: boolean;
   mode?: string;
   model?: string;
+  /** Daemon model router this chat is bound to; the router owns the fallback order. */
+  modelRouterId?: string;
   thinkingOptionId?: string;
   providerOptions?: Readonly<Record<string, JsonValue>>;
   toolPolicy: ToolPolicy;

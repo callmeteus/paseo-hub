@@ -25,6 +25,17 @@ describe("cleanTriggerAgent", () => {
     assert.deepEqual(cleanTriggerAgent({ provider: "codex" }), { provider: "codex" });
   });
 
+  it("keeps the model router the trigger names", () => {
+    assert.deepEqual(
+      cleanTriggerAgent({
+        provider: "opencode",
+        model: "opencode/x-free",
+        router: "agent-fallback",
+      }),
+      { provider: "opencode", model: "opencode/x-free", router: "agent-fallback" },
+    );
+  });
+
   it("copies opaque provider options without interpreting their keys", () => {
     const options = { permission: { edit: "ask", bash: "deny" } };
     const cleaned = cleanTriggerAgent({ provider: "opencode", options });
