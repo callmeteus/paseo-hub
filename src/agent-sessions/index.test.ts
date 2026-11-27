@@ -197,6 +197,23 @@ test("same-key arrivals share an agent; an earlier completion cannot archive new
   expect(f.connection.restorations).toBe(1);
 });
 
+test("a continuation whose agent the daemon no longer knows starts a new agent", async () => {
+  const f = await fixture();
+  const first = await f.arrival();
+  const created = await first.dispatch();
+  // The daemon answers a deleted agent with a hard error instead of an empty snapshot.
+  const originalGet = f.connection.get.bind(f.connection);
+  f.connection.get = async (id: string) => {
+    if (id === created.agentId)
+      throw new Error("Continuation agent was deleted; use a new key or choose a new agent");
+    return originalGet(id);
+  };
+  const second = await f.arrival();
+  const again = await second.dispatch();
+  expect(again.agentId).not.toBe(created.agentId);
+  expect(again.action).toBe("created");
+});
+
 test("session tools keep each arrival's destination and reject stale or foreign execution IDs", async () => {
   const f = await fixture();
   const first = await f.arrival();
