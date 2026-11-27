@@ -48,6 +48,16 @@ function isDeadAgent(agent: AgentSnapshot): boolean {
   return !agent.archivedAt && (agent.status === "closed" || agent.status === "error");
 }
 
+/**
+ * The daemon no longer knows the agent this session points at.
+ *
+ * That is a dead continuation like any other: the next attempt has to create a new agent instead
+ * of failing the arrival, otherwise every message in that conversation keeps failing.
+ */
+function isMissingAgentError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes("Continuation agent was deleted");
+}
+
 /** Owns session selection, delivery, and cleanup under the same existing database lock. */
 export class AgentSessions {
   constructor(
@@ -279,7 +289,16 @@ export class AgentSessions {
     startupTimeoutMs: number,
     attempt: number,
   ): Promise<"released" | "restored" | "continued"> {
-    const agent = await input.connection.get(session.agentId!);
+    let agent: AgentSnapshot;
+    try {
+      agent = await input.connection.get(session.agentId!);
+    } catch (error) {
+      if (!isMissingAgentError(error)) throw error;
+      // Nothing can resume an agent the daemon forgot, so the session is released at once and the
+      // retry creates a new one. Repeating the failure only breaks every later arrival.
+      await this.releaseDeadContinuation(session);
+      return "released";
+    }
     if (isDeadAgent(agent)) {
       if (canReleaseDeadSession(session, attempt)) {
         await this.releaseDeadContinuation(session);
