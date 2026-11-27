@@ -65,6 +65,28 @@ function isCompletedCreationError(error: unknown): boolean {
   );
 }
 
+/**
+ * Rebuilds the agent settings of a stored session with the ones the current intent carries.
+ *
+ * Everything the session owns stays (MCP endpoint and token, cwd, environment, tool policy); the
+ * provider, model, mode, thinking option and router follow the trigger.
+ */
+function withCurrentAgentSettings(
+  options: DaemonCreateAgentOptions,
+  agent: LaunchMachineIntent["agent"],
+): DaemonCreateAgentOptions {
+  const next: DaemonCreateAgentOptions = { ...options, provider: agent.provider };
+  if (agent.model === undefined) delete next.model;
+  else next.model = agent.model;
+  if (agent.mode === undefined) delete next.mode;
+  else next.mode = agent.mode;
+  if (agent.thinkingOptionId === undefined) delete next.thinkingOptionId;
+  else next.thinkingOptionId = agent.thinkingOptionId;
+  if (agent.router === undefined) delete next.modelRouterId;
+  else next.modelRouterId = agent.router;
+  return next;
+}
+
 /** Owns session selection, delivery, and cleanup under the same existing database lock. */
 export class AgentSessions {
   constructor(
@@ -233,7 +255,11 @@ export class AgentSessions {
   ): Promise<AgentSnapshot | undefined> {
     const createKey = attempt === 0 ? id : `${id}:${String(attempt)}`;
     try {
-      return await input.connection.create(createKey, session.creationOptions, startupTimeoutMs);
+      // The session keeps the options of its first creation (the MCP endpoint and its token), but
+      // the agent settings belong to the trigger: a model or router changed in the YAML has to
+      // reach the next agent, otherwise the conversation stays on the old model forever.
+      const options = withCurrentAgentSettings(session.creationOptions, input.intent.agent);
+      return await input.connection.create(createKey, options, startupTimeoutMs);
     } catch (error) {
       if (attempt === 0 && isCompletedCreationError(error)) return undefined;
       throw error;
